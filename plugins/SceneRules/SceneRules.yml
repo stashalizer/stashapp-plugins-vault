@@ -1,0 +1,12 @@
+name: Scene Rules
+description: Interactive overlay for managing a global, 2-level list of viewing rules on the scene player.
+version: 0.2
+url: https://discourse.stashapp.cc/
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  javascript:
+    - SceneRules.js
+  css:
+    - SceneRules.css
+# requires: CommunityScriptsUILibrary
