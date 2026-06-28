@@ -1,0 +1,21 @@
+name: Scene Info Overlay
+description: Displays a custom overlay with scene information on the scene detail page.
+version: 0.1
+url: https://discourse.stashapp.cc/
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  javascript:
+    - SceneInfoOverlay.js
+  css:
+    - SceneInfoOverlay.css
+settings:
+  overlayText:
+    displayName: Overlay text
+    description: Custom text shown at the bottom of the overlay.
+    type: STRING
+  showTags:
+    displayName: Show tags
+    description: Display scene tags in the overlay.
+    type: BOOLEAN
+# requires: CommunityScriptsUILibrary
