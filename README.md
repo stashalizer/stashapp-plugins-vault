@@ -1,24 +1,50 @@
-# Template for creating Stash plugins source index
+# stashapp-plugins-vault
 
-This template allows you to create a new repository with a few clicks with preconfigured GitHub action to publish your plugins source index. 
-_This assumes you already know how to create plugins for Stash. If you don't, first read [this](https://docs.stashapp.cc/in-app-manual/plugins/#creating-plugins)._
+A Stash plugin source-index repository that packages and publishes Stash plugins via GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template.
 
-## How to use it?
+## Plugins
 
-1. Click **Use this template** > **Create a new repository**. 
-1. Choose a repository name and click **Create repository**.
-1. Open **Settings** and head to **Pages**.
-1. Under Build and deployment select the Source as GitHub Actions.
+### Scene Rules
 
-Now add your plugins to [plugins](/plugins) directory and they will be automatically published to the source index.
+An interactive overlay and full-page settings UI for managing a global, 2-level list of "viewing rules" displayed on the scene player.
 
-Source index URL: [`https://<your-username>.github.io/<repository-name>/main/index.yml`](https://<your-username>.github.io/<repository-name>/main/index.yml)
+- **Player overlay** — a collapsible panel pinned to the top-right of the scene player. Shows a rule-count chip when collapsed; expands to list all rules and categories with inline add/edit/delete.
+- **Settings page** — a full-page CRUD interface at **Settings > Tools > Scene Rules** (`/plugins/scenerules`) for managing the same rules with more room.
+- **2-level structure** — top-level nodes are either standalone rules or categories; categories group leaf rules.
+- **Persisted** — all rules are saved to Stash configuration under the key `SceneRules` and survive navigation/reload.
 
-## Share your plugins
+#### Requirements
 
-- [Create a new topic](https://discourse.stashapp.cc/t/-/33) for your plugin on the community forum.
-- [Add your source index to the list](https://discourse.stashapp.cc/t/-/122) on the Stash community forum.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — required by the overlay.
+- The settings page additionally uses Stash's built-in `PluginApi` (React + router).
+
+#### Install
+
+Add this repository as a plugin source in Stash (**Settings > Plugins > Available Plugins > Add Source**):
+
+```
+https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
+```
+
+Then install **Scene Rules** from the list. Ensure `CommunityScriptsUILibrary` is installed first.
+
+## Repository layout
+
+```
+plugins/           # one subdirectory per plugin
+  SceneRules/      # SceneRules plugin (manifest + JS/CSS assets)
+build_site.sh      # zips each plugin and generates index.yml
+.github/workflows/ # deploys the source index to GitHub Pages
+```
+
+A full architectural codemap lives in [`codemap.md`](codemap.md); per-folder maps are alongside each directory.
+
+## Publishing
+
+Plugins are built and published automatically. On push to `plugins/**` on `main`, the `deploy.yml` workflow runs `build_site.sh`, which zips each plugin directory and writes `index.yml` (with sha256, version, and metadata), then deploys the result to GitHub Pages.
+
+To publish manually from a fork: open **Settings > Pages** and set the source to **GitHub Actions**.
 
 ## License
 
-The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
+[AGPL-3.0](LICENCE).
