@@ -4,8 +4,12 @@
   right: 8px;
   z-index: 1;
   pointer-events: auto;
-  max-width: 320px;
-  max-height: 60vh;
+  max-width: 360px;
+  /* Let the panel grow to fit all content (active triggers + their attached
+     moves). overflow-y: auto is kept as a safety net for extremely tall
+     content that would overflow the viewport — the user can scroll the panel
+     itself in that edge case. */
+  max-height: none;
   overflow-y: auto;
   background: rgba(0, 0, 0, var(--qa-bg-alpha, 0.6));
   color: #fff;

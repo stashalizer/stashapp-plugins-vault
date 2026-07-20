@@ -252,7 +252,14 @@
     function addTriggerTop(name) {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const nextTriggers = [...triggers, { id: generateId(), type: "trigger", name: trimmed, attachedMoveIds: [] }];
+      // v2: new triggers start INACTIVE. The user activates them via Penalty.
+      const nextTriggers = [...triggers, {
+        id: generateId(),
+        type: "trigger",
+        name: trimmed,
+        active: false,
+        attachedMoveIds: [],
+      }];
       commitTriggers(nextTriggers);
     }
 

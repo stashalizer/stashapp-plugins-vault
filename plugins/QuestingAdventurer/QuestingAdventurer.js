@@ -523,15 +523,19 @@
         state.moves = stored.moves.map(function (m) {
           return { id: m.id, type: "move", text: m.text };
         });
-        state.triggers = stored.triggers.map(function (t) {
-          return {
-            id: t.id,
-            type: "trigger",
-            name: t.name,
-            active: t.active !== false,
-            attachedMoveIds: Array.isArray(t.attachedMoveIds) ? t.attachedMoveIds : [],
-          };
-        });
+      state.triggers = stored.triggers.map(function (t) {
+        return {
+          id: t.id,
+          type: "trigger",
+          name: t.name,
+          // v2 default: only "active" if explicitly true. Triggers migrated
+          // from v0/v1' data have active: true set by migrateFromLegacy.
+          // New triggers created in the overlay/settings page should start
+          // INACTIVE (active: false) so the user activates them via Penalty.
+          active: t.active === true,
+          attachedMoveIds: Array.isArray(t.attachedMoveIds) ? t.attachedMoveIds : [],
+        };
+      });
       } else {
         // v1' or v0 format — migrate to v2.
         const migrated = migrateV1ToV2(stored);
@@ -823,7 +827,7 @@
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
-    const activeTriggers = state.triggers.filter(function (t) { return t.active; });
+    const activeTriggers = state.triggers.filter(function (t) { return t.active === true; });
     if (activeTriggers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "questing-adventurer-panel__empty";
@@ -1018,7 +1022,14 @@
   }
 
   function addTriggerTop(name) {
-    state.triggers.push({ id: generateId(), type: "trigger", name: name, items: [] });
+    // v2: new triggers start INACTIVE. The user activates them via Penalty.
+    state.triggers.push({
+      id: generateId(),
+      type: "trigger",
+      name: name,
+      active: false,
+      attachedMoveIds: [],
+    });
     queueSave();
     render();
   }
