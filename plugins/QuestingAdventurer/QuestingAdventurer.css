@@ -1,13 +1,14 @@
 .questing-adventurer-panel {
-  /* position: fixed (not absolute) because the panel is mounted on
-     document.body, not on the video player. Fixed positions relative to
-     the viewport — so the overlay stays in the top-right corner in both
-     fullscreen and windowed mode, and is completely outside the video.js
-     DOM tree (no `vjs-user-inactive` fade can hide it). */
-  position: fixed;
+  /* position: absolute (not fixed) because the panel is a child of the
+     video player (#VideoJsPlayer), which is `position: relative`. The
+     top/right offsets are relative to the player — which becomes the
+     viewport when the player goes fullscreen. This way the overlay
+     sits inside the fullscreen view, on top of the video, controlled by
+     z-index — no top layer or modal tricks needed. */
+  position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 2147483647;
+  z-index: 10;
   pointer-events: auto;
   max-width: 360px;
   /* Let the panel grow to fit all content (active triggers + their attached
@@ -25,30 +26,14 @@
   font-family: sans-serif;
   display: flex;
   flex-direction: column;
-  /* Override the <dialog> element's user-agent stylesheet defaults. The
-     UA stylesheet sets position: fixed; inset: 0; margin: auto; etc.,
-     which would center the dialog. We want top-right placement. The
-     `dialog` element selector has specificity (0,0,0,1) and our class
-     has (0,0,1,0), so our values win. */
-  inset: auto;
-  margin: 0;
-  border: none;
-  padding: 8px 12px;
-  /* Suppress the dialog's default solid-color background — our background
-     rule above already paints the translucent panel surface. */
-  background-color: transparent;
-  color: #fff;
-  width: auto;
-  height: auto;
-  max-width: 360px;
-  max-height: none;
 }
 
-/* Make the <dialog> backdrop fully transparent so the video player stays
-   visible behind the overlay. The default ::backdrop is a semi-transparent
-   dark overlay that would dim the video. */
-.questing-adventurer-panel::backdrop {
-  background: transparent;
+/* Override video.js's vjs-user-inactive class so the overlay isn't faded
+   when the user is idle in fullscreen mode. By default vjs-user-inactive
+   only fades the control bar, but we set this explicitly to be safe. */
+.video-js.vjs-user-inactive .questing-adventurer-panel {
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 .questing-adventurer-panel--collapsed {

@@ -1278,33 +1278,30 @@
     await loadState();
 
     // Use a plain <div> (not a <dialog>) so the rest of the page is NOT
-    // made inert. <dialog showModal()> makes everything else non-interactive
-    // (the user has to press Escape twice to recover from fullscreen).
-    // Switching back to a <div> restores full page interactivity; the
-    // trade-off is that the overlay may be behind the fullscreen video
-    // (top-layer stacking by document order). See the 0.9.15 commit
-    // message for the rationale.
+    // made inert. The overlay is appended to the video player element
+    // itself (#VideoJsPlayer) — not to document.body — so when the player
+    // goes fullscreen (video.js calls requestFullscreen() on the player
+    // element), our overlay goes fullscreen with it as part of the same
+    // fullscreen view. Inside the fullscreen view, `z-index` (not the top
+    // layer) determines the stacking order, so we can lay the overlay on
+    // top of the video with a plain `z-index` value — no top layer, no
+    // <dialog showModal()>, no page inertness.
     const panel = document.createElement("div");
     panel.className = "questing-adventurer-panel";
     panel.addEventListener("click", handleClick);
     panel.addEventListener("dblclick", handleDblClick);
 
     // Apply persisted position (or default) so the panel appears where the
-    // user last left it, not in the hardcoded CSS top-right corner.
+    // user last left it, not in the hardcoded CSS top-right corner. With
+    // `position: absolute` (set in CSS), these are offsets from the
+    // top-right corner of the player — which becomes the viewport when
+    // the player goes fullscreen.
     panel.style.top = state.panelPos.top + "px";
     panel.style.right = state.panelPos.right + "px";
 
-    // v2 / fullscreen fix: append the panel to document.body (NOT the video
-    // player). In fullscreen mode, Stash's video.js adds a `vjs-user-inactive`
-    // class after a few seconds of mouse inactivity and its CSS fades out all
-    // children of the player — which would also hide our overlay. By mounting
-    // the panel on document.body and using `position: fixed` (see CSS), the
-    // overlay sits on top of the fullscreen video at the top-right corner
-    // and is completely outside the video.js DOM tree — no video.js CSS can
-    // touch it. (Note: in fullscreen the video may cover the panel because
-    // both are in the top layer and the video is later in document order.
-    // This is a known trade-off; see 0.9.15 commit message for context.)
-    document.body.appendChild(panel);
+    // Append the panel as a child of the video player. When the player
+    // goes fullscreen, the panel goes with it.
+    playerEl.appendChild(panel);
     render();
   }
 
