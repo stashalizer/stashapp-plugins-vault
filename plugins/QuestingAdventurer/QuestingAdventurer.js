@@ -85,9 +85,21 @@
     } else {
       trigger = state.triggers[Math.floor(Math.random() * state.triggers.length)];
     }
-    // Attach a random unattached move from the library.
+    // Attach a random move from the library that is currently attached to
+    // fewer than 2 triggers (the "max 2" cap). After a move is attached to
+    // 2 triggers, it's "used up" and penalty won't pick it again. This keeps
+    // the library from cycling the same move on every click while still
+    // allowing some duplication.
+    const MAX_MOVE_ATTACHMENTS = 2;
     const availableMoves = state.moves.filter(function (m) {
-      return trigger.attachedMoveIds.indexOf(m.id) === -1;
+      let attachCount = 0;
+      for (const t of state.triggers) {
+        if ((t.attachedMoveIds || []).indexOf(m.id) !== -1) {
+          attachCount++;
+          if (attachCount >= MAX_MOVE_ATTACHMENTS) return false;
+        }
+      }
+      return true;
     });
     let attachedMove = null;
     if (availableMoves.length > 0) {
@@ -100,7 +112,7 @@
         "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
       );
     } else if (activatedANewTrigger) {
-      announceToAria("Penalty: activated " + trigger.name + " (no moves available to attach).");
+      announceToAria("Penalty: activated " + trigger.name + " (no moves under the 2-trigger cap available).");
     }
     render();
   }
