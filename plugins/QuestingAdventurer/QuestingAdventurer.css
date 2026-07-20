@@ -401,8 +401,14 @@
   padding: 8px 0;
 }
 
+/* Base layout for the footer (input + Add buttons). Display is controlled by
+   the show-add-controls rule below — hidden by default, shown when the
+   ➕ toggle in the header is active. The .questing-adventurer-panel__footer
+   rule higher up in this file with `display: none` is the authoritative
+   default; this rule just carries the layout properties (gap, flex-wrap,
+   align-items, flex-shrink, margin-top) so they apply when the footer is
+   shown. */
 .questing-adventurer-panel__footer {
-  display: flex;
   gap: 6px;
   flex-wrap: wrap;
   align-items: center;

@@ -1111,6 +1111,7 @@
         render();
         break;
       case "toggle-add-controls":
+        console.log("QuestingAdventurer: toggle-add-controls clicked");
         state.showAddControls = !state.showAddControls;
         queueSave();
         render();
