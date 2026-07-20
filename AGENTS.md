@@ -81,7 +81,8 @@ build_site.sh               # zips each plugin + writes index.yml
 This project follows the global Conventional Commits spec at
 `~/.config/opencode/AGENTS.md` (modeled after
 [anomalyco/opencode `dev`](https://github.com/anomalyco/opencode/commits/dev/)).
-The format, type list, subject rules, and body guidance are defined there.
+The format, type list, subject rules, body guidance, version-bump rule,
+and issue-reference rule are defined there.
 
 ### Project-specific scopes
 
@@ -89,10 +90,35 @@ Omit the scope for cross-cutting changes. When the change targets one area,
 use a top-level component name:
 
 - `QuestingAdventurer` — the QuestingAdventurer plugin
+- `MosaicFilter` — the MosaicFilter plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`
 - `codemap` — `codemap.md` and per-folder codemaps
+
+### Version bumping in this project
+
+This project ships versioned Stash plugins. **Every commit that changes a
+plugin's user-visible behavior MUST bump the `version:` field in the
+affected plugin's `*.yml`** (follow the global Version-bumping rule):
+
+- Small fix → patch bump (e.g. `0.1.0` → `0.1.1`)
+- Small feature → minor bump (e.g. `0.1.0` → `0.2.0`)
+- Breaking change → major bump (e.g. `0.1.0` → `1.0.0`)
+
+`build_site.sh` appends `<ymlVersion>-<gitShortHash>` to produce the
+published version, so editing the yml is the only manual step. State the
+bump in the commit body (e.g. `Bump version to 0.2.1 (small fix)`) so the
+release history is self-documenting.
+
+### Plugin → issue associations
+
+Commits that change a plugin should reference that plugin's tracking issue
+in the commit body using the global Issue-references rule (`Refs #N` or
+`Fixes #N`):
+
+- `QuestingAdventurer` — no tracking issue at this time
+- `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1)
 
 ### Examples
 
@@ -102,3 +128,5 @@ use a top-level component name:
 - `build: tighten plugins/** paths filter in deploy workflow`
 - `chore(codemap): regenerate after QuestingAdventurer rename`
 - `revert(QuestingAdventurer): drop the experimental node drag handler`
+- `feat(MosaicFilter): add follow-cursor mode for the rectangle`
+- `fix(MosaicFilter): stop writing config per pointermove during follow`
