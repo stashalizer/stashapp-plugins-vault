@@ -30,6 +30,7 @@
   const LEGACY_CONFIG_KEY = "SceneRules";
   const DEFAULT_OPACITY = 0.6;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
+  const DEFAULT_PANEL_WIDTH = 360;
 
   let state = {
     moves: [],
@@ -37,7 +38,7 @@
     collapsed: undefined,
     opacity: DEFAULT_OPACITY,
     panelPos: { ...DEFAULT_PANEL_POS },
-    locked: false,
+    panelSize: { width: DEFAULT_PANEL_WIDTH, height: undefined },
     showAddControls: false,
   };
   let editingId = null;
@@ -578,8 +579,20 @@
           ? stored.opacity
           : DEFAULT_OPACITY;
       state.opacity = Math.min(1, Math.max(0, o));
-      state.locked = stored.locked === true;
       state.showAddControls = stored.showAddControls === true;
+      if (
+        stored.panelSize &&
+        typeof stored.panelSize.width === "number" &&
+        stored.panelSize.width >= 200 &&
+        stored.panelSize.width <= 1200
+      ) {
+        state.panelSize = {
+          width: stored.panelSize.width,
+          height: typeof stored.panelSize.height === "number" ? stored.panelSize.height : undefined,
+        };
+      } else {
+        state.panelSize = { width: DEFAULT_PANEL_WIDTH, height: undefined };
+      }
       if (
         stored.panelPos &&
         typeof stored.panelPos.top === "number" &&
@@ -616,7 +629,7 @@
         collapsed: state.collapsed,
         opacity: state.opacity,
         panelPos: state.panelPos,
-        locked: state.locked,
+        panelSize: state.panelSize,
         showAddControls: state.showAddControls,
       });
       await result;
@@ -779,16 +792,6 @@
     });
     controls.appendChild(rewardBtn);
 
-    const lockBtn = document.createElement("button");
-    lockBtn.type = "button";
-    lockBtn.dataset.action = "toggle-lock";
-    lockBtn.className = "questing-adventurer-panel__lock-button";
-    lockBtn.title = state.locked ? "Unlock overlay" : "Lock overlay";
-    lockBtn.setAttribute("aria-label", state.locked ? "Unlock overlay" : "Lock overlay");
-    lockBtn.setAttribute("aria-pressed", state.locked ? "true" : "false");
-    lockBtn.textContent = state.locked ? "\ud83d\udd12" : "\ud83d\udd13";
-    controls.appendChild(lockBtn);
-
     const addToggleBtn = document.createElement("button");
     addToggleBtn.type = "button";
     addToggleBtn.dataset.action = "toggle-add-controls";
@@ -900,15 +903,13 @@
     footer.appendChild(addMoveBtn);
     panel.appendChild(footer);
 
-    // Apply the locked / showAddControls state classes so CSS can hide the
-    // appropriate elements without touching the DOM. We use toggle() (not
-    // just add()) so the class is actually REMOVED when the state is false
-    // — otherwise the class would stick around forever after the first time
-    // it was set true, and the CSS hide-by-default would be permanently
-    // overridden.
-    panel.classList.toggle("questing-adventurer-panel--locked", state.locked);
+    // Apply the showAddControls state class so CSS can hide the footer
+    // (input + Add buttons) by default and reveal it when the + toggle is
+    // on. We use toggle() (not just add()) so the class is actually REMOVED
+    // when the state is false — otherwise the class would stick around
+    // forever after the first time it was set true, and the CSS
+    // hide-by-default would be permanently overridden.
     panel.classList.toggle("questing-adventurer-panel--show-add-controls", state.showAddControls);
-    console.log("QuestingAdventurer render: showAddControls=" + state.showAddControls + " locked=" + state.locked + " panelHasClass=" + panel.classList.contains("questing-adventurer-panel--show-add-controls"));
 
     syncButtons();
   }
@@ -1156,14 +1157,9 @@
         break;
       case "drag-handle":
         // Drag interactions are handled by pointerdown listeners on the handle.
-        // A plain click on the handle (no drag) reaches this case and is a
-        // no-op. This prevents the click from bubbling to a parent action.
-        break;
-      case "toggle-lock":
-        state.locked = !state.locked;
-        queueSave();
-        render();
-        break;
+         // A plain click on the handle (no drag) reaches this case and is a
+         // no-op. This prevents the click from bubbling to a parent action.
+         break;
       case "toggle-add-controls":
         console.log("QuestingAdventurer: toggle-add-controls clicked");
         state.showAddControls = !state.showAddControls;
@@ -1218,10 +1214,13 @@
 
   function startPanelDrag(e) {
     // Don't start a panel drag when the user is pressing a button inside the
-    // header (penalty, reward, opacity icon, close).
+    // header (penalty, reward, opacity icon, close). The native CSS resize
+    // handle (bottom-right corner) also gets pointerdown but we ignore it
+    // by allowing the drag event to be consumed by the browser's resize
+    // interaction — the resize handle is not inside the header so it won't
+    // match this early return.
     if (e.target.closest("button") || e.target.closest("input")) return;
     if (e.button !== undefined && e.button !== 0) return;
-    if (state.locked) return;
     e.preventDefault();
     const panel = document.querySelector(".questing-adventurer-panel");
     if (!panel) return;
@@ -1302,6 +1301,22 @@
     // Append the panel as a child of the video player. When the player
     // goes fullscreen, the panel goes with it.
     playerEl.appendChild(panel);
+    // Persist any size change from the user's CSS-resize drag. The browser
+    // fires a native "resize" event on the element when the user drags the
+    // bottom-right corner resize handle (CSS resize: both). We capture the
+    // new dimensions and save them.
+    let resizeSaveTimer = null;
+    panel.addEventListener("resize", function () {
+      if (resizeSaveTimer) clearTimeout(resizeSaveTimer);
+      resizeSaveTimer = setTimeout(function () {
+        const w = panel.offsetWidth;
+        const h = panel.offsetHeight;
+        if (w >= 200 && w <= 1200) {
+          state.panelSize = { width: w, height: h >= 100 ? h : undefined };
+          queueSave();
+        }
+      }, 300);
+    });
     render();
   }
 

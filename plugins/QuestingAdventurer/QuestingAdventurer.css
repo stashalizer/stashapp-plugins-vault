@@ -394,23 +394,95 @@
   margin-top: 8px;
 }
 
-/* Locked state: hide row drag handles, disable panel header drag, dim
-   interactive controls. The cursor on the header reverts to default because
-   the panel can't be repositioned while locked. */
-.questing-adventurer-panel--locked .questing-adventurer-panel__drag-handle {
-  display: none;
+/* Manual resize: the panel can be resized by dragging the bottom-right
+   corner (CSS resize: both). We override the default browser resize handle
+   to make it more visible against the dark panel, and we set min/max sizes
+   so the user can't shrink the panel to nothing or expand it off-screen. */
+.questing-adventurer-panel {
+  resize: both;
+  overflow: auto;
+  min-width: 240px;
+  min-height: 80px;
+  max-width: 800px;
+  max-height: 90vh;
+  /* Style the native browser resize handle so it's visible against the dark
+     panel background. (Only Chromium shows a visible handle; Firefox and
+     Safari still show the default small corner indicator, which is OK.) */
 }
 
-.questing-adventurer-panel--locked .questing-adventurer-panel__header {
-  cursor: default;
+.questing-adventurer-panel::-webkit-resizer {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
 }
 
-.questing-adventurer-panel--locked .questing-adventurer-panel__penalty-button,
-.questing-adventurer-panel--locked .questing-adventurer-panel__reward-button,
-.questing-adventurer-panel--locked .questing-adventurer-panel__opacity-button,
-.questing-adventurer-panel--locked .questing-adventurer-panel__opacity-slider {
-  opacity: 0.5;
-  pointer-events: none;
+/* Container queries: the panel is a "size container" so its descendants can
+   style themselves based on the panel's actual width. The font-size and
+   padding scale smoothly with the panel's width using `cqi` units (1% of
+   the container's inline size). The clamp() gives both a min (so text
+   doesn't get too tiny) and a max (so it doesn't get comically large on a
+   wide panel). */
+.questing-adventurer-panel {
+  container-type: inline-size;
+}
+
+@container (max-width: 360px) {
+  .questing-adventurer-panel__header {
+    font-size: 14px;
+  }
+  .questing-adventurer-panel__chip {
+    font-size: 14px;
+  }
+  .questing-adventurer-panel__footer input {
+    font-size: 14px;
+  }
+  .questing-adventurer-panel__footer button {
+    font-size: 13px;
+  }
+  .questing-adventurer-panel__trigger-name,
+  .questing-adventurer-panel__move-text,
+  .questing-adventurer-panel__move-library-text {
+    font-size: 14px;
+  }
+}
+
+@container (min-width: 361px) and (max-width: 540px) {
+  .questing-adventurer-panel__header {
+    font-size: 15px;
+  }
+  .questing-adventurer-panel__chip {
+    font-size: 15px;
+  }
+  .questing-adventurer-panel__footer input {
+    font-size: 15px;
+  }
+  .questing-adventurer-panel__footer button {
+    font-size: 14px;
+  }
+  .questing-adventurer-panel__trigger-name,
+  .questing-adventurer-panel__move-text,
+  .questing-adventurer-panel__move-library-text {
+    font-size: 15px;
+  }
+}
+
+@container (min-width: 541px) {
+  .questing-adventurer-panel__header {
+    font-size: 16px;
+  }
+  .questing-adventurer-panel__chip {
+    font-size: 16px;
+  }
+  .questing-adventurer-panel__footer input {
+    font-size: 16px;
+  }
+  .questing-adventurer-panel__footer button {
+    font-size: 15px;
+  }
+  .questing-adventurer-panel__trigger-name,
+  .questing-adventurer-panel__move-text,
+  .questing-adventurer-panel__move-library-text {
+    font-size: 16px;
+  }
 }
 
 .questing-adventurer-panel__empty {
