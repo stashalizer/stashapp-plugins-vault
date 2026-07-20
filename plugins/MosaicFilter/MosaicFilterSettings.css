@@ -1,0 +1,236 @@
+/*
+ * MosaicFilterSettings — settings page styling
+ *
+ * The page is registered at /plugins/mosaicfilter and is also reachable via
+ * the launcher card on the Scene Tools subsection of Settings > Tools.
+ * The launcher is `.mosaic-filter-settings__launcher`; the page itself is
+ * `.mosaic-filter-settings`.
+ */
+
+.mosaic-filter-settings {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  font-family: sans-serif;
+  color: inherit;
+  line-height: 1.4;
+}
+
+.mosaic-filter-settings h1 {
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+
+.mosaic-filter-settings h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.mosaic-filter-settings__intro {
+  margin: 0 0 24px;
+  opacity: 0.85;
+}
+
+.mosaic-filter-settings__loading {
+  opacity: 0.6;
+}
+
+.mosaic-filter-settings__hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
+.mosaic-filter-settings__empty {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.mosaic-filter-settings__section {
+  margin: 0 0 32px;
+  padding: 16px;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+}
+
+.mosaic-filter-settings__section--danger {
+  border-color: rgba(220, 80, 80, 0.4);
+}
+
+.mosaic-filter-settings__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin: 8px 0 12px;
+}
+
+.mosaic-filter-settings__row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  min-width: 140px;
+  flex: 0 1 auto;
+}
+
+.mosaic-filter-settings__row label > span {
+  opacity: 0.85;
+}
+
+.mosaic-filter-settings__row input[type="number"] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.mosaic-filter-settings__row input[type="number"]:focus {
+  outline: 2px solid rgba(100, 150, 255, 0.6);
+  outline-offset: 1px;
+}
+
+.mosaic-filter-settings__checkbox {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-width: 0 !important;
+}
+
+.mosaic-filter-settings__checkbox input[type="checkbox"] {
+  margin: 0;
+}
+
+.mosaic-filter-settings__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.mosaic-filter-settings__error {
+  color: #d33;
+  font-size: 13px;
+}
+
+.mosaic-filter-settings__button {
+  display: inline-block;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+
+.mosaic-filter-settings__button:hover:not([disabled]) {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.mosaic-filter-settings__button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mosaic-filter-settings__button--primary {
+  background: rgba(70, 130, 220, 0.85);
+  border-color: rgba(70, 130, 220, 0.85);
+  color: #fff;
+}
+
+.mosaic-filter-settings__button--primary:hover:not([disabled]) {
+  background: rgba(70, 130, 220, 1);
+}
+
+.mosaic-filter-settings__button--danger {
+  border-color: rgba(220, 80, 80, 0.6);
+  color: rgba(220, 80, 80, 1);
+}
+
+.mosaic-filter-settings__button--danger:hover:not([disabled]) {
+  background: rgba(220, 80, 80, 0.1);
+}
+
+.mosaic-filter-settings__scene-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mosaic-filter-settings__scene-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 4px;
+}
+
+.mosaic-filter-settings__scene-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mosaic-filter-settings__scene-id {
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.mosaic-filter-settings__scene-meta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.mosaic-filter-settings__scene-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Launcher card on the Settings > Scene Tools page. Mirrors the
+   QuestingAdventurer launcher card styling so the two look like siblings. */
+.mosaic-filter-settings__launcher {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.mosaic-filter-settings__launcher-card {
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  background: rgba(128, 128, 128, 0.06);
+  transition: background 120ms ease;
+}
+
+.mosaic-filter-settings__launcher-card:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.mosaic-filter-settings__launcher-card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.mosaic-filter-settings__launcher-card p {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+}

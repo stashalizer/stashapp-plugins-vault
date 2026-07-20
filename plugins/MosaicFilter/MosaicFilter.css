@@ -1,0 +1,179 @@
+/*
+ * Mosaic Filter — overlay CSS
+ *
+ * Namespace prefix: .mosaic-filter-*
+ * Custom properties: --mf-blur (px), --mf-bg-alpha (0..1)
+ *
+ * Structure:
+ *   #VideoJsPlayer (relative)
+ *     .mosaic-filter-rectangle            (the blurred censor rectangle; absolute)
+ *     .mosaic-filter-rectangle__resize    (bottom-right resize handle)
+ *     .mosaic-filter-bar                  (compact control bar; absolute top-right)
+ *       .mosaic-filter-bar__chip
+ *       .mosaic-filter-bar__controls      (revealed when "show controls" is on)
+ *       .mosaic-filter-bar__slider        (blur amount)
+ *       .mosaic-filter-bar__button        (toggle / reset / clear / close)
+ */
+
+/* Override video.js's vjs-user-inactive class so the overlay isn't faded
+   when the user is idle in fullscreen mode. */
+.video-js.vjs-user-inactive .mosaic-filter-rectangle,
+.video-js.vjs-user-inactive .mosaic-filter-bar {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* The blur rectangle: transparent, sits on top of the video, blurs whatever
+   is behind it via backdrop-filter. */
+.mosaic-filter-rectangle {
+  position: absolute;
+  z-index: 8;
+  /* backdrop-filter is the blur effect. Browsers without support will fall
+     back to the semi-opaque background below (graceful degradation). */
+  backdrop-filter: blur(var(--mf-blur, 24px));
+  -webkit-backdrop-filter: blur(var(--mf-blur, 24px));
+  background: rgba(0, 0, 0, var(--mf-bg-alpha, 0.18));
+  border: 1px dashed rgba(255, 255, 255, 0.5);
+  border-radius: 2px;
+  box-sizing: border-box;
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* keep below the control bar so the bar's buttons stay clickable */
+  pointer-events: auto;
+}
+
+.mosaic-filter-rectangle--hidden {
+  display: none;
+}
+
+/* Resize handle in the bottom-right corner of the rectangle. The handle is
+   18×18px visually, but a ::before pseudo-element extends the hit area by
+   10px on the top/right so the touch target is at least ~28×28px while the
+   visual size stays small. */
+.mosaic-filter-rectangle__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.mosaic-filter-rectangle__resize::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 28px;
+  height: 28px;
+}
+
+.mosaic-filter-rectangle__resize::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+  /* Visual chevron made with two intersecting borders (no SVG/asset needed). */
+  background:
+    linear-gradient(135deg, transparent 0 5px, rgba(255, 255, 255, 0.85) 5px 6px, transparent 6px 9px, rgba(255, 255, 255, 0.85) 9px 10px, transparent 10px);
+}
+
+.mosaic-filter-rectangle--dragging,
+.mosaic-filter-rectangle--resizing {
+  /* Slightly stronger outline while interacting. */
+  border-color: rgba(255, 255, 255, 0.9);
+}
+
+/* Control bar — top-right of the player, similar in spirit to the
+   QuestingAdventurer panel but more compact (a single row of buttons). */
+.mosaic-filter-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 6px;
+  font-family: sans-serif;
+  font-size: 13px;
+  line-height: 1.2;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: auto;
+}
+
+.mosaic-filter-bar--collapsed .mosaic-filter-bar__controls {
+  display: none;
+}
+
+.mosaic-filter-bar__chip {
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.mosaic-filter-bar__chip:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.mosaic-filter-bar__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mosaic-filter-bar__button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mosaic-filter-bar__button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.mosaic-filter-bar__button--active {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.mosaic-filter-bar__button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mosaic-filter-bar__slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.mosaic-filter-bar__slider input[type="range"] {
+  width: 80px;
+  vertical-align: middle;
+}
+
+.mosaic-filter-bar__label {
+  font-size: 12px;
+  opacity: 0.85;
+}

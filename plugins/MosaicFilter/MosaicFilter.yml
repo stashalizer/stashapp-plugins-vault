@@ -1,0 +1,14 @@
+name: Mosaic Filter
+description: Toggleable, movable, and resizable mosaic overlay for blurring or censoring any region of a scene. Per-scene position and size are remembered.
+version: 0.1.0
+url: https://github.com/stashalizer/stashapp-plugins-vault
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  javascript:
+    - MosaicFilter.js
+    - MosaicFilterSettings.js
+  css:
+    - MosaicFilter.css
+    - MosaicFilterSettings.css
+# requires: CommunityScriptsUILibrary
