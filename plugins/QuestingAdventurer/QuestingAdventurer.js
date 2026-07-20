@@ -1328,6 +1328,38 @@
 
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
 
+  // Fullscreen re-show: when the video enters fullscreen, the dialog may
+  // have lost its modal state (the test showed dialog.matches(':modal') ===
+  // false after fullscreen, with the VIDEO element on top). Re-closing and
+  // re-opening the dialog with showModal() forces it back into the modal
+  // layer, which per the HTML spec ("If a modal dialog is open, it takes
+  // precedence over the fullscreen element") sits on top of the fullscreen
+  // video.
+  document.addEventListener("fullscreenchange", function () {
+    const dlg = document.querySelector("dialog.questing-adventurer-panel");
+    if (!dlg) return;
+    if (document.fullscreenElement) {
+      // Entering fullscreen — force the dialog into the modal layer.
+      if (dlg.open) dlg.close();
+      try {
+        dlg.showModal();
+        console.log("QuestingAdventurer: re-showed dialog as modal after fullscreen change");
+      } catch (e) {
+        console.warn("QuestingAdventurer: showModal() failed after fullscreen:", e);
+      }
+    } else {
+      // Exiting fullscreen — re-open the dialog (it was closed by
+      // showModal → close cycle).
+      if (!dlg.open) {
+        try {
+          dlg.showModal();
+        } catch (e) {
+          console.warn("QuestingAdventurer: showModal() failed after exit fullscreen:", e);
+        }
+      }
+    }
+  });
+
   if (
     window.PluginApi &&
     window.PluginApi.Event &&
