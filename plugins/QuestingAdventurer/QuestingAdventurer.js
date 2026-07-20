@@ -1311,6 +1311,78 @@
     document.addEventListener("pointercancel", onEnd);
   }
 
+  // Edge resize: handle pointer-drag on the four edge handles (top, right,
+  // bottom, left). The panel is positioned with `top` and `right` (anchored
+  // to the top-right corner of the video player), so each edge update has
+  // to keep the OPPOSITE edge fixed in place by adjusting the appropriate
+  // pair of properties.
+  //   top:    newTop += dy;   newHeight -= dy   (keep bottom in place)
+  //   right:  newRight -= dx; newWidth -= dx    (keep left in place)
+  //   bottom: newHeight += dy                   (keep top in place)
+  //   left:   newWidth -= dx                    (keep right in place)
+  function startEdgeResize(e, panel, edge) {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startTop = state.panelPos.top;
+    const startRight = state.panelPos.right;
+    const startWidth = panel.offsetWidth;
+    const startHeight = panel.offsetHeight;
+
+    // Min/max bounds (mirrored from the CSS rules).
+    const MIN_W = 240, MAX_W = 800;
+    const MIN_H = 80;
+    const MAX_H = Math.floor(window.innerHeight * 0.9);
+
+    function clampWidth(w) { return Math.max(MIN_W, Math.min(MAX_W, w)); }
+    function clampHeight(h) { return Math.max(MIN_H, Math.min(MAX_H, h)); }
+
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      let newTop = startTop, newRight = startRight;
+      let newWidth = startWidth, newHeight = startHeight;
+      if (edge === "top") {
+        newTop = startTop + dy;
+        newHeight = clampHeight(startHeight - dy);
+        // Re-anchor: if height hit a min/max bound, top must follow so the
+        // bottom edge stays at startTop + startHeight.
+        if (startHeight - newHeight !== dy) {
+          newTop = startTop + (startHeight - newHeight);
+        }
+      } else if (edge === "bottom") {
+        newHeight = clampHeight(startHeight + dy);
+      } else if (edge === "right") {
+        newWidth = clampWidth(startWidth - dx);
+        newRight = startRight - dx;
+        if (startWidth - newWidth !== dx) {
+          newRight = startRight - (startWidth - newWidth);
+        }
+      } else if (edge === "left") {
+        newWidth = clampWidth(startWidth - dx);
+        // Right edge stays put — don't touch state.panelPos.right.
+      }
+      state.panelPos = { top: newTop, right: newRight };
+      state.panelSize = { width: newWidth, height: newHeight };
+      panel.style.top = newTop + "px";
+      panel.style.right = newRight + "px";
+      panel.style.width = newWidth + "px";
+      panel.style.height = newHeight + "px";
+    }
+
+    function onEnd() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onEnd);
+      document.removeEventListener("pointercancel", onEnd);
+      queueSave();
+    }
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onEnd);
+    document.addEventListener("pointercancel", onEnd);
+  }
+
   async function setupPanel(playerEl) {
     const match = window.location.pathname.match(/\/scenes\/(\d+)/);
     if (!match) return;
@@ -1350,10 +1422,30 @@
     // Append the panel as a child of the video player. When the player
     // goes fullscreen, the panel goes with it.
     playerEl.appendChild(panel);
-    // Persist any size change from the user's CSS-resize drag. The browser
-    // fires a native "resize" event on the element when the user drags the
-    // bottom-right corner resize handle (CSS resize: both). We capture the
-    // new dimensions and save them.
+
+    // Edge resize handles. 4 thin transparent strips along each edge of
+    // the panel. Each one starts a pointer-drag that resizes the panel on
+    // its edge. The corner regions (where two edges meet) are handled by
+    // whichever edge handle is closest to the click point — a minor UX
+    // simplification vs. eight separate corner handles.
+    ["top", "right", "bottom", "left"].forEach(function (edge) {
+      const handle = document.createElement("div");
+      handle.className =
+        "questing-adventurer-panel__resize-handle " +
+        "questing-adventurer-panel__resize-handle--" +
+        edge;
+      handle.addEventListener("pointerdown", function (e) {
+        startEdgeResize(e, panel, edge);
+      });
+      panel.appendChild(handle);
+    });
+    // Persist any size change from the user's edge-resize drag. The four
+    // edge handles (top/right/bottom/left) are custom (not the native CSS
+    // resize handle), so the browser's native "resize" event won't fire
+    // for them — startEdgeResize() already calls queueSave() on pointerup.
+    // This listener is kept as a defense-in-depth net: if anything else
+    // ever resizes the panel (e.g. a future programmatic resize), this
+    // still persists the new size.
     let resizeSaveTimer = null;
     panel.addEventListener("resize", function () {
       if (resizeSaveTimer) clearTimeout(resizeSaveTimer);

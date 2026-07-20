@@ -412,25 +412,60 @@
   margin-top: 8px;
 }
 
-/* Manual resize: the panel can be resized by dragging the bottom-right
-   corner (CSS resize: both). We override the default browser resize handle
-   to make it more visible against the dark panel, and we set min/max sizes
-   so the user can't shrink the panel to nothing or expand it off-screen. */
+/* Manual resize: the panel can be resized by dragging any of its four
+   edges (top/right/bottom/left). The edge handles are rendered as 4px-tall
+   strips along each edge by the JS (see .questing-adventurer-panel__resize-handle
+   rules below); the native CSS resize handle is no longer used. min/max sizes
+   keep the panel from being collapsed to nothing or expanded off-screen. */
 .questing-adventurer-panel {
-  resize: both;
   overflow: auto;
   min-width: 240px;
   min-height: 80px;
   max-width: 800px;
   max-height: 90vh;
-  /* Style the native browser resize handle so it's visible against the dark
-     panel background. (Only Chromium shows a visible handle; Firefox and
-     Safari still show the default small corner indicator, which is OK.) */
 }
 
-.questing-adventurer-panel::-webkit-resizer {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 2px;
+/* Edge resize handles — 4px-wide transparent strips along each edge of the
+   panel. The cursor is set per-edge (ns-resize for top/bottom, ew-resize for
+   left/right). The actual drag logic lives in startEdgeResize() in the JS,
+   which updates panel.style.top/right/width/height on every pointermove. */
+.questing-adventurer-panel__resize-handle {
+  position: absolute;
+  z-index: 1;
+  /* No background — the strip is invisible until the user hovers. The cursor
+     alone signals the edge is grabbable. */
+}
+.questing-adventurer-panel__resize-handle:hover,
+.questing-adventurer-panel__resize-handle:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+.questing-adventurer-panel__resize-handle--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+}
+.questing-adventurer-panel__resize-handle--right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
+}
+.questing-adventurer-panel__resize-handle--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: ns-resize;
+}
+.questing-adventurer-panel__resize-handle--left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: ew-resize;
 }
 
 /* Container queries: the panel is a "size container" so its descendants can
