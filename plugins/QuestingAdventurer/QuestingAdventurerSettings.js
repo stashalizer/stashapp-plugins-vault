@@ -284,20 +284,21 @@
     }
 
     function deleteMove(id) {
-      const nextTriggers = [];
-      for (const node of triggers) {
-        if (node.type === "move" && node.id === id) continue;
-        if (node.type === "trigger") {
-          nextTriggers.push({
+      // Detach the move from every trigger it's currently attached to.
+      // (The "Delete move" button on each move row in the settings page is
+      // for v2 semantics: the move stays in the global library, but it's
+      // removed from every trigger's attachedMoveIds.)
+      const nextTriggers = triggers.map(function (node) {
+        if (node.type === "trigger" && Array.isArray(node.attachedMoveIds)) {
+          return {
             ...node,
-            attachedMoveIds: (node.attachedMoveIds || []).filter(function (r) {
-              return r.id !== id;
+            attachedMoveIds: node.attachedMoveIds.filter(function (mid) {
+              return mid !== id;
             }),
-          });
-        } else {
-          nextTriggers.push(node);
+          };
         }
-      }
+        return node;
+      });
       commitTriggers(nextTriggers);
     }
 
@@ -318,6 +319,8 @@
     }
 
     function findNodeLocation(id) {
+      // v2 model: trigger.attachedMoveIds is an array of move-ID STRINGS,
+      // not move objects. So the inner loop compares strings, not r.id.
       for (let i = 0; i < triggers.length; i++) {
         const n = triggers[i];
         if (n.id === id) {
@@ -325,8 +328,8 @@
         }
         if (n.type === "trigger" && Array.isArray(n.attachedMoveIds)) {
           for (let j = 0; j < n.attachedMoveIds.length; j++) {
-            if (n.attachedMoveIds[j].id === id) {
-              return { node: n.attachedMoveIds[j], container: n.attachedMoveIds, index: j, parent: n };
+            if (n.attachedMoveIds[j] === id) {
+              return { node: n, container: n.attachedMoveIds, index: j, parent: n };
             }
           }
         }
@@ -372,18 +375,18 @@
     }
 
     function toggleActive(id) {
+      // v2 model: active lives on the TRIGGER, not on the move. The
+      // "Activate/Deactivate" button on each move in the settings page is
+      // repurposed to mean "detach the move from every trigger it's currently
+      // attached to" (i.e. deactivate the move globally). The library entry
+      // itself is kept (the move stays in the global library so it can be
+      // re-attached later).
       const nextTriggers = triggers.map(function (node) {
-        if (node.id === id && node.type === "move") {
-          return { ...node, active: !isActiveMoveLocal(node) };
-        }
         if (node.type === "trigger" && Array.isArray(node.attachedMoveIds)) {
           return {
             ...node,
-            attachedMoveIds: node.attachedMoveIds.map(function (item) {
-              if (item.id === id) {
-                return { ...item, active: !isActiveMoveLocal(item) };
-              }
-              return item;
+            attachedMoveIds: node.attachedMoveIds.filter(function (mid) {
+              return mid !== id;
             }),
           };
         }
