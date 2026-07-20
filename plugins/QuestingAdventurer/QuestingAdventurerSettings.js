@@ -180,6 +180,7 @@
   }
 
   function QuestingAdventurerSettingsPage() {
+    const [moves, setMoves] = useState([]);
     const [triggers, setTriggers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [editingId, setEditingId] = useState(null);

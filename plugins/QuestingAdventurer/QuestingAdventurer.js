@@ -735,12 +735,16 @@
     if (state.collapsed) {
       panel.classList.add("questing-adventurer-panel--collapsed");
       panel.style.setProperty("--qa-bg-alpha", state.opacity);
-      const chip = document.createElement("div");
-      chip.className = "questing-adventurer-panel__chip";
-      chip.dataset.action = "toggle-collapse";
-      chip.title = "Click to expand";
-      chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
-      panel.appendChild(chip);
+      try {
+        const chip = document.createElement("div");
+        chip.className = "questing-adventurer-panel__chip";
+        chip.dataset.action = "toggle-collapse";
+        chip.title = "Click to expand";
+        chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
+        panel.appendChild(chip);
+      } catch (chipErr) {
+        console.error("QuestingAdventurer: failed to render collapse chip:", chipErr);
+      }
       return;
     }
 
