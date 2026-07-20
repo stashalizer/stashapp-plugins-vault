@@ -1277,11 +1277,14 @@
     await migrateFromLegacy();
     await loadState();
 
-    // Use a <dialog> element (not a <div>) so we can call showModal() later
-    // in this function. Modal <dialog> elements are rendered above
-    // fullscreen elements, which is what makes the overlay stay visible in
-    // fullscreen mode.
-    const panel = document.createElement("dialog");
+    // Use a plain <div> (not a <dialog>) so the rest of the page is NOT
+    // made inert. <dialog showModal()> makes everything else non-interactive
+    // (the user has to press Escape twice to recover from fullscreen).
+    // Switching back to a <div> restores full page interactivity; the
+    // trade-off is that the overlay may be behind the fullscreen video
+    // (top-layer stacking by document order). See the 0.9.15 commit
+    // message for the rationale.
+    const panel = document.createElement("div");
     panel.className = "questing-adventurer-panel";
     panel.addEventListener("click", handleClick);
     panel.addEventListener("dblclick", handleDblClick);
@@ -1296,69 +1299,16 @@
     // class after a few seconds of mouse inactivity and its CSS fades out all
     // children of the player — which would also hide our overlay. By mounting
     // the panel on document.body and using `position: fixed` (see CSS), the
-    // overlay sits on top of the fullscreen video at the top-right corner and
-    // is completely outside the video.js DOM tree — no video.js CSS can
-    // touch it.
+    // overlay sits on top of the fullscreen video at the top-right corner
+    // and is completely outside the video.js DOM tree — no video.js CSS can
+    // touch it. (Note: in fullscreen the video may cover the panel because
+    // both are in the top layer and the video is later in document order.
+    // This is a known trade-off; see 0.9.15 commit message for context.)
     document.body.appendChild(panel);
-    // Fullscreen fix: use a <dialog> element opened with showModal() to
-    // promote the panel above the fullscreen video. The HTML spec explicitly
-    // says modal <dialog> elements take precedence over fullscreen elements
-    // ("If a modal dialog is open, it takes precedence over the fullscreen
-    // element"). The Popover API (showPopover) does NOT have that
-    // precedence — both the popover and the fullscreen video are in the
-    // top layer and the video wins (document order). showModal() sidesteps
-    // that by making the panel a "modal dialog" which renders above the
-    // top layer entirely.
-    //
-    // The default <dialog> backdrop is made transparent (see CSS) so the
-    // video stays fully visible. We also listen for the 'cancel' event and
-    // prevent it, so pressing Escape doesn't dismiss the overlay (we manage
-    // dismissal via the X button). 'cancel' is the event that fires before
-    // the dialog closes (from Escape or dialog.close()).
-    try {
-      panel.showModal();
-    } catch (modalErr) {
-      console.warn("QuestingAdventurer: showModal() failed:", modalErr);
-    }
-    panel.addEventListener("cancel", function (e) {
-      e.preventDefault();
-    });
     render();
   }
 
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
-
-  // Fullscreen re-show: when the video enters fullscreen, the dialog may
-  // have lost its modal state (the test showed dialog.matches(':modal') ===
-  // false after fullscreen, with the VIDEO element on top). Re-closing and
-  // re-opening the dialog with showModal() forces it back into the modal
-  // layer, which per the HTML spec ("If a modal dialog is open, it takes
-  // precedence over the fullscreen element") sits on top of the fullscreen
-  // video.
-  document.addEventListener("fullscreenchange", function () {
-    const dlg = document.querySelector("dialog.questing-adventurer-panel");
-    if (!dlg) return;
-    if (document.fullscreenElement) {
-      // Entering fullscreen — force the dialog into the modal layer.
-      if (dlg.open) dlg.close();
-      try {
-        dlg.showModal();
-        console.log("QuestingAdventurer: re-showed dialog as modal after fullscreen change");
-      } catch (e) {
-        console.warn("QuestingAdventurer: showModal() failed after fullscreen:", e);
-      }
-    } else {
-      // Exiting fullscreen — re-open the dialog (it was closed by
-      // showModal → close cycle).
-      if (!dlg.open) {
-        try {
-          dlg.showModal();
-        } catch (e) {
-          console.warn("QuestingAdventurer: showModal() failed after exit fullscreen:", e);
-        }
-      }
-    }
-  });
 
   if (
     window.PluginApi &&
