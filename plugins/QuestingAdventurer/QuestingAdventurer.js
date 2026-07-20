@@ -875,9 +875,14 @@
     panel.appendChild(footer);
 
     // Apply the locked / showAddControls state classes so CSS can hide the
-    // appropriate elements without touching the DOM.
-    if (state.locked) panel.classList.add("questing-adventurer-panel--locked");
-    if (state.showAddControls) panel.classList.add("questing-adventurer-panel--show-add-controls");
+    // appropriate elements without touching the DOM. We use toggle() (not
+    // just add()) so the class is actually REMOVED when the state is false
+    // — otherwise the class would stick around forever after the first time
+    // it was set true, and the CSS hide-by-default would be permanently
+    // overridden.
+    panel.classList.toggle("questing-adventurer-panel--locked", state.locked);
+    panel.classList.toggle("questing-adventurer-panel--show-add-controls", state.showAddControls);
+    console.log("QuestingAdventurer render: showAddControls=" + state.showAddControls + " locked=" + state.locked + " panelHasClass=" + panel.classList.contains("questing-adventurer-panel--show-add-controls"));
 
     syncButtons();
   }
