@@ -25,6 +25,30 @@
   font-family: sans-serif;
   display: flex;
   flex-direction: column;
+  /* Override the <dialog> element's user-agent stylesheet defaults. The
+     UA stylesheet sets position: fixed; inset: 0; margin: auto; etc.,
+     which would center the dialog. We want top-right placement. The
+     `dialog` element selector has specificity (0,0,0,1) and our class
+     has (0,0,1,0), so our values win. */
+  inset: auto;
+  margin: 0;
+  border: none;
+  padding: 8px 12px;
+  /* Suppress the dialog's default solid-color background — our background
+     rule above already paints the translucent panel surface. */
+  background-color: transparent;
+  color: #fff;
+  width: auto;
+  height: auto;
+  max-width: 360px;
+  max-height: none;
+}
+
+/* Make the <dialog> backdrop fully transparent so the video player stays
+   visible behind the overlay. The default ::backdrop is a semi-transparent
+   dark overlay that would dim the video. */
+.questing-adventurer-panel::backdrop {
+  background: transparent;
 }
 
 .questing-adventurer-panel--collapsed {
