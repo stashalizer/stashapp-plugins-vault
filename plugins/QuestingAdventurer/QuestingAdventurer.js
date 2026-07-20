@@ -99,13 +99,6 @@
   // an empty trigger. The button is also disabled in that case.
   function applyPenalty() {
     if (state.triggers.length === 0) return;
-    const availableMoves = getAvailableMoves();
-    if (availableMoves.length === 0) {
-      // No available moves — leave triggers alone. The button should be
-      // disabled in this state, but we defend here too.
-      announceToAria("Penalty: no moves available under the 2-trigger cap. Add more moves to the library.");
-      return;
-    }
     const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
     let trigger;
     let activatedANewTrigger = false;
@@ -116,13 +109,43 @@
     } else {
       trigger = state.triggers[Math.floor(Math.random() * state.triggers.length)];
     }
-    const attachedMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+    // Per-trigger move filter: a move is "available" for THIS trigger if
+    // (a) it's not already attached to this trigger (no duplicates on the
+    // same trigger), and (b) it's attached to fewer than MAX_MOVE_ATTACHMENTS
+    // triggers globally (the 0.9.7 cap). If no moves are available for
+    // this trigger, undo the activation (activation and move attachment are
+    // atomic per the v2 spec) and announce why.
+    const availableForTrigger = state.moves.filter(function (m) {
+      if (trigger.attachedMoveIds.indexOf(m.id) !== -1) return false;
+      let attachCount = 0;
+      for (const t of state.triggers) {
+        if ((t.attachedMoveIds || []).indexOf(m.id) !== -1) {
+          attachCount++;
+          if (attachCount >= MAX_MOVE_ATTACHMENTS) return false;
+        }
+      }
+      return true;
+    });
+    if (availableForTrigger.length === 0) {
+      if (activatedANewTrigger) {
+        // Undo the activation — activation and move attachment are atomic.
+        trigger.active = false;
+      }
+      announceToAria(
+        "Penalty: all available moves are already attached to " +
+          trigger.name +
+          ". Add more moves to the library or pick a different trigger."
+      );
+      queueSave();
+      render();
+      return;
+    }
+    const attachedMove = availableForTrigger[Math.floor(Math.random() * availableForTrigger.length)];
     trigger.attachedMoveIds.push(attachedMove.id);
     queueSave();
     announceToAria(
       "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
     );
-    render();
     render();
   }
 
