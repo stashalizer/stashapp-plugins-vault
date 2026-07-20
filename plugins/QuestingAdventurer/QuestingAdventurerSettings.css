@@ -12,10 +12,61 @@
   margin: 0 0 1rem 0;
 }
 
-.questing-adventurer-settings__list {
+.questing-adventurer-settings__body {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 1rem;
+}
+
+.questing-adventurer-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.questing-adventurer-settings__section-header {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.questing-adventurer-settings__move-library-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.questing-adventurer-settings__move-library-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  word-break: break-word;
+}
+
+.questing-adventurer-settings__move-library-text:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.questing-adventurer-settings__move-references {
+  flex: 0 1 auto;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.questing-adventurer-settings__move-references em {
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
 }
 
 .questing-adventurer-settings__trigger {

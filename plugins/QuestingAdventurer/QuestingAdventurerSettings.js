@@ -597,6 +597,137 @@
 
     const footerDisabled = footerText.trim() === "";
 
+    function deleteMoveFromLibrary(id) {
+      const nextMoves = moves.filter(function (m) { return m.id !== id; });
+      const nextTriggers = triggers.map(function (node) {
+        if (node.type === "trigger" && (node.attachedMoveIds || []).indexOf(id) !== -1) {
+          return {
+            ...node,
+            attachedMoveIds: node.attachedMoveIds.filter(function (m) { return m !== id; }),
+          };
+        }
+        return node;
+      });
+      setMoves(nextMoves);
+      saveMoves(nextMoves);
+      commitTriggers(nextTriggers);
+    }
+
+    function editMoveText(id, newText) {
+      if (editingIdRef.current !== id) return;
+      const trimmed = newText.trim();
+      if (!trimmed) {
+        setEditingId(null);
+        return;
+      }
+      const nextMoves = moves.map(function (m) {
+        if (m.id === id) {
+          return { ...m, text: trimmed };
+        }
+        return m;
+      });
+      setEditingId(null);
+      setMoves(nextMoves);
+      saveMoves(nextMoves);
+    }
+
+    function findReferencingTriggers(moveId) {
+      return triggers.filter(function (t) {
+        return (t.attachedMoveIds || []).indexOf(moveId) !== -1;
+      });
+    }
+
+    function renderMoveLibrary() {
+      return h(
+        "div",
+        { className: "questing-adventurer-settings__section" },
+        h("h3", { className: "questing-adventurer-settings__section-header" }, "Move Library"),
+        moves.length === 0
+          ? h(
+              "div",
+              { className: "questing-adventurer-settings__empty" },
+              "No moves yet. Add some via the footer or via a trigger's + button."
+            )
+          : moves.map(function (move) {
+              const referencedBy = findReferencingTriggers(move.id);
+              return h(
+                "div",
+                {
+                  key: move.id,
+                  className: "questing-adventurer-settings__move-library-item",
+                },
+                h(
+                  "span",
+                  { className: "questing-adventurer-settings__move-library-text" },
+                  editingId === move.id
+                    ? h("input", {
+                        ref: inputRef,
+                        className: "questing-adventurer-settings__edit-input",
+                        defaultValue: move.text,
+                        onKeyDown: function (e) {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            editMoveText(move.id, e.target.value);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditingId(null);
+                          }
+                        },
+                        onBlur: function (e) {
+                          editMoveText(move.id, e.target.value);
+                        },
+                      })
+                    : h(
+                        "span",
+                        {
+                          title: "Double-click to edit",
+                          onDoubleClick: function () {
+                            setEditingId(move.id);
+                          },
+                        },
+                        move.text
+                      )
+                ),
+                h(
+                  "span",
+                  { className: "questing-adventurer-settings__move-references" },
+                  referencedBy.length === 0
+                    ? h("em", null, "Unattached")
+                    : "Used by: " + referencedBy.map(function (t) { return t.name; }).join(", ")
+                ),
+                h(
+                  "span",
+                  { className: "questing-adventurer-settings__controls" },
+                  h(
+                    "button",
+                    {
+                      title:
+                        referencedBy.length > 0
+                          ? "Delete move (detaches from " + referencedBy.length + " trigger(s))"
+                          : "Delete move",
+                      className: "questing-adventurer-settings__delete-btn",
+                      onClick: function () {
+                        if (referencedBy.length > 0) {
+                          const ok = window.confirm(
+                            'Delete move "' +
+                              move.text +
+                              '"? It is currently attached to ' +
+                              referencedBy.length +
+                              " trigger(s) and will be detached from all of them."
+                          );
+                          if (!ok) return;
+                        }
+                        deleteMoveFromLibrary(move.id);
+                      },
+                    },
+                    "×"
+                  )
+                )
+              );
+            })
+      );
+    }
+
     return h(
       "div",
       { className: "questing-adventurer-settings" },
@@ -605,7 +736,9 @@
         ? h("div", null, "Loading...")
         : h(
             "div",
-            { className: "questing-adventurer-settings__list" },
+            { className: "questing-adventurer-settings__body" },
+            renderMoveLibrary(),
+            h("h3", { className: "questing-adventurer-settings__section-header" }, "Triggers"),
             triggers.length === 0
               ? h(
                   "div",
