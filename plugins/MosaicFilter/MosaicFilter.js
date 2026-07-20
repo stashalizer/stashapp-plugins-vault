@@ -37,6 +37,7 @@
     xPct: 0.1,
     yPct: 0.1,
     active: true,
+    follow: false, // when true, the rectangle tracks the cursor
   };
 
   const MIN_SIZE_PCT = 0.05;
@@ -131,6 +132,7 @@
       xPct: isFiniteNumber(entry.xPct) ? entry.xPct : d.xPct,
       yPct: isFiniteNumber(entry.yPct) ? entry.yPct : d.yPct,
       active: typeof entry.active === "boolean" ? entry.active : d.active,
+      follow: typeof entry.follow === "boolean" ? entry.follow : d.follow,
     };
     out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
     out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
@@ -237,6 +239,7 @@
   function renderBar() {
     if (!bar || !sceneState) return;
     const on = !!sceneState.active;
+    const follow = !!sceneState.follow;
     // Respect the user's collapsed/expanded preference across re-renders.
     bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
     bar.innerHTML =
@@ -251,6 +254,9 @@
         "</span>" +
         '<button type="button" class="mosaic-filter-bar__button ' + (on ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-active" title="Toggle mosaic on this scene">' +
           (on ? "✓ Active" : "⏸ Off") +
+        "</button>" +
+        '<button type="button" class="mosaic-filter-bar__button ' + (follow ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">' +
+          (follow ? "🎯 Follow" : "🎯 Follow") +
         "</button>" +
         '<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset this scene\'s mosaic to defaults">' +
           "↺ Reset" +
@@ -290,6 +296,11 @@
       clearTimeout(pendingSliderSaveTimer);
       pendingSliderSaveTimer = null;
     }
+    if (followSaveTimer) {
+      clearTimeout(followSaveTimer);
+      followSaveTimer = null;
+    }
+    detachFollowListener();
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
     rect = null;
@@ -298,6 +309,8 @@
     player = null;
     // Reset the collapse preference so the next scene starts expanded.
     barCollapsed = false;
+    // Drop the stale cursor position; the next scene gets a fresh one.
+    lastPointer = null;
   }
 
   function setupPanel(targetPlayer) {
@@ -369,6 +382,16 @@
       player.appendChild(bar);
       attachBarListeners();
     }
+    // Always attach the follow listener while the overlay is mounted, so
+    // that toggling Follow on later just flips the flag (and snaps the
+    // rectangle to the cursor) without re-binding event handlers.
+    attachFollowListener();
+    // If the user re-enters a scene with follow=true already saved, snap
+    // the rectangle to the cursor so they don't see a jump from the saved
+    // location to the cursor on the next pointermove.
+    if (sceneState && sceneState.follow) {
+      snapRectToPointer();
+    }
     return true;
   }
 
@@ -379,6 +402,12 @@
   function onRectPointerDown(e) {
     if (!sceneState) return;
     if (e.button !== undefined && e.button !== 0) return; // primary button only
+    // In follow mode the rectangle is anchored to the cursor already, so
+    // dragging it is redundant and would just fight the follow handler.
+    // Resize still works.
+    if (sceneState.follow && e.target.dataset.action !== "rect-resize") {
+      return;
+    }
     const target = e.target;
     const action = target && target.dataset && target.dataset.action;
     let type;
@@ -479,6 +508,15 @@
         renderBar();
         renderRect();
         break;
+      case "toggle-follow":
+        sceneState.follow = !sceneState.follow;
+        queueSave();
+        renderBar();
+        // Snap the rectangle to the current cursor position so the user
+        // doesn't see a "jump" from the saved location to the cursor on the
+        // next pointermove.
+        if (sceneState.follow) snapRectToPointer();
+        break;
       case "reset-defaults": {
         // Replace this scene's entry with a copy of the current defaults.
         const fresh = sanitizeSceneEntry({ ...state.defaults });
@@ -541,6 +579,88 @@
     bar.addEventListener("click", onBarClick);
     bar.addEventListener("input", onBarInput);
     bar.addEventListener("change", onBarChange);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Follow-cursor mode
+  //
+  // When sceneState.follow is true, the rectangle's center tracks the cursor
+  // position. The pointermove listener is attached to the player (not the
+  // document) so the rectangle only follows while the cursor is over the
+  // video; once the cursor leaves, the rectangle stays at its last position.
+  // The last known cursor position is stored in `lastPointer` so that
+  // toggling Follow on (or mounting the overlay mid-follow) snaps the
+  // rectangle to where the cursor currently is, avoiding a visible jump.
+  // ---------------------------------------------------------------------------
+
+  let lastPointer = null; // { x: number, y: number } in client coordinates
+
+  function onPlayerPointerMove(e) {
+    // Always record the latest cursor position over the player, so that
+    // toggling Follow on later snaps to the right spot.
+    lastPointer = { x: e.clientX, y: e.clientY };
+    if (!sceneState || !sceneState.follow) return;
+    if (dragState) return; // a drag/resize is in progress; let it own the position
+    if (!player || !rect) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    const pr = player.getBoundingClientRect();
+    // Center of rectangle should land on the cursor.
+    const halfWPct = sceneState.widthPct / 2;
+    const halfHPct = sceneState.heightPct / 2;
+    // Convert cursor (client coords) → fraction of player.
+    const cursorXPct = (e.clientX - pr.left) / pw;
+    const cursorYPct = (e.clientY - pr.top) / ph;
+    sceneState.xPct = clamp(cursorXPct - halfWPct, 0, 1 - sceneState.widthPct);
+    sceneState.yPct = clamp(cursorYPct - halfHPct, 0, 1 - sceneState.heightPct);
+    renderRect();
+    // Save is throttled to one write per animation frame to avoid hammering
+    // csLib on every pointermove. queuedByFollowSave tracks the pending timer.
+    scheduleFollowSave();
+  }
+
+  let followSaveTimer = null;
+  function scheduleFollowSave() {
+    if (followSaveTimer) return;
+    followSaveTimer = setTimeout(function () {
+      followSaveTimer = null;
+      queueSave();
+    }, 120);
+  }
+
+  // Snap the rectangle to the last known cursor position (or to the center
+  // of the player if no cursor position has been recorded yet). Used when
+  // the user toggles Follow on so the rectangle doesn't visibly jump from
+  // its saved location to the cursor on the next pointermove.
+  function snapRectToPointer() {
+    if (!player || !rect || !sceneState) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    const pr = player.getBoundingClientRect();
+    let cursorXPct, cursorYPct;
+    if (lastPointer) {
+      cursorXPct = (lastPointer.x - pr.left) / pw;
+      cursorYPct = (lastPointer.y - pr.top) / ph;
+    } else {
+      cursorXPct = 0.5;
+      cursorYPct = 0.5;
+    }
+    sceneState.xPct = clamp(cursorXPct - sceneState.widthPct / 2, 0, 1 - sceneState.widthPct);
+    sceneState.yPct = clamp(cursorYPct - sceneState.heightPct / 2, 0, 1 - sceneState.heightPct);
+    renderRect();
+    queueSave();
+  }
+
+  function attachFollowListener() {
+    if (!player) return;
+    player.addEventListener("pointermove", onPlayerPointerMove);
+  }
+
+  function detachFollowListener() {
+    if (!player) return;
+    player.removeEventListener("pointermove", onPlayerPointerMove);
   }
 
   // ---------------------------------------------------------------------------

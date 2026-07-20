@@ -43,6 +43,7 @@
     xPct: 0.1,
     yPct: 0.1,
     active: true,
+    follow: false,
   };
 
   let settingsToolsCallCount = 0;
@@ -86,6 +87,7 @@
         1
       ),
       active: typeof d.active === "boolean" ? d.active : FALLBACK_DEFAULTS.active,
+      follow: typeof d.follow === "boolean" ? d.follow : FALLBACK_DEFAULTS.follow,
     };
   }
 
@@ -314,6 +316,14 @@
               onChange: function (e) { updateDefaults({ active: !!e.target.checked }); },
             }),
             h("span", null, "Active by default")
+          ),
+          h("label", { className: "mosaic-filter-settings__checkbox" },
+            h("input", {
+              type: "checkbox",
+              checked: !!defaults.follow,
+              onChange: function (e) { updateDefaults({ follow: !!e.target.checked }); },
+            }),
+            h("span", null, "Follow cursor by default")
           ),
         ),
         h("div", { className: "mosaic-filter-settings__actions" },

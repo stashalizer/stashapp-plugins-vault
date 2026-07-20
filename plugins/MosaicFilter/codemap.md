@@ -11,12 +11,14 @@ State shape (persisted under the config key `"MosaicFilter"`):
     blurAmount: number,    // default backdrop-filter blur radius in px (e.g. 24)
     widthPct: number,      // default mosaic width as % of player (0..1) (e.g. 0.25)
     heightPct: number,     // default mosaic height as % of player (0..1) (e.g. 0.25)
-    active: boolean        // default active state for new scenes
+    active: boolean,       // default active state for new scenes
+    follow: boolean        // default follow-cursor state for new scenes
   },
   scenes: {
     // sceneId (string, from /scenes/<id>) -> per-scene mosaic rectangle
     [sceneId]: {
       active: boolean,     // is the mosaic on for this scene?
+      follow: boolean,     // does the rectangle track the cursor?
       xPct: number,        // top-left as % of player (0..1)
       yPct: number,
       widthPct: number,    // size as % of player (0..1)
@@ -56,6 +58,7 @@ Position and size are stored as **percentages of the player** so the mosaic rect
    - Renders the control bar: title chip, on/off toggle, blur slider, "Reset to defaults", "Clear this scene's data", and "Close" (×).
 4. **Header actions** (event delegation on `data-action`):
    - **Toggle** (`toggle-active`): flips `sceneState.active`, `queueSave()`, re-render.
+   - **Follow** (`toggle-follow`): flips `sceneState.follow`. When turned on, `snapRectToPointer()` jumps the rectangle to the current cursor position so the user doesn't see a "lag" from the saved location to the cursor on the next pointermove. While follow is on, the player-level `pointermove` listener centers the rectangle on the cursor; the rectangle's drag handler refuses to start (resize still works).
    - **Reset to defaults** (`reset-defaults`): overwrites this scene's slot with `state.defaults`, `queueSave()`, re-render.
    - **Close** (`close-bar`): collapses the control bar (the rectangle stays if it is `active`); the bar can be brought back by clicking the chip. Collapse state is tracked in a module-level `barCollapsed` so re-renders don't silently re-expand the controls.
    - **Chip click** (`toggle-bar`): toggles `barCollapsed` (expands/collapses the controls).
@@ -63,13 +66,17 @@ Position and size are stored as **percentages of the player** so the mosaic rect
    - `pointerdown` on the rectangle starts a drag; we track the start pointer position and the start `xPct`/`yPct`.
    - `pointermove` (with `setPointerCapture`) updates `xPct`/`yPct` from pointer delta / player size; clamps to `[0, 1 - widthPct/heightPct]`.
    - `pointerup`/`pointercancel` ends the drag and calls `queueSave()`.
+   - Disabled while `sceneState.follow` is true (the cursor already drives the position); only the resize handle can start an interaction in that mode.
 6. **Resize**:
    - A bottom-right resize handle starts a resize drag on `pointerdown`.
    - `pointermove` updates `widthPct`/`heightPct` from pointer delta; clamps to a minimum (e.g. 0.05).
    - `pointerup`/`pointercancel` ends and `queueSave()`.
-7. **Blur slider**:
+7. **Follow-cursor**:
+   - A `pointermove` listener is attached to the player (not the document) while the overlay is mounted. When `sceneState.follow` is true, the handler re-centers the rectangle on the cursor and schedules a throttled `queueSave()` (one write per ~120 ms while the cursor is in motion).
+   - The handler always records the latest cursor position in `lastPointer`; toggling Follow on later calls `snapRectToPointer()` so the rectangle jumps to that position immediately.
+8. **Blur slider**:
    - `<input type="range">` with `min=0 max=80 step=1`; `input` listener mutates `sceneState.blurAmount`, updates the inline `--mf-blur` custom property, and `queueSave()`.
-8. `queueSave` → `csLib.setConfiguration("MosaicFilter", state)` (whole config map) wrapped in the async save lock.
+9. `queueSave` → `csLib.setConfiguration("MosaicFilter", state)` (whole config map) wrapped in the async save lock.
 
 **Settings (`MosaicFilterSettings.js`):**
 1. On script load, `PluginApi.patch.before("PluginRoutes", ...)` registers `<Route path="/plugins/mosaicfilter" />` and `PluginApi.patch.before("SettingsToolsSection", ...)` adds a launcher card on even calls (Scene Tools section).
