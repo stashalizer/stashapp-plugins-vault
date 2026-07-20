@@ -912,12 +912,25 @@
       });
     }
 
-    input.addEventListener("input", syncButtons);
+    // Only run syncButtons() when the input's empty/non-empty state changes,
+    // not on every keystroke. The button disabled states only flip when the
+    // input goes from empty → non-empty or vice versa; running the full
+    // DOM traversal (querySelectorAll over every trigger's add-move-into
+    // button) on every keypress is wasteful at scale.
+    let wasEmpty = true;
+    input.addEventListener("input", function (e) {
+      const isEmpty = e.target.value.trim() === "";
+      if (isEmpty !== wasEmpty) {
+        wasEmpty = isEmpty;
+        syncButtons();
+      }
+    });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && input.value.trim() !== "") {
+        // addMoveTop calls render() which rebuilds the DOM with a fresh empty
+        // input and a fresh syncButtons() call. No need to clear the value
+        // or call syncButtons() here — the old DOM is already detached.
         addMoveTop(input.value.trim());
-        input.value = "";
-        syncButtons();
       }
     });
 
