@@ -72,11 +72,20 @@ Position and size are stored as **percentages of the player** so the mosaic rect
    - `pointermove` updates `widthPct`/`heightPct` from pointer delta; clamps to a minimum (e.g. 0.05).
    - `pointerup`/`pointercancel` ends and `queueSave()`.
 7. **Follow-cursor**:
-   - A `pointermove` listener is attached to the player (not the document) while the overlay is mounted. When `sceneState.follow` is true, the handler re-centers the rectangle on the cursor and schedules a throttled `queueSave()` (one write per ~120 ms while the cursor is in motion).
+   - A `pointermove` listener is attached to the player (not the document) while the overlay is mounted. When `sceneState.follow` is true, the handler re-centers the rectangle on the cursor.
+   - **Follow-mode position updates are in-memory only** — no `csLib.setConfiguration` is called per pointermove. Every intermediate cursor position is throwaway, and persisting each one would mean a `configurePlugin` GraphQL mutation per frame. The position is persisted at the natural boundaries instead (see "Save policy" below).
    - The handler always records the latest cursor position in `lastPointer`; toggling Follow on later calls `snapRectToPointer()` so the rectangle jumps to that position immediately.
 8. **Blur slider**:
    - `<input type="range">` with `min=0 max=80 step=1`; `input` listener mutates `sceneState.blurAmount`, updates the inline `--mf-blur` custom property, and `queueSave()`.
-9. `queueSave` → `csLib.setConfiguration("MosaicFilter", state)` (whole config map) wrapped in the async save lock.
+
+### Save policy
+Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a continuous animation:
+- **Toggle buttons** (active, follow, reset): immediate write.
+- **Drag / resize end** (`pointerup`/`pointercancel`): immediate write.
+- **Blur slider**: debounced 80 ms (one write per quiet period while dragging).
+- **Scene transition** (`setupPanel` when `currentSceneId` is about to change to a new id): writes the *outgoing* scene's in-memory state. This is the only place a follow-mode position update gets persisted for a scene the user is leaving without first toggling Follow off.
+- **`pagehide` event** (tab close, navigation, reload): best-effort write. Async saves may not complete before the page unloads, but the request is at least submitted.
+- The only writes we miss are when the user closes the tab in the middle of a follow-mode drag without navigating to another scene first. That's an acceptable trade-off for going from ~8 writes/sec to ≤1 write per scene change.
 
 **Settings (`MosaicFilterSettings.js`):**
 1. On script load, `PluginApi.patch.before("PluginRoutes", ...)` registers `<Route path="/plugins/mosaicfilter" />` and `PluginApi.patch.before("SettingsToolsSection", ...)` adds a launcher card on even calls (Scene Tools section).

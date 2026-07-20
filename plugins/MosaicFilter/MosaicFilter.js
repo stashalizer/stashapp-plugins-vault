@@ -296,10 +296,6 @@
       clearTimeout(pendingSliderSaveTimer);
       pendingSliderSaveTimer = null;
     }
-    if (followSaveTimer) {
-      clearTimeout(followSaveTimer);
-      followSaveTimer = null;
-    }
     detachFollowListener();
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
@@ -335,6 +331,16 @@
     if (currentSceneId === id && rect && bar) {
       render();
       return;
+    }
+
+    // Transitioning to a new scene (or onto a scene page for the first
+    // time). Persist any in-memory changes for the outgoing scene before
+    // `loadState` overwrites `state` with the new scene's config. This is
+    // the *only* place a position update made during follow-mode (which
+    // deliberately does not write to csLib in real time) can be persisted
+    // for the scene the user is leaving.
+    if (currentSceneId !== null && currentSceneId !== id) {
+      queueSave();
     }
 
     // New scene visit: load fresh config, mount, render.
@@ -607,26 +613,17 @@
     if (pw === 0 || ph === 0) return;
     const pr = player.getBoundingClientRect();
     // Center of rectangle should land on the cursor.
-    const halfWPct = sceneState.widthPct / 2;
-    const halfHPct = sceneState.heightPct / 2;
     // Convert cursor (client coords) → fraction of player.
     const cursorXPct = (e.clientX - pr.left) / pw;
     const cursorYPct = (e.clientY - pr.top) / ph;
-    sceneState.xPct = clamp(cursorXPct - halfWPct, 0, 1 - sceneState.widthPct);
-    sceneState.yPct = clamp(cursorYPct - halfHPct, 0, 1 - sceneState.heightPct);
+    sceneState.xPct = clamp(cursorXPct - sceneState.widthPct / 2, 0, 1 - sceneState.widthPct);
+    sceneState.yPct = clamp(cursorYPct - sceneState.heightPct / 2, 0, 1 - sceneState.heightPct);
+    // In-memory update only. We deliberately do NOT call queueSave() here:
+    // every intermediate cursor position is throwaway, and csLib writes
+    // round-trip through a GraphQL mutation. The position is persisted at
+    // the natural boundaries instead (toggle-follow off, scene navigation,
+    // pagehide) — see the design note in codemap.md.
     renderRect();
-    // Save is throttled to one write per animation frame to avoid hammering
-    // csLib on every pointermove. queuedByFollowSave tracks the pending timer.
-    scheduleFollowSave();
-  }
-
-  let followSaveTimer = null;
-  function scheduleFollowSave() {
-    if (followSaveTimer) return;
-    followSaveTimer = setTimeout(function () {
-      followSaveTimer = null;
-      queueSave();
-    }, 120);
   }
 
   // Snap the rectangle to the last known cursor position (or to the center
@@ -689,5 +686,16 @@
   // Re-position the rectangle on window resize so the percentages stay right.
   window.addEventListener("resize", function () {
     if (rect && player) renderRect();
+  });
+
+  // Best-effort: persist any in-memory changes (e.g. follow-mode position
+  // updates that have not yet been written) before the page is hidden.
+  // The csLib save is async; the browser may unload before the Promise
+  // resolves, but the data is at least submitted. Most browsers fire
+  // `pagehide` on tab close, navigation, and reload; combined with the
+  // scene-transition save above, the only writes we miss are when the
+  // user closes the tab in the middle of a follow-mode drag.
+  window.addEventListener("pagehide", function () {
+    queueSave();
   });
 })();
