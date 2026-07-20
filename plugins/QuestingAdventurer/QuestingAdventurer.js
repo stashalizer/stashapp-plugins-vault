@@ -29,8 +29,9 @@
   const CONFIG_KEY = "QuestingAdventurer";
   const LEGACY_CONFIG_KEY = "SceneRules";
   const DEFAULT_OPACITY = 0.6;
+  const DEFAULT_PANEL_POS = { top: 8, right: 8 };
 
-  let state = { quests: [], collapsed: true, opacity: DEFAULT_OPACITY };
+  let state = { quests: [], collapsed: true, opacity: DEFAULT_OPACITY, panelPos: { ...DEFAULT_PANEL_POS } };
   let editingId = null;
   let saving = false;
   let pendingSave = false;
@@ -415,55 +416,57 @@
   }
 
   function migrateFromLegacy() {
-    try {
-      const current = csLib.getConfiguration(CONFIG_KEY);
-      const hasCurrent =
-        current && (Array.isArray(current.quests) || Array.isArray(current.rules));
-      if (hasCurrent) return;
-      const legacy = csLib.getConfiguration(LEGACY_CONFIG_KEY);
-      if (!legacy) return;
-      const legacyNodes = Array.isArray(legacy.quests)
-        ? legacy.quests
-        : Array.isArray(legacy.rules)
-        ? legacy.rules
-        : [];
-      if (legacyNodes.length === 0) return;
-      const migrated = {
-        quests: legacyNodes.map(function (node) {
-          if (node.type === "category") {
-            return {
-              id: node.id || generateId(),
-              type: "quest",
-              name: node.name,
-              items: (node.items || []).map(function (item) {
-                return { id: item.id || generateId(), type: "move", text: item.text, active: true };
-              }),
-            };
-          }
-          return { id: node.id || generateId(), type: "move", text: node.text, active: true };
-        }),
-        collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
-      };
+    return (async function () {
       try {
-        csLib.setConfiguration(CONFIG_KEY, migrated);
-      } catch (e) {
-        console.error("QuestingAdventurer: failed to write migrated config:", e);
-        return;
+        const current = await csLib.getConfiguration(CONFIG_KEY);
+        const hasCurrent =
+          current && (Array.isArray(current.quests) || Array.isArray(current.rules));
+        if (hasCurrent) return;
+        const legacy = await csLib.getConfiguration(LEGACY_CONFIG_KEY);
+        if (!legacy) return;
+        const legacyNodes = Array.isArray(legacy.quests)
+          ? legacy.quests
+          : Array.isArray(legacy.rules)
+          ? legacy.rules
+          : [];
+        if (legacyNodes.length === 0) return;
+        const migrated = {
+          quests: legacyNodes.map(function (node) {
+            if (node.type === "category") {
+              return {
+                id: node.id || generateId(),
+                type: "quest",
+                name: node.name,
+                items: (node.items || []).map(function (item) {
+                  return { id: item.id || generateId(), type: "move", text: item.text, active: true };
+                }),
+              };
+            }
+            return { id: node.id || generateId(), type: "move", text: node.text, active: true };
+          }),
+          collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
+        };
+        try {
+          await csLib.setConfiguration(CONFIG_KEY, migrated);
+        } catch (e) {
+          console.error("QuestingAdventurer: failed to write migrated config:", e);
+          return;
+        }
+        try {
+          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
+        } catch (e) {
+          console.error("QuestingAdventurer: failed to clear legacy config:", e);
+        }
+        console.info("QuestingAdventurer: migrated legacy SceneRules config.");
+      } catch (err) {
+        console.error("QuestingAdventurer: migration check failed:", err);
       }
-      try {
-        csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
-      } catch (e) {
-        console.error("QuestingAdventurer: failed to clear legacy config:", e);
-      }
-      console.info("QuestingAdventurer: migrated legacy SceneRules config.");
-    } catch (err) {
-      console.error("QuestingAdventurer: migration check failed:", err);
-    }
+    })();
   }
 
-  function loadState() {
+  async function loadState() {
     try {
-      const stored = csLib.getConfiguration(CONFIG_KEY) || {};
+      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
       const raw = Array.isArray(stored.quests)
         ? stored.quests
         : Array.isArray(stored.rules)
@@ -476,15 +479,28 @@
           ? stored.opacity
           : DEFAULT_OPACITY;
       state.opacity = Math.min(1, Math.max(0, o));
+      if (
+        stored.panelPos &&
+        typeof stored.panelPos.top === "number" &&
+        typeof stored.panelPos.right === "number"
+      ) {
+        state.panelPos = {
+          top: Math.max(0, stored.panelPos.top),
+          right: Math.max(0, stored.panelPos.right),
+        };
+      } else {
+        state.panelPos = { ...DEFAULT_PANEL_POS };
+      }
     } catch (err) {
       console.error("QuestingAdventurer: failed to load configuration:", err);
       state.quests = [];
       state.collapsed = true;
       state.opacity = DEFAULT_OPACITY;
+      state.panelPos = { ...DEFAULT_PANEL_POS };
     }
   }
 
-  function queueSave() {
+  async function queueSave() {
     if (saving) {
       pendingSave = true;
       return;
@@ -496,25 +512,15 @@
         quests: state.quests,
         collapsed: state.collapsed,
         opacity: state.opacity,
+        panelPos: state.panelPos,
       });
-      if (result && typeof result.then === "function") {
-        result
-          .then(function () {
-            saving = false;
-            if (pendingSave) queueSave();
-          })
-          .catch(function (err) {
-            saving = false;
-            console.error("QuestingAdventurer: failed to save configuration:", err);
-            if (pendingSave) queueSave();
-          });
-      } else {
-        saving = false;
-        if (pendingSave) queueSave();
-      }
-    } catch (err) {
+      await result;
       saving = false;
+      if (pendingSave) queueSave();
+    } catch (err) {
       console.error("QuestingAdventurer: failed to save configuration:", err);
+      saving = false;
+      if (pendingSave) queueSave();
     }
   }
 
@@ -613,6 +619,7 @@
 
     const header = document.createElement("div");
     header.className = "questing-adventurer-panel__header";
+    header.addEventListener("pointerdown", startPanelDrag);
     const title = document.createElement("span");
     title.className = "questing-adventurer-panel__header-title";
     title.textContent = "Quests";
@@ -1008,7 +1015,53 @@
     }
   }
 
-  function setupPanel(playerEl) {
+  function startPanelDrag(e) {
+    // Don't start a panel drag when the user is pressing a button inside the
+    // header (penalty, reward, opacity icon, close).
+    if (e.target.closest("button") || e.target.closest("input")) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    const panel = document.querySelector(".questing-adventurer-panel");
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const startTop = state.panelPos.top;
+    const startRight = state.panelPos.right;
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    function clampPosition(top, right) {
+      const maxTop = Math.max(0, window.innerHeight - rect.height);
+      const maxRight = Math.max(0, window.innerWidth - rect.width);
+      return {
+        top: Math.max(0, Math.min(maxTop, top)),
+        right: Math.max(0, Math.min(maxRight, right)),
+      };
+    }
+
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      // "right" decreases as the user drags right (the panel's right edge
+      // moves toward the viewport's right edge).
+      const next = clampPosition(startTop + dy, startRight - dx);
+      state.panelPos = next;
+      panel.style.top = next.top + "px";
+      panel.style.right = next.right + "px";
+    }
+
+    function onEnd() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onEnd);
+      document.removeEventListener("pointercancel", onEnd);
+      queueSave();
+    }
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onEnd);
+    document.addEventListener("pointercancel", onEnd);
+  }
+
+  async function setupPanel(playerEl) {
     const match = window.location.pathname.match(/\/scenes\/(\d+)/);
     if (!match) return;
 
@@ -1019,13 +1072,18 @@
       playerEl.style.position = "relative";
     }
 
-    migrateFromLegacy();
-    loadState();
+    await migrateFromLegacy();
+    await loadState();
 
     const panel = document.createElement("div");
     panel.className = "questing-adventurer-panel";
     panel.addEventListener("click", handleClick);
     panel.addEventListener("dblclick", handleDblClick);
+
+    // Apply persisted position (or default) so the panel appears where the
+    // user last left it, not in the hardcoded CSS top-right corner.
+    panel.style.top = state.panelPos.top + "px";
+    panel.style.right = state.panelPos.right + "px";
 
     playerEl.appendChild(panel);
     render();

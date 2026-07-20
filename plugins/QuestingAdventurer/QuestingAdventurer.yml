@@ -1,7 +1,7 @@
 name: Questing Adventurer
 description: Interactive overlay that turns scene playback into a quest — respond to on-screen gestures and dance moves with the active moves from your quest log.
-version: 0.4
-url: https://discourse.stashapp.cc/
+version: 0.5
+url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   requires:
     - CommunityScriptsUILibrary

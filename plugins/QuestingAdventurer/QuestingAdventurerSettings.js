@@ -51,53 +51,55 @@
   }
 
   function migrateFromLegacy() {
-    try {
-      const current = csLib.getConfiguration(CONFIG_KEY);
-      const hasCurrent =
-        current && (Array.isArray(current.quests) || Array.isArray(current.rules));
-      if (hasCurrent) return;
-      const legacy = csLib.getConfiguration(LEGACY_CONFIG_KEY);
-      if (!legacy) return;
-      const legacyNodes = Array.isArray(legacy.quests)
-        ? legacy.quests
-        : Array.isArray(legacy.rules)
-        ? legacy.rules
-        : [];
-      if (legacyNodes.length === 0) return;
-      const migrated = {
-        quests: legacyNodes.map(function (node) {
-          if (node.type === "category") {
-            return {
-              id: node.id || generateId(),
-              type: "quest",
-              name: node.name,
-              items: (node.items || []).map(function (item) {
-                return { id: item.id || generateId(), type: "move", text: item.text, active: true };
-              }),
-            };
-          }
-          return { id: node.id || generateId(), type: "move", text: node.text, active: true };
-        }),
-        collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
-      };
+    return (async function () {
       try {
-        csLib.setConfiguration(CONFIG_KEY, migrated);
-      } catch (e) {
-        console.error("QuestingAdventurer settings: failed to write migrated config:", e);
-        return;
+        const current = await csLib.getConfiguration(CONFIG_KEY);
+        const hasCurrent =
+          current && (Array.isArray(current.quests) || Array.isArray(current.rules));
+        if (hasCurrent) return;
+        const legacy = await csLib.getConfiguration(LEGACY_CONFIG_KEY);
+        if (!legacy) return;
+        const legacyNodes = Array.isArray(legacy.quests)
+          ? legacy.quests
+          : Array.isArray(legacy.rules)
+          ? legacy.rules
+          : [];
+        if (legacyNodes.length === 0) return;
+        const migrated = {
+          quests: legacyNodes.map(function (node) {
+            if (node.type === "category") {
+              return {
+                id: node.id || generateId(),
+                type: "quest",
+                name: node.name,
+                items: (node.items || []).map(function (item) {
+                  return { id: item.id || generateId(), type: "move", text: item.text, active: true };
+                }),
+              };
+            }
+            return { id: node.id || generateId(), type: "move", text: node.text, active: true };
+          }),
+          collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
+        };
+        try {
+          await csLib.setConfiguration(CONFIG_KEY, migrated);
+        } catch (e) {
+          console.error("QuestingAdventurer settings: failed to write migrated config:", e);
+          return;
+        }
+        try {
+          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
+        } catch (e) {
+          console.error("QuestingAdventurer settings: failed to clear legacy config:", e);
+        }
+        console.info("QuestingAdventurer settings: migrated legacy SceneRules config.");
+      } catch (err) {
+        console.error("QuestingAdventurer settings: migration check failed:", err);
       }
-      try {
-        csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
-      } catch (e) {
-        console.error("QuestingAdventurer settings: failed to clear legacy config:", e);
-      }
-      console.info("QuestingAdventurer settings: migrated legacy SceneRules config.");
-    } catch (err) {
-      console.error("QuestingAdventurer settings: migration check failed:", err);
-    }
+    })();
   }
 
-  function saveQuestsNow() {
+  async function saveQuestsNow() {
     if (saving) {
       pendingSave = true;
       return;
@@ -106,7 +108,7 @@
     pendingSave = false;
     try {
       const questsToSave = latestQuests || [];
-      const stored = csLib.getConfiguration(CONFIG_KEY) || {};
+      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
       const merged = {
         quests: questsToSave,
         collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : true,
@@ -114,27 +116,23 @@
           typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
             ? Math.min(1, Math.max(0, stored.opacity))
             : 0.6,
+        panelPos:
+          stored.panelPos &&
+          typeof stored.panelPos.top === "number" &&
+          typeof stored.panelPos.right === "number"
+            ? {
+                top: Math.max(0, stored.panelPos.top),
+                right: Math.max(0, stored.panelPos.right),
+              }
+            : { top: 8, right: 8 },
       };
       const result = csLib.setConfiguration(CONFIG_KEY, merged);
-
-      function onDone() {
-        saving = false;
-        if (pendingSave) saveQuestsNow();
-      }
-
-      if (result && typeof result.then === "function") {
-        result
-          .then(onDone)
-          .catch(function (err) {
-            console.error("QuestingAdventurer settings: save failed:", err);
-            onDone();
-          });
-      } else {
-        onDone();
-      }
-    } catch (err) {
+      await result;
       saving = false;
+      if (pendingSave) saveQuestsNow();
+    } catch (err) {
       console.error("QuestingAdventurer settings: save failed:", err);
+      saving = false;
       if (pendingSave) saveQuestsNow();
     }
   }
@@ -161,35 +159,21 @@
         setLoading(false);
       }
 
-      try {
-        migrateFromLegacy();
-        const result = csLib.getConfiguration(CONFIG_KEY);
-        if (result && typeof result.then === "function") {
-          result
-            .then(function (stored) {
-              const raw = stored && Array.isArray(stored.quests)
-                ? stored.quests
-                : stored && Array.isArray(stored.rules)
-                ? stored.rules
-                : [];
-              finish(raw);
-            })
-            .catch(function (err) {
-              console.error("QuestingAdventurer settings: load failed:", err);
-              finish([]);
-            });
-        } else {
-          const raw = result && Array.isArray(result.quests)
-            ? result.quests
-            : result && Array.isArray(result.rules)
-            ? result.rules
+      (async function () {
+        try {
+          await migrateFromLegacy();
+          const stored = await csLib.getConfiguration(CONFIG_KEY);
+          const raw = stored && Array.isArray(stored.quests)
+            ? stored.quests
+            : stored && Array.isArray(stored.rules)
+            ? stored.rules
             : [];
           finish(raw);
+        } catch (err) {
+          console.error("QuestingAdventurer settings: load failed:", err);
+          finish([]);
         }
-      } catch (err) {
-        console.error("QuestingAdventurer settings: load failed:", err);
-        finish([]);
-      }
+      })();
 
       return function () {
         mounted = false;
