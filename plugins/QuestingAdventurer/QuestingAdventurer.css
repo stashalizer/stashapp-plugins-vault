@@ -26,6 +26,9 @@
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  display: inline-block;
+  font-weight: 600;
+  letter-spacing: 0.2px;
 }
 
 .questing-adventurer-panel__header {

@@ -713,8 +713,23 @@
   }
 
   function render() {
-    const panel = document.querySelector(".questing-adventurer-panel");
-    if (!panel) return;
+    let panel = document.querySelector(".questing-adventurer-panel");
+    if (!panel) {
+      // Panel was removed (e.g., by a React re-render of the video player).
+      // Re-create it on the current player and bail — setupPanel calls render.
+      const player = document.querySelector("#VideoJsPlayer");
+      if (player) {
+        setupPanel(player);
+        return;
+      }
+      return;
+    }
+
+    // Always re-apply the persisted position so the panel never drifts to
+    // (0,0) if the inline style was clobbered.
+    panel.style.top = state.panelPos.top + "px";
+    panel.style.right = state.panelPos.right + "px";
+
     clearChildren(panel);
 
     if (state.collapsed) {
@@ -723,6 +738,7 @@
       const chip = document.createElement("div");
       chip.className = "questing-adventurer-panel__chip";
       chip.dataset.action = "toggle-collapse";
+      chip.title = "Click to expand";
       chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
       panel.appendChild(chip);
       return;
