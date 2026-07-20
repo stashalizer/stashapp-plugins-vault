@@ -1,8 +1,13 @@
 .questing-adventurer-panel {
-  position: absolute;
+  /* position: fixed (not absolute) because the panel is mounted on
+     document.body, not on the video player. Fixed positions relative to
+     the viewport — so the overlay stays in the top-right corner in both
+     fullscreen and windowed mode, and is completely outside the video.js
+     DOM tree (no `vjs-user-inactive` fade can hide it). */
+  position: fixed;
   top: 8px;
   right: 8px;
-  z-index: 1;
+  z-index: 2147483647;
   pointer-events: auto;
   max-width: 360px;
   /* Let the panel grow to fit all content (active triggers + their attached

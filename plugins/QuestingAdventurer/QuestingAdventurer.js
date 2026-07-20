@@ -1287,7 +1287,15 @@
     panel.style.top = state.panelPos.top + "px";
     panel.style.right = state.panelPos.right + "px";
 
-    playerEl.appendChild(panel);
+    // v2 / fullscreen fix: append the panel to document.body (NOT the video
+    // player). In fullscreen mode, Stash's video.js adds a `vjs-user-inactive`
+    // class after a few seconds of mouse inactivity and its CSS fades out all
+    // children of the player — which would also hide our overlay. By mounting
+    // the panel on document.body and using `position: fixed` (see CSS), the
+    // overlay sits on top of the fullscreen video at the top-right corner and
+    // is completely outside the video.js DOM tree — no video.js CSS can
+    // touch it.
+    document.body.appendChild(panel);
     render();
   }
 
