@@ -4,14 +4,15 @@ A Stash plugin source-index repository that packages and publishes Stash plugins
 
 ## Plugins
 
-### Scene Rules
+### Questing Adventurer
 
-An interactive overlay and full-page settings UI for managing a global, 2-level list of "viewing rules" displayed on the scene player.
+Turns scene playback into a quest: while a scene plays, the viewer is a "questing adventurer" who must respond to on-screen cues (gestures, dance moves, etc.) by performing the active moves from their quest log. The plugin surfaces the active moves in a player overlay; the full library is managed in a settings page.
 
-- **Player overlay** — a collapsible panel pinned to the top-right of the scene player. Shows a rule-count chip when collapsed; expands to list all rules and categories with inline add/edit/delete.
-- **Settings page** — a full-page CRUD interface at **Settings > Tools > Scene Rules** (`/plugins/scenerules`) for managing the same rules with more room.
-- **2-level structure** — top-level nodes are either standalone rules or categories; categories group leaf rules.
-- **Persisted** — all rules are saved to Stash configuration under the key `SceneRules` and survive navigation/reload.
+- **Player overlay** — a collapsible panel pinned to the top-right of the scene player. Shows the active-move count when collapsed; expands to list quests and moves with inline add/edit/delete.
+- **Settings page** — a full-page CRUD interface at **Settings > Tools > Scene Tools > Questing Adventurer** (`/plugins/questingadventurer`) for managing the full quest library.
+- **2-level structure** — top-level nodes are either standalone moves or quests; quests group leaf moves.
+- **Active / inactive** — every move has an `active` flag. The overlay only surfaces active moves; the settings page shows the whole library and lets you toggle moves in or out of the active set.
+- **Persisted** — all state is saved to Stash configuration under the key `QuestingAdventurer` and survives navigation/reload. A one-shot migration imports the legacy `SceneRules` key on first load.
 
 #### Requirements
 
@@ -26,15 +27,15 @@ Add this repository as a plugin source in Stash (**Settings > Plugins > Availabl
 https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
 ```
 
-Then install **Scene Rules** from the list. Ensure `CommunityScriptsUILibrary` is installed first.
+Then install **Questing Adventurer** from the list. Ensure `CommunityScriptsUILibrary` is installed first.
 
 ## Repository layout
 
 ```
-plugins/           # one subdirectory per plugin
-  SceneRules/      # SceneRules plugin (manifest + JS/CSS assets)
-build_site.sh      # zips each plugin and generates index.yml
-.github/workflows/ # deploys the source index to GitHub Pages
+plugins/                    # one subdirectory per plugin
+  QuestingAdventurer/       # QuestingAdventurer plugin (manifest + JS/CSS assets)
+build_site.sh               # zips each plugin and generates index.yml
+.github/workflows/          # deploys the source index to GitHub Pages
 ```
 
 A full architectural codemap lives in [`codemap.md`](codemap.md); per-folder maps are alongside each directory.

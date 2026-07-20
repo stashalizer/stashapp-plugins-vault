@@ -1,4 +1,4 @@
-.scene-rules-settings {
+.questing-adventurer-settings {
   max-width: 800px;
   margin: 0 auto;
   padding: 1.5rem 1rem;
@@ -6,19 +6,19 @@
   font-family: sans-serif;
 }
 
-.scene-rules-settings__header {
+.questing-adventurer-settings__header {
   font-size: 1.75rem;
   font-weight: bold;
   margin: 0 0 1rem 0;
 }
 
-.scene-rules-settings__list {
+.questing-adventurer-settings__list {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.scene-rules-settings__category {
+.questing-adventurer-settings__quest {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -26,7 +26,7 @@
   margin-top: 0.5rem;
 }
 
-.scene-rules-settings__category-name {
+.questing-adventurer-settings__quest-name {
   font-weight: bold;
   cursor: pointer;
   border-radius: 3px;
@@ -35,22 +35,22 @@
   flex: 1 1 auto;
 }
 
-.scene-rules-settings__category-name:hover {
+.questing-adventurer-settings__quest-name:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.scene-rules-settings__rule {
+.questing-adventurer-settings__move {
   display: flex;
   align-items: center;
   gap: 0.25rem;
   width: 100%;
 }
 
-.scene-rules-settings__rule--indented {
+.questing-adventurer-settings__move--indented {
   padding-left: 24px;
 }
 
-.scene-rules-settings__rule-text {
+.questing-adventurer-settings__move-text {
   cursor: pointer;
   border-radius: 3px;
   padding: 2px 4px;
@@ -58,18 +58,18 @@
   flex: 1 1 auto;
 }
 
-.scene-rules-settings__rule-text:hover {
+.questing-adventurer-settings__move-text:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.scene-rules-settings__controls {
+.questing-adventurer-settings__controls {
   display: inline-flex;
   gap: 4px;
   flex-shrink: 0;
   margin-left: 8px;
 }
 
-.scene-rules-settings__controls button {
+.questing-adventurer-settings__controls button {
   background: transparent;
   border: none;
   color: #fff;
@@ -80,27 +80,45 @@
   line-height: 1;
 }
 
-.scene-rules-settings__controls button:hover {
+.questing-adventurer-settings__controls button:hover {
   background: rgba(255, 255, 255, 0.15);
 }
 
-.scene-rules-settings__controls button[disabled] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.scene-rules-settings__delete-btn:hover {
+.questing-adventurer-settings__delete-btn:hover {
   color: #ff6b6b;
   background: rgba(255, 0, 0, 0.1);
 }
 
-.scene-rules-settings__empty {
+.questing-adventurer-settings__active-btn {
+  color: #8eff8e;
+}
+
+.questing-adventurer-settings__active-btn:hover {
+  color: #b6ffb6;
+  background: rgba(80, 220, 100, 0.18);
+}
+
+.questing-adventurer-settings__inactive-btn {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.questing-adventurer-settings__inactive-btn:hover {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.questing-adventurer-settings__controls button[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.questing-adventurer-settings__empty {
   color: rgba(255, 255, 255, 0.6);
   font-style: italic;
   padding: 0.5rem 0;
 }
 
-.scene-rules-settings__footer {
+.questing-adventurer-settings__footer {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -108,7 +126,7 @@
   margin-top: 1rem;
 }
 
-.scene-rules-settings__input {
+.questing-adventurer-settings__input {
   flex: 1 1 100%;
   padding: 6px 8px;
   border-radius: 3px;
@@ -119,11 +137,11 @@
   font-family: sans-serif;
 }
 
-.scene-rules-settings__input::placeholder {
+.questing-adventurer-settings__input::placeholder {
   color: rgba(255, 255, 255, 0.5);
 }
 
-.scene-rules-settings__footer button {
+.questing-adventurer-settings__footer button {
   flex: 1;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.15);
@@ -135,16 +153,16 @@
   font-family: sans-serif;
 }
 
-.scene-rules-settings__footer button:hover {
+.questing-adventurer-settings__footer button:hover {
   background: rgba(255, 255, 255, 0.25);
 }
 
-.scene-rules-settings__footer button[disabled] {
+.questing-adventurer-settings__footer button[disabled] {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.scene-rules-settings__edit-input {
+.questing-adventurer-settings__edit-input {
   background: rgba(0, 0, 0, 0.8);
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -156,12 +174,12 @@
   box-sizing: border-box;
 }
 
-.scene-rules-settings__launcher {
+.questing-adventurer-settings__launcher {
   text-decoration: none;
   color: inherit;
 }
 
-.scene-rules-settings__launcher-card {
+.questing-adventurer-settings__launcher-card {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
@@ -169,16 +187,16 @@
   transition: background 0.15s ease;
 }
 
-.scene-rules-settings__launcher-card:hover {
+.questing-adventurer-settings__launcher-card:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.scene-rules-settings__launcher-card h3 {
+.questing-adventurer-settings__launcher-card h3 {
   margin: 0 0 0.25rem 0;
   font-size: 1.1rem;
 }
 
-.scene-rules-settings__launcher-card p {
+.questing-adventurer-settings__launcher-card p {
   margin: 0;
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.9rem;

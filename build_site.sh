@@ -31,10 +31,12 @@ buildPlugin()
     
     # create the zip file
     # copy other files
+    # codemap.md is developer documentation only and must not be published
+    # to plugin users — exclude it from the zip.
     zipfile=$(realpath "$outdir/$plugin_id.zip")
-    
+
     pushd "$dir" > /dev/null
-    zip -r "$zipfile" . > /dev/null
+    zip -r "$zipfile" . -x "codemap.md" > /dev/null
     popd > /dev/null
 
     name=$(grep "^name:" "$f" | head -n 1 | cut -d' ' -f2- | sed -e 's/\r//' -e 's/^"\(.*\)"$/\1/')
