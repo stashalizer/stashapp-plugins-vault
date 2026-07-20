@@ -745,9 +745,10 @@
     const header = document.createElement("div");
     header.className = "questing-adventurer-panel__header";
     header.addEventListener("pointerdown", startPanelDrag);
-    const title = document.createElement("span");
-    title.className = "questing-adventurer-panel__header-title";
-    title.textContent = "Triggers";
+    // The header used to have a 'Triggers' title element on the left, but
+    // the controls (lock, add-toggle, penalty, reward, opacity, close) are
+    // self-explanatory. The title was visual noise that ate horizontal
+    // space on a 360px max-width panel. Removed.
     const controls = document.createElement("span");
     controls.className = "questing-adventurer-panel__header-controls";
 
@@ -842,7 +843,6 @@
     closeBtn.textContent = "\u00d7";
     controls.appendChild(closeBtn);
 
-    header.appendChild(title);
     header.appendChild(controls);
     panel.appendChild(header);
 
