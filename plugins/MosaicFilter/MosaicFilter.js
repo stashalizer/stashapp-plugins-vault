@@ -7,15 +7,20 @@
  * - Adds an extra window.PluginApi.Event "stash:location" safety net to
  *   re-inject the overlay if React re-renders remove it. There can be a brief
  *   flash between removal and re-injection.
- * - Per-scene state: the overlay reads the scene id from the URL
- *   (/scenes/(\d+)) and reads/writes only that scene's slot in the config
- *   map. Other scenes' data is preserved on save (read-modify-write).
+ * - Single global config — all scenes share one set of mosaic settings. The
+ *   most common use case is follow-cursor, so the rectangle's position is
+ *   normally derived from the cursor at runtime, not stored per scene.
  * - Geometry is stored as percentages of the player so the rectangle scales
  *   correctly across viewport sizes and fullscreen.
  * - All state mutations are persisted via
  *   csLib.setConfiguration("MosaicFilter", state) wrapped in a lock to avoid
  *   concurrent saves. csLib.getConfiguration and setConfiguration are BOTH
  *   async — always await them.
+ * - Write policy: writes happen at user-driven boundaries (toggle, drag end,
+ *   resize end, slider release, scene transition, pagehide). The blur slider
+ *   updates the visual on every `input` event but only persists on `change`
+ *   (slider release). Follow-mode position updates are in-memory only and
+ *   persist at the boundaries.
  */
 (function () {
   "use strict";
@@ -28,8 +33,8 @@
 
   const CONFIG_KEY = "MosaicFilter";
 
-  // Fallback defaults used when no config has ever been written. Note: the
-  // settings page can override these via the config's `defaults` field.
+  // Hard-coded defaults used when no config has ever been written, and as
+  // the target of the overlay's "Reset" button.
   const FALLBACK_DEFAULTS = {
     blurAmount: 24,
     widthPct: 0.25,
@@ -37,25 +42,22 @@
     xPct: 0.1,
     yPct: 0.1,
     active: true,
-    follow: false, // when true, the rectangle tracks the cursor
+    // follow defaults to true: the most common use case is the rectangle
+    // tracking the cursor. The user can toggle it off from the control bar.
+    follow: true,
   };
 
   const MIN_SIZE_PCT = 0.05;
   const MAX_BLUR = 80;
-  const SLIDER_DEBOUNCE_MS = 80; // throttle blur-slider writes
 
-  // Module-level state. `state` is the whole config map (defaults + scenes).
-  // `sceneState` is the per-scene slot currently being edited. `currentSceneId`
-  // is the id of the scene the panel was last bound to. They are reloaded from
-  // csLib on every fresh scene visit (URL change).
+  // Module-level state. `state` is the single global config object. It is
+  // reloaded from csLib on every fresh mount of the overlay (e.g. after
+  // navigation, after the settings page writes, or after React re-mounts
+  // the player element).
   let state = makeDefaultState();
-  let sceneState = null;
-  let currentSceneId = null;
 
   let saving = false;
   let pendingSave = false;
-  let lastSliderSaveAt = 0;
-  let pendingSliderSaveTimer = null;
 
   // Live DOM references; null when the overlay is not mounted.
   let player = null;
@@ -72,6 +74,10 @@
   // Active pointer interaction. Either { type: "drag" } or { type: "resize" }.
   let dragState = null;
 
+  // Last known cursor position over the player. Used by snapRectToPointer
+  // when toggling Follow on or mounting with Follow already enabled.
+  let lastPointer = null;
+
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
@@ -82,57 +88,48 @@
     return value;
   }
 
-  function makeDefaultState() {
-    return {
-      defaults: { ...FALLBACK_DEFAULTS },
-      scenes: {},
-    };
-  }
-
-  // Merge a stored config map onto a fresh default state. Tolerates partial
-  // / missing / legacy shapes.
-  function mergeStored(stored) {
-    const out = makeDefaultState();
-    if (stored && typeof stored === "object") {
-      if (stored.defaults && typeof stored.defaults === "object") {
-        Object.assign(out.defaults, stored.defaults);
-      }
-      if (stored.scenes && typeof stored.scenes === "object") {
-        out.scenes = {};
-        for (const id of Object.keys(stored.scenes)) {
-          const entry = stored.scenes[id];
-          if (entry && typeof entry === "object") {
-            out.scenes[id] = { ...out.defaults, ...entry };
-          }
-        }
-      }
-    }
-    return out;
-  }
-
-  // Extract the scene id from the current URL. Returns null when the URL is
-  // not a scene page.
-  function getSceneIdFromUrl() {
-    const m = window.location.pathname.match(/^\/scenes\/(\d+)/);
-    return m ? m[1] : null;
-  }
-
   function isFiniteNumber(n) {
     return typeof n === "number" && isFinite(n);
   }
 
-  // Sanitize a per-scene state object: clamp values into valid ranges, fill
-  // missing fields from defaults. Mutates and returns the object.
-  function sanitizeSceneEntry(entry) {
-    const d = state.defaults;
+  function makeDefaultState() {
+    return { ...FALLBACK_DEFAULTS };
+  }
+
+  // Merge a stored config map onto a fresh default state. Tolerates the
+  // legacy { defaults, scenes } shape (used by 0.2.x) by reading the old
+  // `defaults` and ignoring `scenes` — the per-scene model is gone.
+  function mergeStored(stored) {
+    const out = makeDefaultState();
+    if (stored && typeof stored === "object") {
+      let source = stored;
+      // Legacy shape: { defaults: {...}, scenes: {...} } — use defaults,
+      // drop scenes.
+      if (stored.defaults && typeof stored.defaults === "object") {
+        source = stored.defaults;
+      }
+      for (const key of Object.keys(out)) {
+        if (source[key] !== undefined) {
+          out[key] = source[key];
+        }
+      }
+    }
+    return sanitizeState(out);
+  }
+
+  // Sanitize a state object: clamp values into valid ranges, fill missing
+  // fields from FALLBACK_DEFAULTS, coerce types. Mutates and returns the
+  // object.
+  function sanitizeState(s) {
+    const d = FALLBACK_DEFAULTS;
     const out = {
-      blurAmount: isFiniteNumber(entry.blurAmount) ? entry.blurAmount : d.blurAmount,
-      widthPct: isFiniteNumber(entry.widthPct) ? entry.widthPct : d.widthPct,
-      heightPct: isFiniteNumber(entry.heightPct) ? entry.heightPct : d.heightPct,
-      xPct: isFiniteNumber(entry.xPct) ? entry.xPct : d.xPct,
-      yPct: isFiniteNumber(entry.yPct) ? entry.yPct : d.yPct,
-      active: typeof entry.active === "boolean" ? entry.active : d.active,
-      follow: typeof entry.follow === "boolean" ? entry.follow : d.follow,
+      blurAmount: isFiniteNumber(s.blurAmount) ? s.blurAmount : d.blurAmount,
+      widthPct: isFiniteNumber(s.widthPct) ? s.widthPct : d.widthPct,
+      heightPct: isFiniteNumber(s.heightPct) ? s.heightPct : d.heightPct,
+      xPct: isFiniteNumber(s.xPct) ? s.xPct : d.xPct,
+      yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
+      active: typeof s.active === "boolean" ? s.active : d.active,
+      follow: typeof s.follow === "boolean" ? s.follow : d.follow,
     };
     out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
     out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
@@ -140,15 +137,6 @@
     out.xPct = clamp(out.xPct, 0, 1 - out.widthPct);
     out.yPct = clamp(out.yPct, 0, 1 - out.heightPct);
     return out;
-  }
-
-  function getOrCreateSceneState(id) {
-    if (!state.scenes[id]) {
-      state.scenes[id] = sanitizeSceneEntry({ ...state.defaults });
-    } else {
-      state.scenes[id] = sanitizeSceneEntry(state.scenes[id]);
-    }
-    return state.scenes[id];
   }
 
   // ---------------------------------------------------------------------------
@@ -169,7 +157,6 @@
       saving = false;
       if (pendingSave) {
         pendingSave = false;
-        // Recurse to drain. The lock is released so this will proceed.
         saveNow();
       }
     }
@@ -179,9 +166,8 @@
     saveNow();
   }
 
-  // Load config from csLib and update the in-memory `state`. If `id` is
-  // given, materialize a sceneState for that scene.
-  async function loadState(id) {
+  // Load config from csLib and update the in-memory `state`.
+  async function loadState() {
     let stored = null;
     try {
       stored = await csLib.getConfiguration(CONFIG_KEY);
@@ -190,11 +176,6 @@
       stored = null;
     }
     state = mergeStored(stored);
-    if (id) {
-      sceneState = getOrCreateSceneState(id);
-    } else {
-      sceneState = null;
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -237,10 +218,9 @@
   }
 
   function renderBar() {
-    if (!bar || !sceneState) return;
-    const on = !!sceneState.active;
-    const follow = !!sceneState.follow;
-    // Respect the user's collapsed/expanded preference across re-renders.
+    if (!bar) return;
+    const on = !!state.active;
+    const follow = !!state.follow;
     bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
     bar.innerHTML =
       '<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls">' +
@@ -249,16 +229,16 @@
       '<span class="mosaic-filter-bar__controls">' +
         '<span class="mosaic-filter-bar__slider">' +
           '<span class="mosaic-filter-bar__label">Blur</span>' +
-          '<input type="range" min="0" max="' + MAX_BLUR + '" step="1" value="' + sceneState.blurAmount + '" data-action="blur-slider" aria-label="Mosaic blur amount (pixels)" />' +
-          '<span class="mosaic-filter-bar__label" data-action="blur-readout">' + sceneState.blurAmount + "px</span>" +
+          '<input type="range" min="0" max="' + MAX_BLUR + '" step="1" value="' + state.blurAmount + '" data-action="blur-slider" aria-label="Mosaic blur amount (pixels)" />' +
+          '<span class="mosaic-filter-bar__label" data-action="blur-readout">' + state.blurAmount + "px</span>" +
         "</span>" +
-        '<button type="button" class="mosaic-filter-bar__button ' + (on ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-active" title="Toggle mosaic on this scene">' +
+        '<button type="button" class="mosaic-filter-bar__button ' + (on ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-active" title="Toggle the mosaic on or off">' +
           (on ? "✓ Active" : "⏸ Off") +
         "</button>" +
         '<button type="button" class="mosaic-filter-bar__button ' + (follow ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">' +
-          (follow ? "🎯 Follow" : "🎯 Follow") +
+          "🎯 Follow" +
         "</button>" +
-        '<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset this scene\'s mosaic to defaults">' +
+        '<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the mosaic to default size, position, and blur">' +
           "↺ Reset" +
         "</button>" +
         '<button type="button" class="mosaic-filter-bar__button" data-action="close-bar" title="Hide the control bar (the rectangle stays if it is active)" aria-label="Close controls">' +
@@ -267,19 +247,19 @@
       "</span>";
   }
 
-  // Position the rectangle based on the current sceneState and player size.
+  // Position the rectangle based on the current state and player size.
   // Cheap; safe to call on every pointer move.
   function renderRect() {
-    if (!rect || !player || !sceneState) return;
+    if (!rect || !player) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return; // player not yet visible
-    rect.style.left = (sceneState.xPct * pw) + "px";
-    rect.style.top = (sceneState.yPct * ph) + "px";
-    rect.style.width = (sceneState.widthPct * pw) + "px";
-    rect.style.height = (sceneState.heightPct * ph) + "px";
-    rect.style.setProperty("--mf-blur", sceneState.blurAmount + "px");
-    rect.classList.toggle("mosaic-filter-rectangle--hidden", !sceneState.active);
+    if (pw === 0 || ph === 0) return;
+    rect.style.left = (state.xPct * pw) + "px";
+    rect.style.top = (state.yPct * ph) + "px";
+    rect.style.width = (state.widthPct * pw) + "px";
+    rect.style.height = (state.heightPct * ph) + "px";
+    rect.style.setProperty("--mf-blur", state.blurAmount + "px");
+    rect.classList.toggle("mosaic-filter-rectangle--hidden", !state.active);
   }
 
   function render() {
@@ -292,10 +272,6 @@
   // ---------------------------------------------------------------------------
 
   function teardown() {
-    if (pendingSliderSaveTimer) {
-      clearTimeout(pendingSliderSaveTimer);
-      pendingSliderSaveTimer = null;
-    }
     detachFollowListener();
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
@@ -303,65 +279,8 @@
     resizeHandle = null;
     bar = null;
     player = null;
-    // Reset the collapse preference so the next scene starts expanded.
     barCollapsed = false;
-    // Drop the stale cursor position; the next scene gets a fresh one.
     lastPointer = null;
-  }
-
-  function setupPanel(targetPlayer) {
-    const id = getSceneIdFromUrl();
-    if (!id) {
-      // Not on a scene page; clean up if we were on one.
-      if (currentSceneId !== null) {
-        teardown();
-        currentSceneId = null;
-        sceneState = null;
-      }
-      return;
-    }
-
-    // If the player changed (React re-mounted it), drop old children.
-    if (player !== targetPlayer) {
-      teardown();
-    }
-
-    // If the same scene is still up and we already have the overlay, just
-    // re-render (handles window resize).
-    if (currentSceneId === id && rect && bar) {
-      render();
-      return;
-    }
-
-    // Transitioning to a new scene (or onto a scene page for the first
-    // time). Persist any in-memory changes for the outgoing scene before
-    // `loadState` overwrites `state` with the new scene's config. This is
-    // the *only* place a position update made during follow-mode (which
-    // deliberately does not write to csLib in real time) can be persisted
-    // for the scene the user is leaving.
-    if (currentSceneId !== null && currentSceneId !== id) {
-      queueSave();
-    }
-
-    // New scene visit: load fresh config, mount, render.
-    currentSceneId = id;
-
-    // Load state and build UI. We re-query the player in the .then below
-    // because React may have replaced the player element while we were
-    // awaiting the config read; appending to a stale node would silently
-    // lose the overlay.
-    Promise.resolve()
-      .then(function () { return loadState(id); })
-      .then(function () {
-        if (currentSceneId !== id) {
-          // User navigated again while we were loading; the next
-          // PathElementListener invocation will handle it.
-          return;
-        }
-        if (mountOnPlayer()) {
-          render();
-        }
-      });
   }
 
   // Re-validate the live player and (re-)attach our overlay elements to it.
@@ -392,13 +311,33 @@
     // that toggling Follow on later just flips the flag (and snaps the
     // rectangle to the cursor) without re-binding event handlers.
     attachFollowListener();
-    // If the user re-enters a scene with follow=true already saved, snap
-    // the rectangle to the cursor so they don't see a jump from the saved
-    // location to the cursor on the next pointermove.
-    if (sceneState && sceneState.follow) {
+    if (state.follow) {
       snapRectToPointer();
     }
     return true;
+  }
+
+  function setupPanel(targetPlayer) {
+    if (player !== targetPlayer) {
+      teardown();
+    }
+    if (rect && bar) {
+      // Same overlay, same player — re-render only (handles window resize).
+      render();
+      return;
+    }
+    // Load fresh config and build the UI. We re-query the player in the
+    // .then below because React may have replaced the player element while
+    // we were awaiting the config read; appending to a stale node would
+    // silently lose the overlay.
+    player = targetPlayer;
+    Promise.resolve()
+      .then(function () { return loadState(); })
+      .then(function () {
+        if (mountOnPlayer()) {
+          render();
+        }
+      });
   }
 
   // ---------------------------------------------------------------------------
@@ -406,12 +345,11 @@
   // ---------------------------------------------------------------------------
 
   function onRectPointerDown(e) {
-    if (!sceneState) return;
     if (e.button !== undefined && e.button !== 0) return; // primary button only
     // In follow mode the rectangle is anchored to the cursor already, so
     // dragging it is redundant and would just fight the follow handler.
     // Resize still works.
-    if (sceneState.follow && e.target.dataset.action !== "rect-resize") {
+    if (state.follow && e.target.dataset.action !== "rect-resize") {
       return;
     }
     const target = e.target;
@@ -432,10 +370,10 @@
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      startXPct: sceneState.xPct,
-      startYPct: sceneState.yPct,
-      startWPct: sceneState.widthPct,
-      startHPct: sceneState.heightPct,
+      startXPct: state.xPct,
+      startYPct: state.yPct,
+      startWPct: state.widthPct,
+      startHPct: state.heightPct,
       pw: player.clientWidth,
       ph: player.clientHeight,
     };
@@ -451,21 +389,20 @@
   }
 
   function onPointerMove(e) {
-    if (!dragState || !sceneState) return;
+    if (!dragState) return;
     const pw = dragState.pw;
     const ph = dragState.ph;
     if (!pw || !ph) return;
     const dxPct = (e.clientX - dragState.startX) / pw;
     const dyPct = (e.clientY - dragState.startY) / ph;
     if (dragState.type === "drag") {
-      sceneState.xPct = clamp(dragState.startXPct + dxPct, 0, 1 - sceneState.widthPct);
-      sceneState.yPct = clamp(dragState.startYPct + dyPct, 0, 1 - sceneState.heightPct);
+      state.xPct = clamp(dragState.startXPct + dxPct, 0, 1 - state.widthPct);
+      state.yPct = clamp(dragState.startYPct + dyPct, 0, 1 - state.heightPct);
     } else {
-      // Resize: bottom-right anchor. The rectangle grows toward the cursor.
-      const newW = clamp(dragState.startWPct + dxPct, MIN_SIZE_PCT, 1 - sceneState.xPct);
-      const newH = clamp(dragState.startHPct + dyPct, MIN_SIZE_PCT, 1 - sceneState.yPct);
-      sceneState.widthPct = newW;
-      sceneState.heightPct = newH;
+      const newW = clamp(dragState.startWPct + dxPct, MIN_SIZE_PCT, 1 - state.xPct);
+      const newH = clamp(dragState.startHPct + dyPct, MIN_SIZE_PCT, 1 - state.yPct);
+      state.widthPct = newW;
+      state.heightPct = newH;
     }
     renderRect();
   }
@@ -493,45 +430,36 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Bar interactions (click delegation + input for the slider)
+  // Bar interactions (click delegation + slider)
   // ---------------------------------------------------------------------------
 
   function onBarClick(e) {
-    if (!sceneState) return;
     const target = e.target.closest("[data-action]");
     if (!target || !bar || !bar.contains(target)) return;
     const action = target.dataset.action;
     switch (action) {
       case "toggle-bar":
-        // Clicking the chip toggles the controls' visibility.
         barCollapsed = !barCollapsed;
         bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
         e.preventDefault();
         break;
       case "toggle-active":
-        sceneState.active = !sceneState.active;
+        state.active = !state.active;
         queueSave();
         renderBar();
         renderRect();
         break;
       case "toggle-follow":
-        sceneState.follow = !sceneState.follow;
+        state.follow = !state.follow;
+        if (state.follow) snapRectToPointer();
         queueSave();
         renderBar();
-        // Snap the rectangle to the current cursor position so the user
-        // doesn't see a "jump" from the saved location to the cursor on the
-        // next pointermove.
-        if (sceneState.follow) snapRectToPointer();
         break;
-      case "reset-defaults": {
-        // Replace this scene's entry with a copy of the current defaults.
-        const fresh = sanitizeSceneEntry({ ...state.defaults });
-        state.scenes[currentSceneId] = fresh;
-        sceneState = fresh;
+      case "reset-defaults":
+        Object.assign(state, makeDefaultState());
         queueSave();
         render();
         break;
-      }
       case "close-bar":
         barCollapsed = true;
         bar.classList.add("mosaic-filter-bar--collapsed");
@@ -541,42 +469,27 @@
     }
   }
 
+  // The slider fires `input` continuously while the user drags the thumb.
+  // We update the visual blur on every event for instant feedback, but we
+  // deliberately do NOT persist on every event — the `change` event (which
+  // fires when the user releases the thumb) is the persistence boundary.
   function onBarInput(e) {
-    if (!sceneState) return;
     const target = e.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
     const value = clamp(parseInt(target.value, 10) || 0, 0, MAX_BLUR);
-    sceneState.blurAmount = value;
+    state.blurAmount = value;
     rect.style.setProperty("--mf-blur", value + "px");
     const readout = bar.querySelector('[data-action="blur-readout"]');
     if (readout) readout.textContent = value + "px";
-    // Throttle saves during dragging the slider; commit on pointerup / change
-    // via the `change` event below.
-    const now = Date.now();
-    if (now - lastSliderSaveAt >= SLIDER_DEBOUNCE_MS) {
-      lastSliderSaveAt = now;
-      queueSave();
-    } else if (!pendingSliderSaveTimer) {
-      pendingSliderSaveTimer = setTimeout(function () {
-        pendingSliderSaveTimer = null;
-        lastSliderSaveAt = Date.now();
-        queueSave();
-      }, SLIDER_DEBOUNCE_MS);
-    }
   }
 
   function onBarChange(e) {
-    if (!sceneState) return;
     const target = e.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
-    // Final commit on slider release.
-    if (pendingSliderSaveTimer) {
-      clearTimeout(pendingSliderSaveTimer);
-      pendingSliderSaveTimer = null;
-    }
-    lastSliderSaveAt = Date.now();
+    // Slider release: persist the final blur amount. (State was already
+    // updated by `input`; this just commits it to csLib.)
     queueSave();
   }
 
@@ -589,49 +502,29 @@
 
   // ---------------------------------------------------------------------------
   // Follow-cursor mode
-  //
-  // When sceneState.follow is true, the rectangle's center tracks the cursor
-  // position. The pointermove listener is attached to the player (not the
-  // document) so the rectangle only follows while the cursor is over the
-  // video; once the cursor leaves, the rectangle stays at its last position.
-  // The last known cursor position is stored in `lastPointer` so that
-  // toggling Follow on (or mounting the overlay mid-follow) snaps the
-  // rectangle to where the cursor currently is, avoiding a visible jump.
   // ---------------------------------------------------------------------------
-
-  let lastPointer = null; // { x: number, y: number } in client coordinates
 
   function onPlayerPointerMove(e) {
     // Always record the latest cursor position over the player, so that
     // toggling Follow on later snaps to the right spot.
     lastPointer = { x: e.clientX, y: e.clientY };
-    if (!sceneState || !sceneState.follow) return;
-    if (dragState) return; // a drag/resize is in progress; let it own the position
+    if (!state.follow) return;
+    if (dragState) return;
     if (!player || !rect) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
     if (pw === 0 || ph === 0) return;
     const pr = player.getBoundingClientRect();
-    // Center of rectangle should land on the cursor.
-    // Convert cursor (client coords) → fraction of player.
     const cursorXPct = (e.clientX - pr.left) / pw;
     const cursorYPct = (e.clientY - pr.top) / ph;
-    sceneState.xPct = clamp(cursorXPct - sceneState.widthPct / 2, 0, 1 - sceneState.widthPct);
-    sceneState.yPct = clamp(cursorYPct - sceneState.heightPct / 2, 0, 1 - sceneState.heightPct);
-    // In-memory update only. We deliberately do NOT call queueSave() here:
-    // every intermediate cursor position is throwaway, and csLib writes
-    // round-trip through a GraphQL mutation. The position is persisted at
-    // the natural boundaries instead (toggle-follow off, scene navigation,
-    // pagehide) — see the design note in codemap.md.
+    state.xPct = clamp(cursorXPct - state.widthPct / 2, 0, 1 - state.widthPct);
+    state.yPct = clamp(cursorYPct - state.heightPct / 2, 0, 1 - state.heightPct);
+    // In-memory only — see the "Write policy" note in the file header.
     renderRect();
   }
 
-  // Snap the rectangle to the last known cursor position (or to the center
-  // of the player if no cursor position has been recorded yet). Used when
-  // the user toggles Follow on so the rectangle doesn't visibly jump from
-  // its saved location to the cursor on the next pointermove.
   function snapRectToPointer() {
-    if (!player || !rect || !sceneState) return;
+    if (!player || !rect) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
     if (pw === 0 || ph === 0) return;
@@ -644,8 +537,8 @@
       cursorXPct = 0.5;
       cursorYPct = 0.5;
     }
-    sceneState.xPct = clamp(cursorXPct - sceneState.widthPct / 2, 0, 1 - sceneState.widthPct);
-    sceneState.yPct = clamp(cursorYPct - sceneState.heightPct / 2, 0, 1 - sceneState.heightPct);
+    state.xPct = clamp(cursorXPct - state.widthPct / 2, 0, 1 - state.widthPct);
+    state.yPct = clamp(cursorYPct - state.heightPct / 2, 0, 1 - state.heightPct);
     renderRect();
     queueSave();
   }
@@ -665,8 +558,6 @@
   // ---------------------------------------------------------------------------
 
   function tryInject() {
-    const id = getSceneIdFromUrl();
-    if (!id) return;
     const p = document.querySelector("#VideoJsPlayer");
     if (p) setupPanel(p);
   }
@@ -675,7 +566,7 @@
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
 
   // Safety net: also re-inject on SPA navigation, in case the player element
-  // is still in the DOM but the scene id changed (React re-rendered the page
+  // is still in the DOM but the scene changed (React re-rendered the page
   // without removing the player first).
   if (window.PluginApi && window.PluginApi.Event && typeof window.PluginApi.Event.addEventListener === "function") {
     window.PluginApi.Event.addEventListener("stash:location", function () {
@@ -688,13 +579,9 @@
     if (rect && player) renderRect();
   });
 
-  // Best-effort: persist any in-memory changes (e.g. follow-mode position
-  // updates that have not yet been written) before the page is hidden.
-  // The csLib save is async; the browser may unload before the Promise
-  // resolves, but the data is at least submitted. Most browsers fire
-  // `pagehide` on tab close, navigation, and reload; combined with the
-  // scene-transition save above, the only writes we miss are when the
-  // user closes the tab in the middle of a follow-mode drag.
+  // Best-effort: persist any in-memory changes before the page is hidden.
+  // Async saves may not complete before the page unloads, but the request
+  // is at least submitted.
   window.addEventListener("pagehide", function () {
     queueSave();
   });

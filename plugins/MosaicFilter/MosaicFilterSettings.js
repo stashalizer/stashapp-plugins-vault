@@ -8,11 +8,11 @@
  *   PluginApi.patch.before("SettingsToolsSection", ...). The launcher appears
  *   only under the "Scene Tools" subsection (the second SettingsToolsSection
  *   instance in SettingsToolsPanel) by gating on a module-level call counter.
- * - Reads/writes the same config key ("MosaicFilter") as the overlay. Both
- *   surfaces maintain separate save locks and do not coordinate; this is
- *   the same trade-off QuestingAdventurer makes.
- * - Three sections: Defaults (form), Saved Scenes (per-scene list with
- *   delete), Danger Zone (clear-all with confirm).
+ * - Reads/writes the same config key ("MosaicFilter") as the overlay. The
+ *   config is a single flat object (no per-scene storage); the form on this
+ *   page edits the same values the overlay reads and writes.
+ * - Both surfaces maintain separate save locks and do not coordinate; this
+ *   is the same trade-off QuestingAdventurer makes.
  */
 (function () {
   "use strict";
@@ -24,15 +24,13 @@
 
   const React = PluginApi.React;
   const h = React.createElement;
-  const { useState, useEffect, useRef } = React;
+  const { useState, useEffect } = React;
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
 
   const csLib = window.csLib;
   const CONFIG_KEY = "MosaicFilter";
   const PLUGIN_ROUTE = "/plugins/mosaicfilter";
 
-  // Same field clamps as the overlay. Centralized here so the two surfaces
-  // agree on what "valid" means.
   const MIN_SIZE_PCT = 0.05;
   const MAX_BLUR = 80;
 
@@ -43,7 +41,7 @@
     xPct: 0.1,
     yPct: 0.1,
     active: true,
-    follow: false,
+    follow: true,
   };
 
   let settingsToolsCallCount = 0;
@@ -58,104 +56,53 @@
     return typeof n === "number" && isFinite(n);
   }
 
-  function sanitizeDefaults(input) {
-    const d = input || {};
-    return {
-      blurAmount: clamp(
-        isFiniteNumber(d.blurAmount) ? d.blurAmount : FALLBACK_DEFAULTS.blurAmount,
-        0,
-        MAX_BLUR
-      ),
-      widthPct: clamp(
-        isFiniteNumber(d.widthPct) ? d.widthPct : FALLBACK_DEFAULTS.widthPct,
-        MIN_SIZE_PCT,
-        1
-      ),
-      heightPct: clamp(
-        isFiniteNumber(d.heightPct) ? d.heightPct : FALLBACK_DEFAULTS.heightPct,
-        MIN_SIZE_PCT,
-        1
-      ),
-      xPct: clamp(
-        isFiniteNumber(d.xPct) ? d.xPct : FALLBACK_DEFAULTS.xPct,
-        0,
-        1
-      ),
-      yPct: clamp(
-        isFiniteNumber(d.yPct) ? d.yPct : FALLBACK_DEFAULTS.yPct,
-        0,
-        1
-      ),
-      active: typeof d.active === "boolean" ? d.active : FALLBACK_DEFAULTS.active,
-      follow: typeof d.follow === "boolean" ? d.follow : FALLBACK_DEFAULTS.follow,
-    };
+  function makeDefaultState() {
+    return { ...FALLBACK_DEFAULTS };
   }
 
+  // Merge a stored config map onto a fresh default state. Tolerates the
+  // legacy { defaults, scenes } shape by reading the old `defaults` and
+  // ignoring `scenes` (per-scene storage was removed in 0.3.0).
   function mergeStored(stored) {
+    const out = makeDefaultState();
+    if (stored && typeof stored === "object") {
+      let source = stored;
+      if (stored.defaults && typeof stored.defaults === "object") {
+        source = stored.defaults;
+      }
+      for (const key of Object.keys(out)) {
+        if (source[key] !== undefined) {
+          out[key] = source[key];
+        }
+      }
+    }
+    return sanitizeState(out);
+  }
+
+  function sanitizeState(s) {
+    const d = FALLBACK_DEFAULTS;
     const out = {
-      defaults: sanitizeDefaults(stored && stored.defaults),
-      scenes: {},
+      blurAmount: isFiniteNumber(s.blurAmount) ? s.blurAmount : d.blurAmount,
+      widthPct: isFiniteNumber(s.widthPct) ? s.widthPct : d.widthPct,
+      heightPct: isFiniteNumber(s.heightPct) ? s.heightPct : d.heightPct,
+      xPct: isFiniteNumber(s.xPct) ? s.xPct : d.xPct,
+      yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
+      active: typeof s.active === "boolean" ? s.active : d.active,
+      follow: typeof s.follow === "boolean" ? s.follow : d.follow,
     };
-    if (stored && stored.scenes && typeof stored.scenes === "object") {
-      for (const id of Object.keys(stored.scenes)) {
-        const entry = stored.scenes[id];
-        if (entry && typeof entry === "object") {
-          out.scenes[id] = sanitizeSceneEntry(entry, out.defaults);
-        }
-      }
-    }
+    out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
+    out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
+    out.heightPct = clamp(out.heightPct, MIN_SIZE_PCT, 1);
+    out.xPct = clamp(out.xPct, 0, 1 - out.widthPct);
+    out.yPct = clamp(out.yPct, 0, 1 - out.heightPct);
     return out;
-  }
-
-  function sanitizeSceneEntry(entry, defaults) {
-    const d = defaults || FALLBACK_DEFAULTS;
-    const base = sanitizeDefaults(entry);
-    // Clamp position so the rectangle stays on screen even after a save from
-    // a smaller player size.
-    base.xPct = clamp(base.xPct, 0, 1 - base.widthPct);
-    base.yPct = clamp(base.yPct, 0, 1 - base.heightPct);
-    return base;
-  }
-
-  // Save lock — coalesces concurrent saves by queuing attempts and draining
-  // them serially. Each `saveNow(state)` call returns a promise that resolves
-  // (or rejects) only when that specific attempt has been written. New
-  // attempts added while the drain is running are appended to the queue.
-  let saving = false;
-  const pendingAttempts = [];
-
-  function saveNow(state) {
-    return new Promise(function (resolve, reject) {
-      pendingAttempts.push({ state: state, resolve: resolve, reject: reject });
-      drainAttempts();
-    });
-  }
-
-  async function drainAttempts() {
-    if (saving) return;
-    saving = true;
-    try {
-      while (pendingAttempts.length > 0) {
-        const attempt = pendingAttempts.shift();
-        try {
-          await csLib.setConfiguration(CONFIG_KEY, attempt.state);
-          attempt.resolve(true);
-        } catch (err) {
-          attempt.reject(err);
-        }
-      }
-    } finally {
-      saving = false;
-    }
   }
 
   function MosaicFilterSettingsPage() {
     const [loaded, setLoaded] = useState(false);
-    const [defaults, setDefaults] = useState(() => sanitizeDefaults(null));
-    const [scenes, setScenes] = useState({});
+    const [state, setState] = useState(() => makeDefaultState());
     const [dirty, setDirty] = useState(false);
     const [saveError, setSaveError] = useState(null);
-    const loadedRef = useRef(false);
 
     useEffect(function () {
       let cancelled = false;
@@ -167,35 +114,22 @@
           console.error("MosaicFilter settings: failed to read configuration", err);
         }
         if (cancelled) return;
-        const merged = mergeStored(stored);
-        setDefaults(merged.defaults);
-        setScenes(merged.scenes);
+        setState(mergeStored(stored));
         setLoaded(true);
-        loadedRef.current = true;
       })();
       return function () { cancelled = true; };
     }, []);
 
-    // Helpers ------------------------------------------------------------
-
-    function updateDefaults(patch) {
-      setDefaults(function (prev) {
-        const next = sanitizeDefaults(Object.assign({}, prev, patch));
-        return next;
+    function updateField(patch) {
+      setState(function (prev) {
+        return sanitizeState(Object.assign({}, prev, patch));
       });
       setDirty(true);
     }
 
-    function buildFullState(nextDefaults, nextScenes) {
-      return { defaults: nextDefaults, scenes: nextScenes };
-    }
-
-    // Route all writes through the module-level save lock so concurrent
-    // clicks (e.g. two rapid Delete buttons) cannot interleave their
-    // `setConfiguration` calls.
-    async function persist(nextDefaults, nextScenes) {
+    async function save() {
       try {
-        await saveNow(buildFullState(nextDefaults, nextScenes));
+        await csLib.setConfiguration(CONFIG_KEY, state);
         setSaveError(null);
         setDirty(false);
       } catch (err) {
@@ -204,32 +138,6 @@
       }
     }
 
-    function saveDefaults() {
-      persist(defaults, scenes);
-    }
-
-    function deleteScene(id) {
-      // Build the next scenes map once, then commit it through both React
-      // state and the save lock. Avoids the previous dual update where the
-      // functional updater and the persist call could disagree.
-      const next = Object.assign({}, scenes);
-      delete next[id];
-      setScenes(next);
-      persist(defaults, next);
-    }
-
-    function clearAll() {
-      const confirmed = window.confirm(
-        "Delete saved mosaic data for all scenes? " +
-        "Each scene will revert to the current defaults on next visit."
-      );
-      if (!confirmed) return;
-      setScenes({});
-      persist(defaults, {});
-    }
-
-    // Rendering ----------------------------------------------------------
-
     if (!loaded) {
       return h("div", { className: "mosaic-filter-settings" },
         h("p", { className: "mosaic-filter-settings__loading" }, "Loading…")
@@ -237,10 +145,6 @@
     }
 
     // Helper: a number-input row whose value is displayed as a percent.
-    // `fieldKey` is the key on the defaults object (e.g. "widthPct"); the
-    // displayed value is `Math.round(defaults[fieldKey] * 100)` and the
-    // onChange converts the entered number back to a fraction and applies
-    // the supplied clamp. `minPct`/`maxPct` are in 0..100.
     function percentField(label, fieldKey, minPct, maxPct) {
       return h("label", null,
         h("span", null, label),
@@ -249,18 +153,17 @@
           min: minPct,
           max: maxPct,
           step: 1,
-          value: Math.round(defaults[fieldKey] * 100),
+          value: Math.round(state[fieldKey] * 100),
           onChange: function (e) {
             const v = parseInt(e.target.value, 10);
             const safe = isNaN(v) ? minPct : v;
             const pct = clamp(safe, minPct, maxPct) / 100;
-            updateDefaults({ [fieldKey]: pct });
+            updateField({ [fieldKey]: pct });
           },
         })
       );
     }
 
-    // Helper: a plain pixel number-input (no percent conversion).
     function pixelField(label, fieldKey, min, max) {
       return h("label", null,
         h("span", null, label),
@@ -269,35 +172,27 @@
           min: min,
           max: max,
           step: 1,
-          value: defaults[fieldKey],
+          value: state[fieldKey],
           onChange: function (e) {
             const v = parseInt(e.target.value, 10);
-            updateDefaults({ [fieldKey]: clamp(isNaN(v) ? min : v, min, max) });
+            updateField({ [fieldKey]: clamp(isNaN(v) ? min : v, min, max) });
           },
         })
       );
     }
 
-    const sceneIds = Object.keys(scenes).sort(function (a, b) {
-      // Numeric sort when possible so scene ids read in natural order.
-      const na = parseInt(a, 10);
-      const nb = parseInt(b, 10);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      return String(a).localeCompare(String(b));
-    });
-
     return h("div", { className: "mosaic-filter-settings" },
       h("h1", null, "Mosaic Filter"),
       h("p", { className: "mosaic-filter-settings__intro" },
         "Place a draggable, resizable blur rectangle over any region of a scene. ",
-        "Each scene remembers its own position, size, and blur amount."
+        "Settings are global — the same rectangle is used on every scene. ",
+        "Turn on Follow so the rectangle tracks the cursor (the most common use case)."
       ),
 
-      // Defaults --------------------------------------------------------
       h("section", { className: "mosaic-filter-settings__section" },
-        h("h2", null, "Defaults"),
+        h("h2", null, "Settings"),
         h("p", { className: "mosaic-filter-settings__hint" },
-          "Applied to scenes that don't yet have their own saved mosaic."
+          "The same values are read by the overlay on every scene."
         ),
         h("div", { className: "mosaic-filter-settings__row" },
           pixelField("Blur amount (px)", "blurAmount", 0, MAX_BLUR),
@@ -312,16 +207,16 @@
           h("label", { className: "mosaic-filter-settings__checkbox" },
             h("input", {
               type: "checkbox",
-              checked: !!defaults.active,
-              onChange: function (e) { updateDefaults({ active: !!e.target.checked }); },
+              checked: !!state.active,
+              onChange: function (e) { updateField({ active: !!e.target.checked }); },
             }),
             h("span", null, "Active by default")
           ),
           h("label", { className: "mosaic-filter-settings__checkbox" },
             h("input", {
               type: "checkbox",
-              checked: !!defaults.follow,
-              onChange: function (e) { updateDefaults({ follow: !!e.target.checked }); },
+              checked: !!state.follow,
+              onChange: function (e) { updateField({ follow: !!e.target.checked }); },
             }),
             h("span", null, "Follow cursor by default")
           ),
@@ -331,62 +226,10 @@
             type: "button",
             className: "mosaic-filter-settings__button mosaic-filter-settings__button--primary",
             disabled: !dirty,
-            onClick: saveDefaults,
-          }, "Save defaults"),
+            onClick: save,
+          }, "Save"),
           saveError ? h("span", { className: "mosaic-filter-settings__error" }, saveError) : null,
         ),
-      ),
-
-      // Saved scenes ---------------------------------------------------
-      h("section", { className: "mosaic-filter-settings__section" },
-        h("h2", null, "Saved scenes"),
-        sceneIds.length === 0
-          ? h("p", { className: "mosaic-filter-settings__empty" },
-              "No scenes have saved mosaic data yet. Open a scene to set one up.")
-          : h("ul", { className: "mosaic-filter-settings__scene-list" },
-              sceneIds.map(function (id) {
-                const s = scenes[id];
-                return h("li", {
-                  key: id,
-                  className: "mosaic-filter-settings__scene-item",
-                },
-                  h("div", { className: "mosaic-filter-settings__scene-info" },
-                    h("code", { className: "mosaic-filter-settings__scene-id" }, "Scene " + id),
-                    h("span", { className: "mosaic-filter-settings__scene-meta" },
-                      s.blurAmount + "px blur · " +
-                      Math.round(s.widthPct * 100) + "% × " +
-                      Math.round(s.heightPct * 100) + "% · " +
-                      (s.active ? "active" : "off")
-                    ),
-                  ),
-                  h("div", { className: "mosaic-filter-settings__scene-actions" },
-                    h(Link, {
-                      to: "/scenes/" + id,
-                      className: "mosaic-filter-settings__button",
-                    }, "Open"),
-                    h("button", {
-                      type: "button",
-                      className: "mosaic-filter-settings__button mosaic-filter-settings__button--danger",
-                      onClick: function () { deleteScene(id); },
-                    }, "Delete"),
-                  ),
-                );
-              })
-            ),
-      ),
-
-      // Danger zone ----------------------------------------------------
-      h("section", { className: "mosaic-filter-settings__section mosaic-filter-settings__section--danger" },
-        h("h2", null, "Danger zone"),
-        h("p", { className: "mosaic-filter-settings__hint" },
-          "Delete saved mosaic data for every scene."
-        ),
-        h("button", {
-          type: "button",
-          className: "mosaic-filter-settings__button mosaic-filter-settings__button--danger",
-          onClick: clearAll,
-          disabled: sceneIds.length === 0,
-        }, "Clear all saved scenes"),
       ),
     );
   }
@@ -421,7 +264,7 @@
         "div",
         { className: "mosaic-filter-settings__launcher-card" },
         h("h3", null, "Mosaic Filter"),
-        h("p", null, "Default mosaic settings and saved scenes")
+        h("p", null, "Default mosaic settings (applied to every scene)")
       )
     );
     const newChildren = Array.isArray(props.children)
