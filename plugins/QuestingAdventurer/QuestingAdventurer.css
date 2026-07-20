@@ -368,12 +368,22 @@
   background: rgba(255, 140, 60, 0.18);
 }
 
-/* Add-controls toggle — expands the hidden footer (input + Add buttons). */
+/* Add-controls toggle — expands the hidden footer (input + Add buttons).
+   Appended directly to the panel (not inside the header) between the list
+   and the footer, so it sits at the bottom-center of the panel via
+   align-self: center on the panel's flex column. */
 .questing-adventurer-panel__add-toggle-button {
   font-size: 16px;
   font-weight: bold;
   padding: 0 5px;
   line-height: 1;
+  align-self: center;
+  margin-top: 4px;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .questing-adventurer-panel__add-toggle-button[aria-expanded="true"] {

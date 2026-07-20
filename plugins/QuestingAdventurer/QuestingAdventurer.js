@@ -823,7 +823,13 @@
     addToggleBtn.setAttribute("aria-label", "Add trigger or move");
     addToggleBtn.setAttribute("aria-expanded", state.showAddControls ? "true" : "false");
     addToggleBtn.textContent = "+";
-    controls.appendChild(addToggleBtn);
+    // Moved out of the header controls (line 826 used to do
+    // `controls.appendChild(addToggleBtn)`) and instead appended to the
+    // panel itself between the list and the footer (see below), so it
+    // sits at the bottom-center of the panel rather than the top-right
+    // of the header. This is more natural for the expand-add-controls
+    // action — the toggle lives where the controls it reveals (the
+    // footer with input + Add Trigger + Add Move) lives.
 
     const opacityWrap = document.createElement("span");
     opacityWrap.className = "questing-adventurer-panel__opacity-control";
@@ -887,6 +893,13 @@
       });
     }
     panel.appendChild(list);
+
+    // Bottom-center add-controls toggle. The user expands/hides the footer
+    // (input + Add Trigger + Add Move) with this button. Centering it at the
+    // bottom (via the .questing-adventurer-panel__add-toggle-button CSS rule)
+    // matches where the controls it reveals live, and is more natural for
+    // a "add" action than a top-right corner.
+    panel.appendChild(addToggleBtn);
 
     const footer = document.createElement("div");
     footer.className = "questing-adventurer-panel__footer";
