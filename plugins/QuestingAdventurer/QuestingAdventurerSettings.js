@@ -42,12 +42,42 @@
   let saving = false;
   let pendingSave = false;
   let latestTriggers = null;
+  let latestMoves = null;
 
   function generateId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
       return crypto.randomUUID();
     }
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  // v1' → v2 migration for the settings page. Identical to the overlay's
+  // migrateV1ToV2; duplicated here because the settings page runs in its
+  // own IIFE scope and can't share the overlay's helper.
+  function migrateV1ToV2(stored) {
+    const oldTriggers = Array.isArray(stored.triggers) ? stored.triggers : [];
+    const moves = [];
+    const triggers = [];
+    for (const node of oldTriggers) {
+      if (node.type === "trigger") {
+        const attachedMoveIds = [];
+        for (const item of (node.attachedMoveIds || [])) {
+          const moveId = item.id || generateId();
+          moves.push({ id: moveId, type: "move", text: item.text });
+          attachedMoveIds.push(moveId);
+        }
+        triggers.push({
+          id: node.id || generateId(),
+          type: "trigger",
+          name: node.name,
+          active: true,
+          attachedMoveIds: attachedMoveIds,
+        });
+      } else if (node.type === "move") {
+        moves.push({ id: node.id || generateId(), type: "move", text: node.text });
+      }
+    }
+    return { moves: moves, triggers: triggers };
   }
 
   function migrateFromLegacy() {
@@ -72,7 +102,7 @@
                 id: node.id || generateId(),
                 type: "trigger",
                 name: node.name,
-                items: (node.items || []).map(function (item) {
+                attachedMoveIds: (node.attachedMoveIds || []).map(function (item) {
                   return { id: item.id || generateId(), type: "move", text: item.text, active: true };
                 }),
               };
@@ -108,8 +138,10 @@
     pendingSave = false;
     try {
       const triggersToSave = latestTriggers || [];
+      const movesToSave = latestMoves || [];
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
       const merged = {
+        moves: movesToSave,
         triggers: triggersToSave,
         collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : true,
         opacity:
@@ -142,6 +174,11 @@
     saveTriggersNow();
   }
 
+  function saveMoves(newMoves) {
+    latestMoves = newMoves;
+    saveTriggersNow();
+  }
+
   function QuestingAdventurerSettingsPage() {
     const [triggers, setTriggers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -153,9 +190,10 @@
     useEffect(function () {
       let mounted = true;
 
-      function finish(questsArr) {
+      function finish(movesArr, triggersArr) {
         if (!mounted) return;
-        setTriggers(questsArr);
+        setMoves(movesArr);
+        setTriggers(triggersArr);
         setLoading(false);
       }
 
@@ -163,15 +201,20 @@
         try {
           await migrateFromLegacy();
           const stored = await csLib.getConfiguration(CONFIG_KEY);
-          const raw = stored && Array.isArray(stored.quests)
-            ? stored.quests
-            : stored && Array.isArray(stored.rules)
-            ? stored.rules
-            : [];
-          finish(raw);
+          if (stored && Array.isArray(stored.moves) && Array.isArray(stored.triggers)) {
+            // v2 format
+            finish(stored.moves, stored.triggers);
+          } else {
+            // v1' format → migrate to v2
+            const migrated = migrateV1ToV2(stored);
+            finish(migrated.moves, migrated.triggers);
+            // Persist the migrated form
+            saveMoves(migrated.moves);
+            saveTriggers(migrated.triggers);
+          }
         } catch (err) {
           console.error("QuestingAdventurer settings: load failed:", err);
-          finish([]);
+          finish([], []);
         }
       })();
 
@@ -198,40 +241,48 @@
     function addMoveTop(text) {
       const trimmed = text.trim();
       if (!trimmed) return;
-      const nextTriggers = [...quests, { id: generateId(), type: "move", text: trimmed, active: true }];
-      commitQuests(nextTriggers);
+      // v2: add to the global move library. The move is unattached until the
+      // user attaches it to a trigger.
+      const nextMoves = [...moves, { id: generateId(), type: "move", text: trimmed }];
+      setMoves(nextMoves);
+      saveMoves(nextMoves);
     }
 
     function addTriggerTop(name) {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const nextTriggers = [...quests, { id: generateId(), type: "trigger", name: trimmed, items: [] }];
-      commitQuests(nextTriggers);
+      const nextTriggers = [...triggers, { id: generateId(), type: "trigger", name: trimmed, attachedMoveIds: [] }];
+      commitTriggers(nextTriggers);
     }
 
-    function addMoveInto(questId, text) {
+    function addMoveInto(triggerId, text) {
       const trimmed = text.trim();
       if (!trimmed) return;
-      const nextTriggers = quests.map(function (node) {
-        if (node.type === "trigger" && node.id === questId) {
+      // v2: add the move to the global library AND attach it to the trigger.
+      const newMoveId = generateId();
+      const nextMoves = [...moves, { id: newMoveId, type: "move", text: trimmed }];
+      const nextTriggers = triggers.map(function (node) {
+        if (node.type === "trigger" && node.id === triggerId) {
           return {
             ...node,
-            items: [...(node.items || []), { id: generateId(), type: "move", text: trimmed, active: true }],
+            attachedMoveIds: [...(node.attachedMoveIds || []), newMoveId],
           };
         }
         return node;
       });
-      commitQuests(nextTriggers);
+      setMoves(nextMoves);
+      saveMoves(nextMoves);
+      commitTriggers(nextTriggers);
     }
 
     function deleteMove(id) {
       const nextTriggers = [];
-      for (const node of quests) {
+      for (const node of triggers) {
         if (node.type === "move" && node.id === id) continue;
         if (node.type === "trigger") {
           nextTriggers.push({
             ...node,
-            items: (node.items || []).filter(function (r) {
+            attachedMoveIds: (node.attachedMoveIds || []).filter(function (r) {
               return r.id !== id;
             }),
           });
@@ -239,35 +290,35 @@
           nextTriggers.push(node);
         }
       }
-      commitQuests(nextTriggers);
+      commitTriggers(nextTriggers);
     }
 
     function deleteTrigger(id) {
-      const q = quests.find(function (n) {
+      const q = triggers.find(function (n) {
         return n.type === "trigger" && n.id === id;
       });
       if (!q) return;
-      const itemCount = Array.isArray(q.items) ? q.items.length : 0;
+      const itemCount = Array.isArray(q.attachedMoveIds) ? q.attachedMoveIds.length : 0;
       const confirmed = window.confirm(
         'Delete trigger "' + q.name + '" and its ' + itemCount + " move(s)?"
       );
       if (!confirmed) return;
-      const nextTriggers = quests.filter(function (n) {
+      const nextTriggers = triggers.filter(function (n) {
         return !(n.type === "trigger" && n.id === id);
       });
-      commitQuests(nextTriggers);
+      commitTriggers(nextTriggers);
     }
 
     function findNodeLocation(id) {
-      for (let i = 0; i < quests.length; i++) {
-        const n = quests[i];
+      for (let i = 0; i < triggers.length; i++) {
+        const n = triggers[i];
         if (n.id === id) {
-          return { node: n, container: quests, index: i, parent: null };
+          return { node: n, container: triggers, index: i, parent: null };
         }
-        if (n.type === "trigger" && Array.isArray(n.items)) {
-          for (let j = 0; j < n.items.length; j++) {
-            if (n.items[j].id === id) {
-              return { node: n.items[j], container: n.items, index: j, parent: n };
+        if (n.type === "trigger" && Array.isArray(n.attachedMoveIds)) {
+          for (let j = 0; j < n.attachedMoveIds.length; j++) {
+            if (n.attachedMoveIds[j].id === id) {
+              return { node: n.attachedMoveIds[j], container: n.attachedMoveIds, index: j, parent: n };
             }
           }
         }
@@ -290,12 +341,12 @@
       } else {
         nextTriggers = quests.map(function (n) {
           if (n.id === loc.parent.id) {
-            return { ...n, items: nextContainer };
+            return { ...n, attachedMoveIds: nextContainer };
           }
           return n;
         });
       }
-      commitQuests(nextTriggers);
+      commitTriggers(nextTriggers);
     }
 
     function canMoveUp(id) {
@@ -313,14 +364,14 @@
     }
 
     function toggleActive(id) {
-      const nextTriggers = quests.map(function (node) {
+      const nextTriggers = triggers.map(function (node) {
         if (node.id === id && node.type === "move") {
           return { ...node, active: !isActiveMoveLocal(node) };
         }
-        if (node.type === "trigger" && Array.isArray(node.items)) {
+        if (node.type === "trigger" && Array.isArray(node.attachedMoveIds)) {
           return {
             ...node,
-            items: node.items.map(function (item) {
+            attachedMoveIds: node.attachedMoveIds.map(function (item) {
               if (item.id === id) {
                 return { ...item, active: !isActiveMoveLocal(item) };
               }
@@ -330,7 +381,7 @@
         }
         return node;
       });
-      commitQuests(nextTriggers);
+      commitTriggers(nextTriggers);
     }
 
     function editNode(id, newText) {
@@ -340,7 +391,7 @@
         setEditingId(null);
         return;
       }
-      const nextTriggers = quests.map(function (node) {
+      const nextTriggers = triggers.map(function (node) {
         if (node.id === id) {
           if (node.type === "trigger") {
             return { ...node, name: trimmed };
@@ -350,7 +401,7 @@
         if (node.type === "trigger") {
           return {
             ...node,
-            items: (node.items || []).map(function (item) {
+            attachedMoveIds: (node.attachedMoveIds || []).map(function (item) {
               return item.id === id ? { ...item, text: trimmed } : item;
             }),
           };
@@ -386,10 +437,10 @@
     function renderTrigger(trigger) {
       return h(
         "div",
-        { key: trigger.id, className: "questing-adventurer-settings__quest" },
+        { key: trigger.id, className: "questing-adventurer-settings__trigger" },
         h(
           "span",
-          { className: "questing-adventurer-settings__quest-name" },
+          { className: "questing-adventurer-settings__trigger-name" },
           editingId === trigger.id
             ? renderEditInput(trigger)
             : h(
@@ -454,7 +505,9 @@
             "×"
           )
         ),
-        (trigger.items || []).map(function (move) {
+        (trigger.attachedMoveIds || []).map(function (moveId) {
+          const move = moves.find(function (m) { return m.id === moveId; });
+          if (!move) return null;
           return renderMove(move, true);
         })
       );
@@ -553,16 +606,14 @@
         : h(
             "div",
             { className: "questing-adventurer-settings__list" },
-            quests.length === 0
+            triggers.length === 0
               ? h(
                   "div",
                   { className: "questing-adventurer-settings__empty" },
-                  "No triggers yet. Add a trigger or move below."
+                  "No triggers yet. Add one below."
                 )
-              : quests.map(function (node) {
-                  return node.type === "trigger"
-                    ? renderQuest(node)
-                    : renderMove(node, false);
+              : triggers.map(function (trigger) {
+                  return renderTrigger(trigger);
                 }),
             h(
               "div",

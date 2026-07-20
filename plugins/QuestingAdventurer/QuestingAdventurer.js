@@ -31,7 +31,7 @@
   const DEFAULT_OPACITY = 0.6;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
 
-  let state = { quests: [], collapsed: true, opacity: DEFAULT_OPACITY, panelPos: { ...DEFAULT_PANEL_POS } };
+  let state = { moves: [], triggers: [], collapsed: undefined, opacity: DEFAULT_OPACITY, panelPos: { ...DEFAULT_PANEL_POS } };
   let editingId = null;
   let saving = false;
   let pendingSave = false;
@@ -44,22 +44,11 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
 
-  function isActiveMove(node) {
-    return node && node.type === "move" && node.active !== false;
-  }
-
-  function getTotalActiveMoveCount() {
-    let count = 0;
-    for (const node of state.triggers) {
-      if (isActiveMove(node)) {
-        count += 1;
-      } else if (node.type === "trigger" && Array.isArray(node.items)) {
-        for (const item of node.items) {
-          if (isActiveMove(item)) count += 1;
-        }
-      }
-    }
-    return count;
+  function isActiveMove(_node) {
+    // Retained for backward compatibility with any caller; in v2, "active"
+    // lives on the trigger, not the move. A node's active-ness in the overlay
+    // is determined by whether its parent trigger is active.
+    return false;
   }
 
   function getOpacityIcon(value) {
@@ -105,25 +94,66 @@
   // Penalty: pick a random inactive move and make it active. No-op if the
   // inactive pool is empty (the button is disabled in that case, but we
   // defend here too).
+  // Penalty: pick a random inactive trigger → activate it AND attach a random
+  // unattached move from the library. If every trigger is already active, pick
+  // a random active trigger and just attach a random unattached move. If the
+  // library has no unattached moves, the trigger is still activated.
   function applyPenalty() {
-    const pool = getInactiveMoves();
-    if (pool.length === 0) return;
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    pick.active = true;
+    if (state.triggers.length === 0) return;
+    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
+    let trigger;
+    let activatedANewTrigger = false;
+    if (inactiveTriggers.length > 0) {
+      trigger = inactiveTriggers[Math.floor(Math.random() * inactiveTriggers.length)];
+      trigger.active = true;
+      activatedANewTrigger = true;
+    } else {
+      trigger = state.triggers[Math.floor(Math.random() * state.triggers.length)];
+    }
+    // Attach a random unattached move from the library.
+    const availableMoves = state.moves.filter(function (m) {
+      return trigger.attachedMoveIds.indexOf(m.id) === -1;
+    });
+    let attachedMove = null;
+    if (availableMoves.length > 0) {
+      attachedMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+      trigger.attachedMoveIds.push(attachedMove.id);
+    }
     queueSave();
-    announceToAria("Penalty: " + pick.text + " is now active.");
+    if (attachedMove) {
+      announceToAria(
+        "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
+      );
+    } else if (activatedANewTrigger) {
+      announceToAria("Penalty: activated " + trigger.name + " (no moves available to attach).");
+    }
     render();
   }
 
-  // Reward: pick a random active move and deactivate it. No-op if the active
-  // pool is empty.
+  // Reward: pick a random active trigger that still has attached moves →
+  // remove a random attached move. If the trigger ends with zero attached
+  // moves, set it to inactive.
   function applyReward() {
-    const pool = getActiveMoves();
-    if (pool.length === 0) return;
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    pick.active = false;
+    const eligible = state.triggers.filter(function (t) {
+      return t.active && t.attachedMoveIds.length > 0;
+    });
+    if (eligible.length === 0) return;
+    const trigger = eligible[Math.floor(Math.random() * eligible.length)];
+    const idx = Math.floor(Math.random() * trigger.attachedMoveIds.length);
+    const removedMoveId = trigger.attachedMoveIds.splice(idx, 1)[0];
+    let deactivated = false;
+    if (trigger.attachedMoveIds.length === 0) {
+      trigger.active = false;
+      deactivated = true;
+    }
+    const removedMove = state.moves.find(function (m) { return m.id === removedMoveId; });
     queueSave();
-    announceToAria("Reward: " + pick.text + " is no longer active.");
+    if (removedMove) {
+      announceToAria(
+        "Reward: detached " + removedMove.text + " from " + trigger.name +
+          (deactivated ? "; trigger now inactive." : ".")
+      );
+    }
     render();
   }
 
@@ -419,8 +449,8 @@
     return (async function () {
       try {
         const current = await csLib.getConfiguration(CONFIG_KEY);
-        const hasCurrent =
-          current && (Array.isArray(current.quests) || Array.isArray(current.rules));
+        // v2 shape: { moves: [...], triggers: [...] }
+        const hasCurrent = current && Array.isArray(current.moves) && Array.isArray(current.triggers);
         if (hasCurrent) return;
         const legacy = await csLib.getConfiguration(LEGACY_CONFIG_KEY);
         if (!legacy) return;
@@ -430,21 +460,37 @@
           ? legacy.rules
           : [];
         if (legacyNodes.length === 0) return;
-        const migrated = {
-          triggers: legacyNodes.map(function (node) {
-            if (node.type === "category") {
-              return {
-                id: node.id || generateId(),
-                type: "trigger",
-                name: node.name,
-                items: (node.items || []).map(function (item) {
-                  return { id: item.id || generateId(), type: "move", text: item.text, active: true };
-                }),
-              };
+        const moves = [];
+        const triggers = [];
+        for (const node of legacyNodes) {
+          if (node.type === "category" || node.type === "trigger") {
+            const attachedMoveIds = [];
+            for (const item of (node.items || [])) {
+              const moveId = item.id || generateId();
+              moves.push({ id: moveId, type: "move", text: item.text });
+              attachedMoveIds.push(moveId);
             }
-            return { id: node.id || generateId(), type: "move", text: node.text, active: true };
-          }),
-          collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
+            triggers.push({
+              id: node.id || generateId(),
+              type: "trigger",
+              name: node.name,
+              active: true,
+              attachedMoveIds: attachedMoveIds,
+            });
+          } else if (node.type === "move" || node.type === "rule") {
+            moves.push({ id: node.id || generateId(), type: "move", text: node.text });
+          }
+        }
+        const migrated = {
+          moves: moves,
+          triggers: triggers,
+          // Don't set collapsed here — let loadState apply the dynamic default
+          // (expanded if there are active triggers, collapsed otherwise).
+          opacity: typeof legacy.opacity === "number" ? legacy.opacity : 0.6,
+          panelPos:
+            legacy.panelPos && typeof legacy.panelPos.top === "number" && typeof legacy.panelPos.right === "number"
+              ? { top: legacy.panelPos.top, right: legacy.panelPos.right }
+              : { top: 8, right: 8 },
         };
         try {
           await csLib.setConfiguration(CONFIG_KEY, migrated);
@@ -453,7 +499,7 @@
           return;
         }
         try {
-          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
+          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { moves: [], triggers: [], collapsed: true });
         } catch (e) {
           console.error("QuestingAdventurer: failed to clear legacy config:", e);
         }
@@ -464,18 +510,70 @@
     })();
   }
 
+  // Migrate v1' (post-rename) data to v2 (moves library + triggers with
+  // attachedMoveIds). Runs on every loadState when the stored data is in
+  // v1' format (has `triggers` but no `moves`).
+  function migrateV1ToV2(stored) {
+    const oldTriggers = Array.isArray(stored.triggers) ? stored.triggers : [];
+    const moves = [];
+    const triggers = [];
+    for (const node of oldTriggers) {
+      if (node.type === "trigger") {
+        const attachedMoveIds = [];
+        for (const item of (node.items || [])) {
+          const moveId = item.id || generateId();
+          moves.push({ id: moveId, type: "move", text: item.text });
+          attachedMoveIds.push(moveId);
+        }
+        triggers.push({
+          id: node.id || generateId(),
+          type: "trigger",
+          name: node.name,
+          active: true,
+          attachedMoveIds: attachedMoveIds,
+        });
+      } else if (node.type === "move") {
+        // Top-level moves in v1' go into the library, unattached.
+        moves.push({ id: node.id || generateId(), type: "move", text: node.text });
+      }
+    }
+    return { moves: moves, triggers: triggers };
+  }
+
   async function loadState() {
     try {
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
-      const raw = Array.isArray(stored.triggers)
-        ? stored.triggers
-        : Array.isArray(stored.quests) // v1 backward-compat
-        ? stored.quests
-        : Array.isArray(stored.rules)
-        ? stored.rules
-        : [];
-      state.triggers = raw;
-      state.collapsed = typeof stored.collapsed === "boolean" ? stored.collapsed : true;
+      // v2 format has both `moves` and `triggers` arrays.
+      if (Array.isArray(stored.moves) && Array.isArray(stored.triggers)) {
+        state.moves = stored.moves.map(function (m) {
+          return { id: m.id, type: "move", text: m.text };
+        });
+        state.triggers = stored.triggers.map(function (t) {
+          return {
+            id: t.id,
+            type: "trigger",
+            name: t.name,
+            active: t.active !== false,
+            attachedMoveIds: Array.isArray(t.attachedMoveIds) ? t.attachedMoveIds : [],
+          };
+        });
+      } else {
+        // v1' or v0 format — migrate to v2.
+        const migrated = migrateV1ToV2(stored);
+        state.moves = migrated.moves;
+        state.triggers = migrated.triggers;
+        // Persist the migrated form so the next load is a fast v2 read.
+        queueSave();
+      }
+      // `collapsed`: first-load default is dynamic — expanded if there are
+      // active triggers, collapsed otherwise. After the user manually toggles,
+      // the stored boolean value is used.
+      if (typeof stored.collapsed === "boolean") {
+        state.collapsed = stored.collapsed;
+      } else {
+        const hasActive = state.triggers.some(function (t) { return t.active; });
+        state.collapsed = !hasActive;
+      }
       const o =
         typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
           ? stored.opacity
@@ -495,6 +593,7 @@
       }
     } catch (err) {
       console.error("QuestingAdventurer: failed to load configuration:", err);
+      state.moves = [];
       state.triggers = [];
       state.collapsed = true;
       state.opacity = DEFAULT_OPACITY;
@@ -511,6 +610,7 @@
     pendingSave = false;
     try {
       const result = csLib.setConfiguration(CONFIG_KEY, {
+        moves: state.moves,
         triggers: state.triggers,
         collapsed: state.collapsed,
         opacity: state.opacity,
@@ -611,7 +711,7 @@
       const chip = document.createElement("div");
       chip.className = "questing-adventurer-panel__chip";
       chip.dataset.action = "toggle-collapse";
-      chip.textContent = "\ud83d\uddfa\ufe0f Quests (" + getTotalActiveMoveCount() + ")";
+      chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
       panel.appendChild(chip);
       return;
     }
@@ -624,7 +724,7 @@
     header.addEventListener("pointerdown", startPanelDrag);
     const title = document.createElement("span");
     title.className = "questing-adventurer-panel__header-title";
-    title.textContent = "Quests";
+    title.textContent = "Triggers";
     const controls = document.createElement("span");
     controls.className = "questing-adventurer-panel__header-controls";
 
@@ -699,18 +799,15 @@
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
-    if (state.triggers.length === 0) {
+    const activeTriggers = state.triggers.filter(function (t) { return t.active; });
+    if (activeTriggers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "questing-adventurer-panel__empty";
-      empty.textContent = "No triggers yet. Add a trigger or move below.";
+      empty.textContent = "No active triggers. Click Penalty to activate one.";
       list.appendChild(empty);
     } else {
-      state.triggers.forEach(function (node) {
-        if (node.type === "trigger") {
-          renderTrigger(list, node);
-        } else {
-          renderMove(list, node, false, null);
-        }
+      activeTriggers.forEach(function (trigger) {
+        renderTrigger(list, trigger);
       });
     }
     panel.appendChild(list);
@@ -758,7 +855,7 @@
 
   function renderTrigger(list, trigger) {
     const row = document.createElement("div");
-    row.className = "questing-adventurer-panel__quest";
+    row.className = "questing-adventurer-panel__trigger";
     row.dataset.id = trigger.id;
     row.dataset.rowType = "trigger";
     row.dataset.parentTrigger = "";
@@ -782,7 +879,7 @@
     }
 
     const nameEl = document.createElement("span");
-    nameEl.className = "questing-adventurer-panel__quest-name";
+    nameEl.className = "questing-adventurer-panel__trigger-name";
     nameEl.dataset.action = "edit";
     nameEl.dataset.id = trigger.id;
     nameEl.title = "Double-click to edit";
@@ -813,10 +910,14 @@
     row.appendChild(controls);
     list.appendChild(row);
 
-    if (Array.isArray(trigger.items)) {
-      trigger.items.forEach(function (move) {
-        renderMove(list, move, true, trigger.id);
-      });
+    // v2: render attached moves by resolving ids against the global library.
+    if (Array.isArray(trigger.attachedMoveIds)) {
+      for (const moveId of trigger.attachedMoveIds) {
+        const move = state.moves.find(function (m) { return m.id === moveId; });
+        if (move) {
+          renderMove(list, move, true, trigger.id);
+        }
+      }
     }
   }
 
@@ -874,7 +975,10 @@
   }
 
   function addMoveTop(text) {
-    state.triggers.push({ id: generateId(), type: "move", text: text, active: true });
+    // v2: add to the global move library. The move is unattached and won't
+    // appear in the overlay until Penalty (or the settings page) attaches it
+    // to a trigger.
+    state.moves.push({ id: generateId(), type: "move", text: text });
     queueSave();
     render();
   }
@@ -886,35 +990,36 @@
   }
 
   function addMoveInto(triggerId, text) {
+    // v2: add the move to the global library AND attach it to the trigger.
+    const newMoveId = generateId();
+    state.moves.push({ id: newMoveId, type: "move", text: text });
     const trigger = state.triggers.find(function (n) {
       return n.type === "trigger" && n.id === triggerId;
     });
     if (trigger) {
-      trigger.items.push({ id: generateId(), type: "move", text: text, active: true });
+      trigger.attachedMoveIds.push(newMoveId);
       queueSave();
       render();
     }
   }
 
   function deleteMove(id) {
+    // v2: moves live in the global library, but the overlay's delete button
+    // detaches the move from its parent trigger (not deleting from the
+    // library). The settings page handles library-level deletion.
+    // Determine the parent trigger via the row's data attribute.
     for (let i = 0; i < state.triggers.length; i++) {
-      const node = state.triggers[i];
-      if (node.type === "move" && node.id === id) {
-        state.triggers.splice(i, 1);
+      const trigger = state.triggers[i];
+      if (!Array.isArray(trigger.attachedMoveIds)) continue;
+      const idx = trigger.attachedMoveIds.indexOf(id);
+      if (idx !== -1) {
+        trigger.attachedMoveIds.splice(idx, 1);
+        if (trigger.attachedMoveIds.length === 0) {
+          trigger.active = false;
+        }
         queueSave();
         render();
         return;
-      }
-      if (node.type === "trigger" && Array.isArray(node.items)) {
-        const idx = node.items.findIndex(function (r) {
-          return r.id === id;
-        });
-        if (idx !== -1) {
-          node.items.splice(idx, 1);
-          queueSave();
-          render();
-          return;
-        }
       }
     }
   }
