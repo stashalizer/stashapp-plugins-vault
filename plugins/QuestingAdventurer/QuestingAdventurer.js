@@ -72,9 +72,39 @@
   // Penalty: pick a random inactive trigger → activate it AND attach a random
   // unattached move from the library. If every trigger is already active, pick
   // a random active trigger and just attach a random unattached move. If the
-  // library has no unattached moves, the trigger is still activated.
+  // Returns the list of library moves that are NOT yet at the per-move
+  // attachment cap (currently 2). A move is "available" if it is attached
+  // to fewer than MAX_MOVE_ATTACHMENTS triggers across the whole trigger
+  // list. Shared between the Penalty click handler and the Penalty button's
+  // enabled-state check so they can never disagree.
+  const MAX_MOVE_ATTACHMENTS = 2;
+  function getAvailableMoves() {
+    return state.moves.filter(function (m) {
+      let attachCount = 0;
+      for (const t of state.triggers) {
+        if ((t.attachedMoveIds || []).indexOf(m.id) !== -1) {
+          attachCount++;
+          if (attachCount >= MAX_MOVE_ATTACHMENTS) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  // Penalty: pick a random inactive trigger → activate it AND attach a random
+  // unattached move from the library. If every trigger is already active, pick
+  // a random active trigger and just attach a move. If the library has no
+  // available moves (all at the 2-trigger cap), do nothing — don't activate
+  // an empty trigger. The button is also disabled in that case.
   function applyPenalty() {
     if (state.triggers.length === 0) return;
+    const availableMoves = getAvailableMoves();
+    if (availableMoves.length === 0) {
+      // No available moves — leave triggers alone. The button should be
+      // disabled in this state, but we defend here too.
+      announceToAria("Penalty: no moves available under the 2-trigger cap. Add more moves to the library.");
+      return;
+    }
     const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
     let trigger;
     let activatedANewTrigger = false;
@@ -85,35 +115,13 @@
     } else {
       trigger = state.triggers[Math.floor(Math.random() * state.triggers.length)];
     }
-    // Attach a random move from the library that is currently attached to
-    // fewer than 2 triggers (the "max 2" cap). After a move is attached to
-    // 2 triggers, it's "used up" and penalty won't pick it again. This keeps
-    // the library from cycling the same move on every click while still
-    // allowing some duplication.
-    const MAX_MOVE_ATTACHMENTS = 2;
-    const availableMoves = state.moves.filter(function (m) {
-      let attachCount = 0;
-      for (const t of state.triggers) {
-        if ((t.attachedMoveIds || []).indexOf(m.id) !== -1) {
-          attachCount++;
-          if (attachCount >= MAX_MOVE_ATTACHMENTS) return false;
-        }
-      }
-      return true;
-    });
-    let attachedMove = null;
-    if (availableMoves.length > 0) {
-      attachedMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
-      trigger.attachedMoveIds.push(attachedMove.id);
-    }
+    const attachedMove = availableMoves[Math.floor(Math.random() * availableMoves.length)];
+    trigger.attachedMoveIds.push(attachedMove.id);
     queueSave();
-    if (attachedMove) {
-      announceToAria(
-        "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
-      );
-    } else if (activatedANewTrigger) {
-      announceToAria("Penalty: activated " + trigger.name + " (no moves under the 2-trigger cap available).");
-    }
+    announceToAria(
+      "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
+    );
+    render();
     render();
   }
 
@@ -750,9 +758,11 @@
     penaltyBtn.title = "Penalty: activate a random inactive trigger or attach a move";
     penaltyBtn.setAttribute("aria-label", "Penalty: activate a random inactive trigger or attach a move");
     penaltyBtn.textContent = "Penalty";
-    // v2 semantics: penalty can always act if there is at least one trigger
-    // (either activate an inactive one, or attach a move to a random active one).
-    penaltyBtn.disabled = state.triggers.length === 0;
+    // v2 semantics: penalty is enabled only if there is at least one
+    // trigger AND at least one move is under the 2-trigger attachment cap.
+    // When the library is exhausted, the button greys out instead of
+    // activating empty triggers.
+    penaltyBtn.disabled = state.triggers.length === 0 || getAvailableMoves().length === 0;
     controls.appendChild(penaltyBtn);
 
     const rewardBtn = document.createElement("button");
