@@ -52,11 +52,11 @@
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
 
-  function isActiveMove(_node) {
-    // Retained for backward compatibility with any caller; in v2, "active"
-    // lives on the trigger, not the move. A node's active-ness in the overlay
-    // is determined by whether its parent trigger is active.
-    return false;
+  // Count active triggers for the chip display. The chip shows the number
+  // of currently-active triggers (each active trigger is a "quest" the user
+  // is currently undertaking).
+  function getActiveTriggerCount() {
+    return state.triggers.filter(function (t) { return t.active; }).length;
   }
 
   function getOpacityIcon(value) {
@@ -64,39 +64,6 @@
     if (value <= 0.5) return "\u25d1"; // ◑
     if (value <= 0.8) return "\u25d0"; // ◐
     return "\u25cf"; // ●
-  }
-
-  // Collect every move that is currently inactive (active === false). These
-  // are candidates for the Penalty button. Moves with `active: undefined` are
-  // treated as active (post-migration default), so they are NOT in this pool.
-  function getInactiveMoves() {
-    const result = [];
-    for (const n of state.triggers) {
-      if (n.type === "move" && n.active === false) {
-        result.push(n);
-      } else if (n.type === "trigger" && Array.isArray(n.items)) {
-        for (const m of n.items) {
-          if (m.type === "move" && m.active === false) result.push(m);
-        }
-      }
-    }
-    return result;
-  }
-
-  // Collect every move that is currently active. These are candidates for the
-  // Reward button (we deactivate one of them).
-  function getActiveMoves() {
-    const result = [];
-    for (const n of state.triggers) {
-      if (isActiveMove(n)) {
-        result.push(n);
-      } else if (n.type === "trigger" && Array.isArray(n.items)) {
-        for (const m of n.items) {
-          if (isActiveMove(m)) result.push(m);
-        }
-      }
-    }
-    return result;
   }
 
   // Penalty: pick a random inactive move and make it active. No-op if the
@@ -764,20 +731,25 @@
     penaltyBtn.type = "button";
     penaltyBtn.dataset.action = "apply-penalty";
     penaltyBtn.className = "questing-adventurer-panel__penalty-button";
-    penaltyBtn.title = "Penalty: activate a random inactive move";
-    penaltyBtn.setAttribute("aria-label", "Penalty: activate a random inactive move");
+    penaltyBtn.title = "Penalty: activate a random inactive trigger or attach a move";
+    penaltyBtn.setAttribute("aria-label", "Penalty: activate a random inactive trigger or attach a move");
     penaltyBtn.textContent = "Penalty";
-    penaltyBtn.disabled = getInactiveMoves().length === 0;
+    // v2 semantics: penalty can always act if there is at least one trigger
+    // (either activate an inactive one, or attach a move to a random active one).
+    penaltyBtn.disabled = state.triggers.length === 0;
     controls.appendChild(penaltyBtn);
 
     const rewardBtn = document.createElement("button");
     rewardBtn.type = "button";
     rewardBtn.dataset.action = "apply-reward";
     rewardBtn.className = "questing-adventurer-panel__reward-button";
-    rewardBtn.title = "Reward: deactivate a random active move";
-    rewardBtn.setAttribute("aria-label", "Reward: deactivate a random active move");
+    rewardBtn.title = "Reward: detach a random move from a random active trigger";
+    rewardBtn.setAttribute("aria-label", "Reward: detach a random move from a random active trigger");
     rewardBtn.textContent = "Reward";
-    rewardBtn.disabled = getActiveMoves().length === 0;
+    // v2 semantics: reward needs an active trigger that still has attached moves.
+    rewardBtn.disabled = !state.triggers.some(function (t) {
+      return t.active && Array.isArray(t.attachedMoveIds) && t.attachedMoveIds.length > 0;
+    });
     controls.appendChild(rewardBtn);
 
     const lockBtn = document.createElement("button");
