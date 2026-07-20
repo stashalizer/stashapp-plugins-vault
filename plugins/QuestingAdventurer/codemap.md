@@ -3,26 +3,38 @@
 ## Responsibility
 The **QuestingAdventurer** Stash plugin — turns scene playback into a quest. The
 viewer is a "questing adventurer" who must respond to cues (gestures, dance
-moves, etc.) in the playing scene by performing the **active** moves from their
-quest log. Provides a player overlay (vanilla JS) + a full-page React settings
-UI. All state is persisted to Stash configuration under the key
-`"QuestingAdventurer"`.
+moves, etc.) in the playing scene by performing the moves attached to their
+**active** triggers. Provides a player overlay (vanilla JS) + a full-page
+React settings UI. All state is persisted to Stash configuration under the
+key `"QuestingAdventurer"`.
 
 ## Data Model
-State shape: `{ quests: Node[], collapsed: boolean, opacity: number }` where
-`Node` is either
-- `{ id, type: "move", text, active: true }` — a top-level move
-- `{ id, type: "trigger", name, items: Move[] }` — a trigger grouping leaf moves
+State shape:
+```js
+{
+  moves: [{ id: string, text: string }],                    // global move library
+  triggers: [{
+    id: string,
+    type: "trigger",
+    name: string,
+    active: boolean,                                       // is this trigger in effect?
+    attachedMoveIds: [string, ...]                         // ids into the global library
+  }],
+  collapsed: boolean,                                      // overlay collapsed state
+  opacity: number,                                         // 0.0–1.0, panel background alpha
+  panelPos: { top: number, right: number },                // overlay position
+  locked: boolean,                                         // disable drag + dim controls
+  showAddControls: boolean                                 // show Add Trigger/Move footer
+}
+```
 
-`active: true` (the post-migration default) means the move is currently in
-effect. `active: false` is an explicit deactivation. The overlay's collapsed
-chip counts only active moves; the settings page shows the whole library with
-an active toggle per move.
-
-The overlay owns `collapsed` and `opacity`. The settings page owns `quests`.
-Both surfaces read-modify-write the entire config map; on save, each preserves
-the other surface's fields by reading them from the stored config first
-(overlay) or by spreading (settings).
+- `active` lives on the **trigger**, not on the move. A trigger with no
+  attached moves is `active: false` by design.
+- The **overlay** owns `collapsed`, `opacity`, `panelPos`, `locked`,
+  `showAddControls`. The **settings page** owns `moves` and `triggers`.
+- Both surfaces read-modify-write the entire config map. On save, each
+  preserves the other surface's fields by reading them from the stored
+  config first (overlay) or by spreading (settings).
 
 ## Design Patterns
 - **Manifest-driven plugin**: `QuestingAdventurer.yml` declares the plugin to
@@ -41,27 +53,24 @@ the other surface's fields by reading them from the stored config first
   between removal and re-injection is acknowledged).
 - **Save lock with pending flag**: both surfaces guard `csLib.setConfiguration`
   with a `saving`/`pendingSave` lock to coalesce concurrent async saves and
-  avoid interleaving.
-- **Semantic state split**: the settings page owns the `quests` array; the
-  overlay owns the `collapsed` flag and the `opacity` value. Every settings
-  save re-reads the stored config to preserve both overlay-owned fields.
-- **Immutable updates (React surface)**: settings mutators produce new
-  arrays/objects via spread; the overlay mutates state in place then re-renders.
-- **Stale-closure guard**: settings page keeps an `editingIdRef` mirror of
-  `editingId` so blur/Enter handlers read the live value, not the captured
-  render-time value.
-- **One-shot legacy migration**: both surfaces run a `migrateFromLegacy()` step
-  on first load. If no `QuestingAdventurer` config exists but the legacy
-  `SceneRules` config does, the data is copied over (every move marked
-  `active: true`, `category` → `trigger`, `rule` → `move`), writes to the new
-  key, and clears the old key. Safe to run repeatedly; no-ops once migration
-  is done.
+  avoid interleaving. The `await` is critical — `csLib.getConfiguration` and
+  `setConfiguration` are BOTH `async` (always return Promises); treating a
+  Promise as a plain object is a silent failure mode.
 - **Scene-Tools-only launcher**: the settings launcher uses a module-level
   call counter on `SettingsToolsSection`; it injects the card on **even**
   calls (the Scene Tools section, per `SettingsToolsPanel.tsx`), so the card
   no longer appears in the general Tools section. Parity (odd = Tools, even
   = Scene Tools) is the correct gate because the two `SettingsToolsSection`
   instances render in fixed order on every re-render.
+- **One-shot legacy migration (v0 → v2)**: `migrateFromLegacy()` in both
+  surfaces handles the `SceneRules` → `QuestingAdventurer` migration in a
+  single step, producing v2 format directly. Safe to run repeatedly;
+  no-ops once migration is done.
+- **One-shot v1' → v2 migration**: `migrateV1ToV2()` in `loadState`
+  (and the settings page's `useEffect`) handles the intermediate data
+  model (post-rename, pre-v2) by collecting moves from `trigger.items`
+  and top-level moves into the global library, creating
+  `attachedMoveIds`, and persisting the v2 form. Safe to run repeatedly.
 - **CSS custom properties for theming**: the panel's background alpha is
   driven by `--qa-bg-alpha`, set inline from `state.opacity` on every render.
   The drop-line indent is driven by `--qa-indent` set per row (0 for
@@ -75,46 +84,57 @@ the other surface's fields by reading them from the stored config first
   `document.body` (not inside the panel) so it survives `render()` after
   drag/drop or penalty/reward. Both surfaces append to it for screen-reader
   announcements.
+- **Dynamic default collapsed**: on first load (no stored `collapsed`),
+  the overlay is expanded if there are active triggers and collapsed
+  otherwise. After the user manually toggles, the stored value is used.
+- **Lock state**: `locked: true` adds the `questing-adventurer-panel--locked`
+  class, which hides row drag handles, reverts the header cursor to default
+  (disabling panel drag), and dims penalty/reward/opacity controls.
 
 ## Data & Control Flow
 **Overlay (`QuestingAdventurer.js`):**
 1. `csLib.PathElementListener` fires `setupPanel(playerEl)` when
    `#VideoJsPlayer` exists on `/scenes/`.
 2. `setupPanel` verifies the URL matches `/scenes/(\d+)`, ensures the player
-   has `position: relative`, calls `migrateFromLegacy()` then `loadState()`,
+   has `position: relative`, awaits `migrateFromLegacy()` then `loadState()`,
    creates the `.questing-adventurer-panel` div, attaches `click` /
-   `dblclick` delegation, appends to the player, and calls `render()`.
-3. `render()` clears the panel and renders either a collapsed chip (showing
-   the active-move count) or an expanded view: header (title +
-   Penalty/Reward buttons + opacity icon (with hover-reveal slider) + close
-   button) + scrollable list of quests/moves + footer (input + Add Quest /
-   Add Move buttons).
+   `dblclick` delegation, applies the persisted `panelPos`, appends to the
+   player, and calls `render()`.
+3. `render()` clears the panel and renders either a collapsed chip
+   (showing the active-trigger count: `🗺️ Triggers (N)`) or an expanded view:
+   header (title + 🔒 lock + ➕ add-toggle + Penalty/Reward + opacity
+   hover-reveal slider + ✕ close) + scrollable list of active triggers
+   with their attached moves + footer (input + Add Trigger / Add Move
+   buttons, revealed by the add-toggle).
 4. **Header actions**:
-   - Penalty (`apply-penalty`): random pick from `getInactiveMoves()`
-     (pool of moves with `active === false`), set `pick.active = true`,
-     `queueSave()`, announce via aria-live, re-render.
-   - Reward (`apply-reward`): random pick from `getActiveMoves()` (pool
-     via `isActiveMove` which uses `active !== false`), set
-     `pick.active = false`, `queueSave()`, announce via aria-live, re-render.
-   - Opacity icon (`opacity-reset`): Ctrl/⌘+click resets to the default
-     0.6. The opacity slider (`opacity-slider`) drives an `input` event
-     listener that mutates `state.opacity`, updates `--qa-bg-alpha`, and
-     calls `queueSave()`.
-   - Close (`toggle-collapse`): flips `state.collapsed`, `queueSave()`,
+   - **Penalty** (`apply-penalty`): pick a random inactive trigger →
+     activate it AND attach a random unattached move from the library. If
+     every trigger is already active, pick a random active trigger and
+     just attach a move. If the library has no unattached moves, just
+     activate (no-op for the move part). Announces via aria-live.
+   - **Reward** (`apply-reward`): pick a random active trigger that still
+     has attached moves → remove a random attached move. If the trigger
+     ends with zero attached moves, set it `active: false`. Announces
+     via aria-live.
+   - **Lock** (`toggle-lock`): flip `state.locked`, persist, re-render.
+   - **Add toggle** (`toggle-add-controls`): flip `state.showAddControls`,
+     persist, re-render. The footer (input + Add buttons) is hidden by
+     default; revealed when this is on.
+   - **Opacity icon** (`opacity-reset`): Ctrl/⌘+click resets to the
+     default 0.6. The opacity slider drives an `input` listener that
+     mutates `state.opacity`, updates `--qa-bg-alpha`, and calls
+     `queueSave()`.
+   - **Close** (`toggle-collapse`): flips `state.collapsed`, `queueSave()`,
      re-render.
-5. **List actions**:
-   - Drag handle (`drag-handle`): initiates a pointer-event drag. The
-     ghost follows the pointer; `getDropTarget()` determines the
-     insertion point; `reorder()` performs the mutation; `queueSave()`
-     and `render()` finalize.
-   - Add (`add-trigger-top` / `add-move-top` / `add-move-into`): append to
-     top-level or inside a trigger.
-   - Delete (`delete-trigger` / `delete-move`): remove from state; delete
-     on a trigger requires `window.confirm`.
-   - Edit (`edit`, on the name/text span): double-click swaps in
-     `createEditInput`; Enter saves, Escape cancels, blur saves.
-6. `queueSave` → `csLib.setConfiguration("QuestingAdventurer", { quests,
-   collapsed, opacity })` with the async save lock.
+5. **List rendering** (only active triggers):
+   - `renderTrigger(list, trigger)` shows the trigger name + controls
+     (drag handle, add-move button, delete button).
+   - For each `attachedMoveIds` id, the move text is resolved from
+     `state.moves` and rendered via `renderMove` (indented under the
+     trigger).
+6. `queueSave` → `csLib.setConfiguration("QuestingAdventurer", { moves,
+   triggers, collapsed, opacity, panelPos, locked, showAddControls })`
+   with the async save lock.
 
 **Settings (`QuestingAdventurerSettings.js`):**
 1. On script load, `PluginApi.patch.before("PluginRoutes", ...)` registers
@@ -122,24 +142,36 @@ the other surface's fields by reading them from the stored config first
    `PluginApi.patch.before("SettingsToolsSection", ...)` adds a launcher
    card on even calls (Scene Tools section).
 2. `QuestingAdventurerSettingsPage` mounts → `useEffect` runs
-   `migrateFromLegacy()` then `csLib.getConfiguration("QuestingAdventurer")`
-   → `setQuests` / `setLoading(false)`.
-3. Mutators build immutable next-quests arrays:
-   - `addMoveTop`, `addQuestTop`, `addMoveInto`: append at top level or
-     inside a trigger; new moves default to `active: true`.
-   - `deleteMove`, `deleteQuest`: filter; `deleteQuest` requires
-     `window.confirm`.
-   - `editNode`: replace the text/name of an existing node.
-   - `moveNode(id, direction)`: swap with the adjacent sibling (top-level
-     or inside the same trigger) using immutable updates. Used by the ▲/▼
-     buttons for keyboard/mouse parity with the overlay's drag-to-reorder.
-   - `toggleActive(id)`: flip `active` for a move (top-level or inside a
-     trigger). The toggle button shows ● when active (with class
-     `__active-btn`) and ○ when inactive (with class `__inactive-btn`),
-     with `aria-pressed` reflecting the state.
-4. `commitQuests` → `setEditingId(null); setQuests(next); saveQuests(next)`.
-5. `saveQuestsNow` re-reads stored config to preserve `collapsed` and
-   `opacity`, then `csLib.setConfiguration`.
+   `migrateFromLegacy()` (v0 → v2), reads `csLib.getConfiguration`, detects
+   v2 format (`stored.moves` and `stored.triggers`) or migrates v1' → v2,
+   then sets `moves` / `triggers` React state.
+3. **Move Library section**: every move in `moves` is shown with its text
+   (double-click to edit), a "Used by: [trigger names]" indicator
+   (or "Unattached" in italic), and a delete button. Deleting a move
+   that's attached to triggers prompts a confirm dialog and detaches it
+   from all of them.
+4. **Triggers section**: every trigger in `triggers` is shown with its
+   name (double-click to edit), ▲/▼ reorder buttons, an "Add Move" button
+   (adds a new move to the library AND attaches it to this trigger), a
+   delete button, and its attached moves (resolved from the library)
+   with their own delete buttons.
+5. Mutators:
+   - `addMoveTop(text)` — add a move to the global library (unattached).
+   - `addTriggerTop(name)` — add a trigger (no attached moves).
+   - `addMoveInto(triggerId, text)` — add to library AND attach.
+   - `deleteMove(id)` — detach from parent trigger (move stays in library).
+   - `deleteMoveFromLibrary(id)` — remove from library AND detach from
+     all triggers (with confirm if attached).
+   - `deleteTrigger(id)` — remove trigger (attached moves go back to
+     library; unattached); requires `window.confirm`.
+   - `editNode(id, newText)` / `editMoveText(id, newText)` — rename
+     trigger or edit move text.
+   - `moveNode(id, direction)` — swap with adjacent sibling using
+     immutable updates. Used by the ▲/▼ buttons.
+6. `commitTriggers` / `saveTriggersNow` — `saveTriggersNow` is `async`
+   and re-reads stored config to preserve `collapsed`, `opacity`,
+   `panelPos`, `locked`, `showAddControls`, then `await
+   csLib.setConfiguration`.
 
 ## Integration Points
 - **Depends on**: `window.csLib` (CommunityScriptsUILibrary) —
@@ -149,8 +181,8 @@ the other surface's fields by reading them from the stored config first
   `useState`/`useEffect`/`useRef`), `libraries.ReactRouterDOM` (`Route`,
   `Link`), `patch.before` for route/settings injection. Used only by the
   settings page.
-- **Config key**: `"QuestingAdventurer"` (shared by both surfaces). The
-  legacy `"SceneRules"` key is read once and migrated, then cleared.
+- **Config key**: `"QuestingAdventurer"` (shared by both surfaces). Legacy
+  `"SceneRules"` key is read once and migrated, then cleared.
 - **Routes injected**: `/plugins/questingadventurer` (settings page).
 - **DOM mount**: `#VideoJsPlayer` (overlay panel appended as an
   absolute-positioned child).
@@ -163,9 +195,10 @@ the other surface's fields by reading them from the stored config first
   navigation/reload.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.3,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.8,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
-- `QuestingAdventurerSettings.js` — full-page React CRUD settings UI.
+- `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with
+  Move Library + Triggers sections.
 - `QuestingAdventurer.css` — overlay panel styling.
 - `QuestingAdventurerSettings.css` — settings page styling.

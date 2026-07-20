@@ -49,15 +49,24 @@ build_site.sh               # zips each plugin + writes index.yml
 
 ## QuestingAdventurer (the only plugin today)
 
-- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ triggers: Node[], collapsed: boolean }`. `Node` is `{type:"move",id,text,active:true}` or `{type:"trigger",id,name,items:Move[]}`. Top-level nodes are moves or triggers; triggers contain only leaf moves.
-- `active: true` (default) means the move is currently in effect. The overlay chip counts only active moves; the settings page shows the whole library so users can toggle moves in or out of the active set. (As of the trigger rename, the data model is `{ triggers: Node[], collapsed: boolean }` where each trigger is `{type:"trigger",name,items:Move[]}`.)
-- The **overlay** mutates state in place then re-renders; the **settings page** uses React with immutable updates. They share a config key but each owns different fields semantically (settings owns `quests`, overlay owns `collapsed`), and each save re-reads stored config to preserve the other's field.
+- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds}], collapsed, opacity, panelPos, locked, showAddControls }`.
+- **v2 data model**: moves are a global library (`moves: [{id,text}]`); triggers reference moves by id via `attachedMoveIds: [string]`. The `active` flag lives on the **trigger**, not the move. A trigger with no attached moves is `active: false` by design.
+- **Penalty / Reward** (overlay header buttons):
+  - **Penalty** picks a random **inactive** trigger → activates it AND attaches a random **unattached** move from the library. If every trigger is already active, it picks a random active trigger and just attaches a move. If the library has no unattached moves, the trigger is still activated (no-op for the move part).
+  - **Reward** picks a random **active** trigger that still has attached moves → removes a random attached move. If the trigger ends with zero attached moves, it is set `active: false`.
+- **Overlay shows only active triggers** and their attached moves (resolved from the global library by id). The chip shows `🗺️ Triggers (N)` where N is the number of active triggers.
+- **Dynamic default collapsed**: on first load (no stored `collapsed`), the overlay is expanded if there are active triggers and collapsed otherwise. After the user manually toggles, the stored value is used.
+- **Header controls**: 🔒 lock button (`locked: bool` — hides row drag handles, disables panel drag, dims penalty/reward/opacity), ➕ add-toggle button (`showAddControls: bool` — reveals the Add Trigger / Add Move footer which is hidden by default), opacity slider (hover-reveal), ✕ close.
+- The **overlay** mutates state in place then re-renders; the **settings page** uses React with immutable updates. They share a config key but each owns different fields semantically: the settings page owns `moves` and `triggers`; the overlay owns `collapsed`, `opacity`, `panelPos`, `locked`, `showAddControls`. Each save re-reads the stored config to preserve the other surface's fields.
 - Each surface has its own `saving`/`pendingSave` save lock. **They do not coordinate across components** — concurrent writes race and last writer wins the whole config map. Settings edits will not live-reflect in an already-open overlay until the next navigation or reload.
+- `csLib.getConfiguration` and `setConfiguration` are BOTH `async` (always return Promises). Always `await` them. Treating a Promise as a plain object is a silent failure mode that surfaces as "data disappears after refresh". Both surfaces' `loadState` and `saveTriggersNow`/`queueSave` are `async` and `await` the calls. See `docs/references.md` for the full csLib notes.
 - Overlay re-injects on the `stash:location` SPA event via `csLib.PathElementListener`; a brief flash between React unmount and re-injection is expected (see the header comment in `QuestingAdventurer.js`).
 - The settings page is registered through `PluginApi.patch.before`:
   - `PluginRoutes` → `<Route path="/plugins/questingadventurer" />` (lowercase plugin id, hardcoded — update if you rename the plugin)
   - `SettingsToolsSection` → launcher card on the **2nd** call only (Scene Tools section). See `QuestingAdventurerSettings.js` for the call-counter; do not remove it.
-- **Legacy migration:** both surfaces run `migrateFromLegacy()` on first load. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is copied over (every move marked `active: true`, `category` → `trigger`, `rule` → `move`) and the old key is cleared. Safe to run repeatedly; do not remove until the legacy key is no longer present in the wild.
+- **Two migrations run on first load**:
+  1. `migrateFromLegacy()` — v0 (`SceneRules`) → v2 (`QuestingAdventurer`). Both surfaces run it. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is migrated (`category` → `trigger`, `rule` → `move`, all moves go into the global library, triggers get `attachedMoveIds`) and the old key is cleared. Writes v2 format directly. Safe to run repeatedly; no-ops once migration is done.
+  2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
 
@@ -89,6 +98,7 @@ use a top-level component name:
 
 - `feat(QuestingAdventurer): support drag-to-reorder triggers and moves`
 - `fix(QuestingAdventurer): preserve overlay collapsed state across settings save`
+- `chore(codemap): regenerate after QuestingAdventurer v2 data model`
 - `build: tighten plugins/** paths filter in deploy workflow`
 - `chore(codemap): regenerate after QuestingAdventurer rename`
 - `revert(QuestingAdventurer): drop the experimental node drag handler`

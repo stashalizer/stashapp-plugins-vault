@@ -1,7 +1,7 @@
 # Repository Atlas: stashapp-plugins-vault
 
 ## Project Responsibility
-A Stash plugin source-index repository (based on the official CommunityScripts template) that packages and publishes Stash plugins via GitHub Pages. Currently ships one plugin — **QuestingAdventurer** — an interactive overlay and settings page that turns scene playback into a quest: the viewer is a "questing adventurer" who must respond to cues in the playing scene by performing the active moves from their quest log.
+A Stash plugin source-index repository (based on the official CommunityScripts template) that packages and publishes Stash plugins via GitHub Pages. Currently ships one plugin — **QuestingAdventurer** — an interactive overlay and settings page that turns scene playback into a quest: the viewer is a "questing adventurer" who must respond to cues in the playing scene by performing the moves attached to their active triggers.
 
 ## System Entry Points
 - `plugins/QuestingAdventurer/QuestingAdventurer.yml` — plugin manifest; declares the QuestingAdventurer plugin to Stash (name, description, version, required dependency, asset list).
@@ -16,7 +16,7 @@ Source index URL: `https://<username>.github.io/<repository>/main/index.yml`. St
 | Directory | Responsibility Summary | Detailed Map |
 |-----------|------------------------|--------------|
 | `plugins/` | Container for self-contained Stash plugins; one subdirectory per plugin id. | [View Map](plugins/codemap.md) |
-| `plugins/QuestingAdventurer/` | QuestingAdventurer plugin — player overlay (vanilla JS) + full-page React settings UI sharing one config key; 2-level triggers/moves CRUD with per-move `active` flag, persisted to Stash config; one-shot migration from the legacy `SceneRules` key. | [View Map](plugins/QuestingAdventurer/codemap.md) |
+| `plugins/QuestingAdventurer/` | QuestingAdventurer plugin — player overlay (vanilla JS) + full-page React settings UI sharing one config key; v2 data model with a global moves library and triggers that reference moves by id (`active` lives on the trigger); overlay shows only active triggers with their attached moves; lock + add-controls toggle in the header; persisted to Stash config; one-shot v0 (SceneRules) → v2 migration. | [View Map](plugins/QuestingAdventurer/codemap.md) |
 
 ## Build & Deploy
 - `build_site.sh <outdir>`: for each `plugins/*/*.yml`, zips the plugin directory, then records `id`, `name`, `description`, `version` (`<ymlVersion>-<gitHash>`), `date`, `path`, `sha256`, and optional `requires` into `<outdir>/index.yml`.
