@@ -1296,6 +1296,24 @@
     // is completely outside the video.js DOM tree — no video.js CSS can
     // touch it.
     document.body.appendChild(panel);
+    // Use the Popover API to promote the panel into the browser's TOP LAYER.
+    // In fullscreen mode, the video player itself is rendered in the top
+    // layer — no z-index value (not even max-int32) can render above the top
+    // layer from a normal stacking context. `popover="manual"` + showPopover()
+    // moves this element into the top layer too, so it stays visible above
+    // the fullscreen video. `manual` prevents the browser from auto-closing
+    // it on outside-click or Escape (we manage dismissal ourselves via the X
+    // button). Supported in Chrome/Edge 114+, Safari 17+, Firefox 125+.
+    if (typeof panel.showPopover === "function") {
+      panel.setAttribute("popover", "manual");
+      try {
+        panel.showPopover();
+      } catch (popErr) {
+        // If showPopover throws (very old browser, or popover not actually
+        // supported), the panel still works in windowed mode. Just log.
+        console.warn("QuestingAdventurer: showPopover() failed:", popErr);
+      }
+    }
     render();
   }
 
