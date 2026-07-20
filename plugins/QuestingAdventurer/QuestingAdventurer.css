@@ -336,6 +336,62 @@
   background: rgba(80, 220, 100, 0.18);
 }
 
+/* Lock button (🔒/🔓) — small icon, distinct from penalty/reward. */
+.questing-adventurer-panel__lock-button {
+  font-size: 13px;
+  padding: 0 4px;
+}
+
+.questing-adventurer-panel__lock-button[aria-pressed="true"] {
+  color: #ffb86b;
+  background: rgba(255, 140, 60, 0.18);
+}
+
+/* Add-controls toggle — expands the hidden footer (input + Add buttons). */
+.questing-adventurer-panel__add-toggle-button {
+  font-size: 16px;
+  font-weight: bold;
+  padding: 0 5px;
+  line-height: 1;
+}
+
+.questing-adventurer-panel__add-toggle-button[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Footer (input + Add buttons) hidden by default; revealed by the add-toggle. */
+.questing-adventurer-panel__footer {
+  display: none;
+}
+
+.questing-adventurer-panel--show-add-controls .questing-adventurer-panel__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 8px;
+}
+
+/* Locked state: hide row drag handles, disable panel header drag, dim
+   interactive controls. The cursor on the header reverts to default because
+   the panel can't be repositioned while locked. */
+.questing-adventurer-panel--locked .questing-adventurer-panel__drag-handle {
+  display: none;
+}
+
+.questing-adventurer-panel--locked .questing-adventurer-panel__header {
+  cursor: default;
+}
+
+.questing-adventurer-panel--locked .questing-adventurer-panel__penalty-button,
+.questing-adventurer-panel--locked .questing-adventurer-panel__reward-button,
+.questing-adventurer-panel--locked .questing-adventurer-panel__opacity-button,
+.questing-adventurer-panel--locked .questing-adventurer-panel__opacity-slider {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .questing-adventurer-panel__empty {
   color: rgba(255, 255, 255, 0.6);
   font-style: italic;
@@ -348,6 +404,7 @@
   flex-wrap: wrap;
   align-items: center;
   flex-shrink: 0;
+  margin-top: 8px;
 }
 
 .questing-adventurer-panel__footer input {

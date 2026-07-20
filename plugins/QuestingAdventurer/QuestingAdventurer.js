@@ -31,7 +31,15 @@
   const DEFAULT_OPACITY = 0.6;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
 
-  let state = { moves: [], triggers: [], collapsed: undefined, opacity: DEFAULT_OPACITY, panelPos: { ...DEFAULT_PANEL_POS } };
+  let state = {
+    moves: [],
+    triggers: [],
+    collapsed: undefined,
+    opacity: DEFAULT_OPACITY,
+    panelPos: { ...DEFAULT_PANEL_POS },
+    locked: false,
+    showAddControls: false,
+  };
   let editingId = null;
   let saving = false;
   let pendingSave = false;
@@ -579,6 +587,8 @@
           ? stored.opacity
           : DEFAULT_OPACITY;
       state.opacity = Math.min(1, Math.max(0, o));
+      state.locked = stored.locked === true;
+      state.showAddControls = stored.showAddControls === true;
       if (
         stored.panelPos &&
         typeof stored.panelPos.top === "number" &&
@@ -615,6 +625,8 @@
         collapsed: state.collapsed,
         opacity: state.opacity,
         panelPos: state.panelPos,
+        locked: state.locked,
+        showAddControls: state.showAddControls,
       });
       await result;
       saving = false;
@@ -748,6 +760,26 @@
     rewardBtn.disabled = getActiveMoves().length === 0;
     controls.appendChild(rewardBtn);
 
+    const lockBtn = document.createElement("button");
+    lockBtn.type = "button";
+    lockBtn.dataset.action = "toggle-lock";
+    lockBtn.className = "questing-adventurer-panel__lock-button";
+    lockBtn.title = state.locked ? "Unlock overlay" : "Lock overlay";
+    lockBtn.setAttribute("aria-label", state.locked ? "Unlock overlay" : "Lock overlay");
+    lockBtn.setAttribute("aria-pressed", state.locked ? "true" : "false");
+    lockBtn.textContent = state.locked ? "\ud83d\udd12" : "\ud83d\udd13";
+    controls.appendChild(lockBtn);
+
+    const addToggleBtn = document.createElement("button");
+    addToggleBtn.type = "button";
+    addToggleBtn.dataset.action = "toggle-add-controls";
+    addToggleBtn.className = "questing-adventurer-panel__add-toggle-button";
+    addToggleBtn.title = "Add trigger or move";
+    addToggleBtn.setAttribute("aria-label", "Add trigger or move");
+    addToggleBtn.setAttribute("aria-expanded", state.showAddControls ? "true" : "false");
+    addToggleBtn.textContent = "+";
+    controls.appendChild(addToggleBtn);
+
     const opacityWrap = document.createElement("span");
     opacityWrap.className = "questing-adventurer-panel__opacity-control";
 
@@ -849,6 +881,11 @@
     footer.appendChild(addTriggerBtn);
     footer.appendChild(addMoveBtn);
     panel.appendChild(footer);
+
+    // Apply the locked / showAddControls state classes so CSS can hide the
+    // appropriate elements without touching the DOM.
+    if (state.locked) panel.classList.add("questing-adventurer-panel--locked");
+    if (state.showAddControls) panel.classList.add("questing-adventurer-panel--show-add-controls");
 
     syncButtons();
   }
@@ -1076,6 +1113,16 @@
         // A plain click on the handle (no drag) reaches this case and is a
         // no-op. This prevents the click from bubbling to a parent action.
         break;
+      case "toggle-lock":
+        state.locked = !state.locked;
+        queueSave();
+        render();
+        break;
+      case "toggle-add-controls":
+        state.showAddControls = !state.showAddControls;
+        queueSave();
+        render();
+        break;
       case "add-move-top": {
         const text = getFooterValue(panel);
         if (text) {
@@ -1127,6 +1174,7 @@
     // header (penalty, reward, opacity icon, close).
     if (e.target.closest("button") || e.target.closest("input")) return;
     if (e.button !== undefined && e.button !== 0) return;
+    if (state.locked) return;
     e.preventDefault();
     const panel = document.querySelector(".questing-adventurer-panel");
     if (!panel) return;
