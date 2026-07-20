@@ -16,7 +16,7 @@ Source index URL: `https://<username>.github.io/<repository>/main/index.yml`. St
 | Directory | Responsibility Summary | Detailed Map |
 |-----------|------------------------|--------------|
 | `plugins/` | Container for self-contained Stash plugins; one subdirectory per plugin id. | [View Map](plugins/codemap.md) |
-| `plugins/QuestingAdventurer/` | QuestingAdventurer plugin — player overlay (vanilla JS) + full-page React settings UI sharing one config key; 2-level quests/moves CRUD with per-move `active` flag, persisted to Stash config; one-shot migration from the legacy `SceneRules` key. | [View Map](plugins/QuestingAdventurer/codemap.md) |
+| `plugins/QuestingAdventurer/` | QuestingAdventurer plugin — player overlay (vanilla JS) + full-page React settings UI sharing one config key; 2-level triggers/moves CRUD with per-move `active` flag, persisted to Stash config; one-shot migration from the legacy `SceneRules` key. | [View Map](plugins/QuestingAdventurer/codemap.md) |
 
 ## Build & Deploy
 - `build_site.sh <outdir>`: for each `plugins/*/*.yml`, zips the plugin directory, then records `id`, `name`, `description`, `version` (`<ymlVersion>-<gitHash>`), `date`, `path`, `sha256`, and optional `requires` into `<outdir>/index.yml`.

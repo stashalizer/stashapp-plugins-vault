@@ -18,7 +18,7 @@
   gap: 0.25rem;
 }
 
-.questing-adventurer-settings__quest {
+.questing-adventurer-settings__trigger {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -26,7 +26,7 @@
   margin-top: 0.5rem;
 }
 
-.questing-adventurer-settings__quest-name {
+.questing-adventurer-settings__trigger-name {
   font-weight: bold;
   cursor: pointer;
   border-radius: 3px;
@@ -35,7 +35,7 @@
   flex: 1 1 auto;
 }
 
-.questing-adventurer-settings__quest-name:hover {
+.questing-adventurer-settings__trigger-name:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 

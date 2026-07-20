@@ -41,7 +41,7 @@
   let settingsToolsCallCount = 0;
   let saving = false;
   let pendingSave = false;
-  let latestQuests = null;
+  let latestTriggers = null;
 
   function generateId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -66,11 +66,11 @@
           : [];
         if (legacyNodes.length === 0) return;
         const migrated = {
-          quests: legacyNodes.map(function (node) {
+          triggers: legacyNodes.map(function (node) {
             if (node.type === "category") {
               return {
                 id: node.id || generateId(),
-                type: "quest",
+                type: "trigger",
                 name: node.name,
                 items: (node.items || []).map(function (item) {
                   return { id: item.id || generateId(), type: "move", text: item.text, active: true };
@@ -99,7 +99,7 @@
     })();
   }
 
-  async function saveQuestsNow() {
+  async function saveTriggersNow() {
     if (saving) {
       pendingSave = true;
       return;
@@ -107,10 +107,10 @@
     saving = true;
     pendingSave = false;
     try {
-      const questsToSave = latestQuests || [];
+      const triggersToSave = latestTriggers || [];
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
       const merged = {
-        quests: questsToSave,
+        triggers: triggersToSave,
         collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : true,
         opacity:
           typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
@@ -137,13 +137,13 @@
     }
   }
 
-  function saveQuests(newQuests) {
-    latestQuests = newQuests;
-    saveQuestsNow();
+  function saveTriggers(newTriggers) {
+    latestTriggers = newTriggers;
+    saveTriggersNow();
   }
 
   function QuestingAdventurerSettingsPage() {
-    const [quests, setQuests] = useState([]);
+    const [triggers, setTriggers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [editingId, setEditingId] = useState(null);
     const [footerText, setFooterText] = useState("");
@@ -155,7 +155,7 @@
 
       function finish(questsArr) {
         if (!mounted) return;
-        setQuests(questsArr);
+        setTriggers(questsArr);
         setLoading(false);
       }
 
@@ -189,31 +189,31 @@
 
     editingIdRef.current = editingId;
 
-    function commitQuests(nextQuests) {
+    function commitTriggers(nextTriggers) {
       setEditingId(null);
-      setQuests(nextQuests);
-      saveQuests(nextQuests);
+      setTriggers(nextTriggers);
+      saveTriggers(nextTriggers);
     }
 
     function addMoveTop(text) {
       const trimmed = text.trim();
       if (!trimmed) return;
-      const nextQuests = [...quests, { id: generateId(), type: "move", text: trimmed, active: true }];
-      commitQuests(nextQuests);
+      const nextTriggers = [...quests, { id: generateId(), type: "move", text: trimmed, active: true }];
+      commitQuests(nextTriggers);
     }
 
-    function addQuestTop(name) {
+    function addTriggerTop(name) {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const nextQuests = [...quests, { id: generateId(), type: "quest", name: trimmed, items: [] }];
-      commitQuests(nextQuests);
+      const nextTriggers = [...quests, { id: generateId(), type: "trigger", name: trimmed, items: [] }];
+      commitQuests(nextTriggers);
     }
 
     function addMoveInto(questId, text) {
       const trimmed = text.trim();
       if (!trimmed) return;
-      const nextQuests = quests.map(function (node) {
-        if (node.type === "quest" && node.id === questId) {
+      const nextTriggers = quests.map(function (node) {
+        if (node.type === "trigger" && node.id === questId) {
           return {
             ...node,
             items: [...(node.items || []), { id: generateId(), type: "move", text: trimmed, active: true }],
@@ -221,41 +221,41 @@
         }
         return node;
       });
-      commitQuests(nextQuests);
+      commitQuests(nextTriggers);
     }
 
     function deleteMove(id) {
-      const nextQuests = [];
+      const nextTriggers = [];
       for (const node of quests) {
         if (node.type === "move" && node.id === id) continue;
-        if (node.type === "quest") {
-          nextQuests.push({
+        if (node.type === "trigger") {
+          nextTriggers.push({
             ...node,
             items: (node.items || []).filter(function (r) {
               return r.id !== id;
             }),
           });
         } else {
-          nextQuests.push(node);
+          nextTriggers.push(node);
         }
       }
-      commitQuests(nextQuests);
+      commitQuests(nextTriggers);
     }
 
-    function deleteQuest(id) {
+    function deleteTrigger(id) {
       const q = quests.find(function (n) {
-        return n.type === "quest" && n.id === id;
+        return n.type === "trigger" && n.id === id;
       });
       if (!q) return;
       const itemCount = Array.isArray(q.items) ? q.items.length : 0;
       const confirmed = window.confirm(
-        'Delete quest "' + q.name + '" and its ' + itemCount + " move(s)?"
+        'Delete trigger "' + q.name + '" and its ' + itemCount + " move(s)?"
       );
       if (!confirmed) return;
-      const nextQuests = quests.filter(function (n) {
-        return !(n.type === "quest" && n.id === id);
+      const nextTriggers = quests.filter(function (n) {
+        return !(n.type === "trigger" && n.id === id);
       });
-      commitQuests(nextQuests);
+      commitQuests(nextTriggers);
     }
 
     function findNodeLocation(id) {
@@ -264,7 +264,7 @@
         if (n.id === id) {
           return { node: n, container: quests, index: i, parent: null };
         }
-        if (n.type === "quest" && Array.isArray(n.items)) {
+        if (n.type === "trigger" && Array.isArray(n.items)) {
           for (let j = 0; j < n.items.length; j++) {
             if (n.items[j].id === id) {
               return { node: n.items[j], container: n.items, index: j, parent: n };
@@ -284,18 +284,18 @@
       const tmp = nextContainer[loc.index];
       nextContainer[loc.index] = nextContainer[newIndex];
       nextContainer[newIndex] = tmp;
-      let nextQuests;
+      let nextTriggers;
       if (loc.parent === null) {
-        nextQuests = nextContainer;
+        nextTriggers = nextContainer;
       } else {
-        nextQuests = quests.map(function (n) {
+        nextTriggers = quests.map(function (n) {
           if (n.id === loc.parent.id) {
             return { ...n, items: nextContainer };
           }
           return n;
         });
       }
-      commitQuests(nextQuests);
+      commitQuests(nextTriggers);
     }
 
     function canMoveUp(id) {
@@ -313,11 +313,11 @@
     }
 
     function toggleActive(id) {
-      const nextQuests = quests.map(function (node) {
+      const nextTriggers = quests.map(function (node) {
         if (node.id === id && node.type === "move") {
           return { ...node, active: !isActiveMoveLocal(node) };
         }
-        if (node.type === "quest" && Array.isArray(node.items)) {
+        if (node.type === "trigger" && Array.isArray(node.items)) {
           return {
             ...node,
             items: node.items.map(function (item) {
@@ -330,7 +330,7 @@
         }
         return node;
       });
-      commitQuests(nextQuests);
+      commitQuests(nextTriggers);
     }
 
     function editNode(id, newText) {
@@ -340,14 +340,14 @@
         setEditingId(null);
         return;
       }
-      const nextQuests = quests.map(function (node) {
+      const nextTriggers = quests.map(function (node) {
         if (node.id === id) {
-          if (node.type === "quest") {
+          if (node.type === "trigger") {
             return { ...node, name: trimmed };
           }
           return { ...node, text: trimmed };
         }
-        if (node.type === "quest") {
+        if (node.type === "trigger") {
           return {
             ...node,
             items: (node.items || []).map(function (item) {
@@ -358,12 +358,12 @@
         return node;
       });
       setEditingId(null);
-      setQuests(nextQuests);
-      saveQuests(nextQuests);
+      setTriggers(nextTriggers);
+      saveQuests(nextTriggers);
     }
 
     function renderEditInput(node) {
-      const currentValue = node.type === "quest" ? node.name : node.text;
+      const currentValue = node.type === "trigger" ? node.name : node.text;
       return h("input", {
         ref: inputRef,
         className: "questing-adventurer-settings__edit-input",
@@ -383,24 +383,24 @@
       });
     }
 
-    function renderQuest(quest) {
+    function renderTrigger(trigger) {
       return h(
         "div",
-        { key: quest.id, className: "questing-adventurer-settings__quest" },
+        { key: trigger.id, className: "questing-adventurer-settings__quest" },
         h(
           "span",
           { className: "questing-adventurer-settings__quest-name" },
-          editingId === quest.id
-            ? renderEditInput(quest)
+          editingId === trigger.id
+            ? renderEditInput(trigger)
             : h(
                 "span",
                 {
                   title: "Double-click to edit",
                   onDoubleClick: function () {
-                    setEditingId(quest.id);
+                    setEditingId(trigger.id);
                   },
                 },
-                quest.name
+                trigger.name
               )
         ),
         h(
@@ -410,10 +410,10 @@
             "button",
             {
               title: "Move up",
-              "aria-label": "Move quest up",
-              disabled: !canMoveUp(quest.id),
+              "aria-label": "Move trigger up",
+              disabled: !canMoveUp(trigger.id),
               onClick: function () {
-                moveNode(quest.id, -1);
+                moveNode(trigger.id, -1);
               },
             },
             "\u25b2"
@@ -422,10 +422,10 @@
             "button",
             {
               title: "Move down",
-              "aria-label": "Move quest down",
-              disabled: !canMoveDown(quest.id),
+              "aria-label": "Move trigger down",
+              disabled: !canMoveDown(trigger.id),
               onClick: function () {
-                moveNode(quest.id, 1);
+                moveNode(trigger.id, 1);
               },
             },
             "\u25bc"
@@ -433,10 +433,10 @@
           h(
             "button",
             {
-              title: "Add move to this quest",
+              title: "Add move to this trigger",
               disabled: footerText.trim() === "",
               onClick: function () {
-                addMoveInto(quest.id, footerText);
+                addMoveInto(trigger.id, footerText);
                 setFooterText("");
               },
             },
@@ -445,16 +445,16 @@
           h(
             "button",
             {
-              title: "Delete quest",
+              title: "Delete trigger",
               className: "questing-adventurer-settings__delete-btn",
-              onClick: function () {
-                deleteQuest(quest.id);
-              },
+                onClick: function () {
+                  deleteTrigger(trigger.id);
+                },
             },
             "×"
           )
         ),
-        (quest.items || []).map(function (move) {
+        (trigger.items || []).map(function (move) {
           return renderMove(move, true);
         })
       );
@@ -557,10 +557,10 @@
               ? h(
                   "div",
                   { className: "questing-adventurer-settings__empty" },
-                  "No quests yet. Add a quest or move below."
+                  "No triggers yet. Add a trigger or move below."
                 )
               : quests.map(function (node) {
-                  return node.type === "quest"
+                  return node.type === "trigger"
                     ? renderQuest(node)
                     : renderMove(node, false);
                 }),
@@ -571,7 +571,7 @@
                 type: "text",
                 className: "questing-adventurer-settings__input",
                 value: footerText,
-                placeholder: "New quest or move name",
+                placeholder: "New trigger or move name",
                 onChange: function (e) {
                   setFooterText(e.target.value);
                 },

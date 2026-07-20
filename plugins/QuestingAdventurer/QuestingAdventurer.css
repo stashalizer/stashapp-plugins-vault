@@ -156,7 +156,7 @@
   margin-bottom: 8px;
 }
 
-.questing-adventurer-panel__quest {
+.questing-adventurer-panel__trigger {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -164,7 +164,7 @@
   position: relative;
 }
 
-.questing-adventurer-panel__quest-name {
+.questing-adventurer-panel__trigger-name {
   font-weight: bold;
   cursor: pointer;
   border-radius: 3px;
@@ -172,7 +172,7 @@
   word-break: break-word;
 }
 
-.questing-adventurer-panel__quest-name:hover {
+.questing-adventurer-panel__trigger-name:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
@@ -226,7 +226,7 @@
   cursor: not-allowed;
 }
 
-.questing-adventurer-panel__controls button[data-action="delete-quest"]:hover,
+.questing-adventurer-panel__controls button[data-action="delete-trigger"]:hover,
 .questing-adventurer-panel__controls button[data-action="delete-move"]:hover {
   color: #ff6b6b;
   background: rgba(255, 0, 0, 0.1);

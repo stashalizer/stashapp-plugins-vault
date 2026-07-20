@@ -12,7 +12,7 @@ UI. All state is persisted to Stash configuration under the key
 State shape: `{ quests: Node[], collapsed: boolean, opacity: number }` where
 `Node` is either
 - `{ id, type: "move", text, active: true }` — a top-level move
-- `{ id, type: "quest", name, items: Move[] }` — a quest grouping leaf moves
+- `{ id, type: "trigger", name, items: Move[] }` — a trigger grouping leaf moves
 
 `active: true` (the post-migration default) means the move is currently in
 effect. `active: false` is an explicit deactivation. The overlay's collapsed
@@ -53,7 +53,7 @@ the other surface's fields by reading them from the stored config first
 - **One-shot legacy migration**: both surfaces run a `migrateFromLegacy()` step
   on first load. If no `QuestingAdventurer` config exists but the legacy
   `SceneRules` config does, the data is copied over (every move marked
-  `active: true`, `category` → `quest`, `rule` → `move`), writes to the new
+  `active: true`, `category` → `trigger`, `rule` → `move`), writes to the new
   key, and clears the old key. Safe to run repeatedly; no-ops once migration
   is done.
 - **Scene-Tools-only launcher**: the settings launcher uses a module-level
@@ -107,10 +107,10 @@ the other surface's fields by reading them from the stored config first
      ghost follows the pointer; `getDropTarget()` determines the
      insertion point; `reorder()` performs the mutation; `queueSave()`
      and `render()` finalize.
-   - Add (`add-quest-top` / `add-move-top` / `add-move-into`): append to
-     top-level or inside a quest.
-   - Delete (`delete-quest` / `delete-move`): remove from state; delete
-     on a quest requires `window.confirm`.
+   - Add (`add-trigger-top` / `add-move-top` / `add-move-into`): append to
+     top-level or inside a trigger.
+   - Delete (`delete-trigger` / `delete-move`): remove from state; delete
+     on a trigger requires `window.confirm`.
    - Edit (`edit`, on the name/text span): double-click swaps in
      `createEditInput`; Enter saves, Escape cancels, blur saves.
 6. `queueSave` → `csLib.setConfiguration("QuestingAdventurer", { quests,
@@ -126,15 +126,15 @@ the other surface's fields by reading them from the stored config first
    → `setQuests` / `setLoading(false)`.
 3. Mutators build immutable next-quests arrays:
    - `addMoveTop`, `addQuestTop`, `addMoveInto`: append at top level or
-     inside a quest; new moves default to `active: true`.
+     inside a trigger; new moves default to `active: true`.
    - `deleteMove`, `deleteQuest`: filter; `deleteQuest` requires
      `window.confirm`.
    - `editNode`: replace the text/name of an existing node.
    - `moveNode(id, direction)`: swap with the adjacent sibling (top-level
-     or inside the same quest) using immutable updates. Used by the ▲/▼
+     or inside the same trigger) using immutable updates. Used by the ▲/▼
      buttons for keyboard/mouse parity with the overlay's drag-to-reorder.
    - `toggleActive(id)`: flip `active` for a move (top-level or inside a
-     quest). The toggle button shows ● when active (with class
+     trigger). The toggle button shows ● when active (with class
      `__active-btn`) and ○ when inactive (with class `__inactive-btn`),
      with `aria-pressed` reflecting the state.
 4. `commitQuests` → `setEditingId(null); setQuests(next); saveQuests(next)`.

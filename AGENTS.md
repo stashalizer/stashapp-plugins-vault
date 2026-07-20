@@ -6,6 +6,11 @@ A Stash plugin source-index repository: zips each `plugins/<PluginId>/` director
 
 A full codemap is available at `codemap.md` in the project root.
 
+Stash plugin development reference links (official docs + community
+repo + csLib source notes) live in [`docs/references.md`](docs/references.md).
+Consult it before adding a new patch target, wiring up `csLib`, or
+debugging persistence / SPA-injection issues.
+
 Before working on any task, read `codemap.md` to understand:
 - Project architecture and entry points
 - Directory responsibilities and design patterns
@@ -44,15 +49,15 @@ build_site.sh               # zips each plugin + writes index.yml
 
 ## QuestingAdventurer (the only plugin today)
 
-- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ quests: Node[], collapsed: boolean }`. `Node` is `{type:"move",id,text,active:true}` or `{type:"quest",id,name,items:Move[]}`. Top-level nodes are moves or quests; quests contain only leaf moves.
-- `active: true` (default) means the move is currently in effect. The overlay chip counts only active moves; the settings page shows the whole library so users can toggle moves in or out of the active set.
+- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ triggers: Node[], collapsed: boolean }`. `Node` is `{type:"move",id,text,active:true}` or `{type:"trigger",id,name,items:Move[]}`. Top-level nodes are moves or triggers; triggers contain only leaf moves.
+- `active: true` (default) means the move is currently in effect. The overlay chip counts only active moves; the settings page shows the whole library so users can toggle moves in or out of the active set. (As of the trigger rename, the data model is `{ triggers: Node[], collapsed: boolean }` where each trigger is `{type:"trigger",name,items:Move[]}`.)
 - The **overlay** mutates state in place then re-renders; the **settings page** uses React with immutable updates. They share a config key but each owns different fields semantically (settings owns `quests`, overlay owns `collapsed`), and each save re-reads stored config to preserve the other's field.
 - Each surface has its own `saving`/`pendingSave` save lock. **They do not coordinate across components** — concurrent writes race and last writer wins the whole config map. Settings edits will not live-reflect in an already-open overlay until the next navigation or reload.
 - Overlay re-injects on the `stash:location` SPA event via `csLib.PathElementListener`; a brief flash between React unmount and re-injection is expected (see the header comment in `QuestingAdventurer.js`).
 - The settings page is registered through `PluginApi.patch.before`:
   - `PluginRoutes` → `<Route path="/plugins/questingadventurer" />` (lowercase plugin id, hardcoded — update if you rename the plugin)
   - `SettingsToolsSection` → launcher card on the **2nd** call only (Scene Tools section). See `QuestingAdventurerSettings.js` for the call-counter; do not remove it.
-- **Legacy migration:** both surfaces run `migrateFromLegacy()` on first load. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is copied over (every move marked `active: true`) and the old key is cleared. Safe to run repeatedly; do not remove until the legacy key is no longer present in the wild.
+- **Legacy migration:** both surfaces run `migrateFromLegacy()` on first load. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is copied over (every move marked `active: true`, `category` → `trigger`, `rule` → `move`) and the old key is cleared. Safe to run repeatedly; do not remove until the legacy key is no longer present in the wild.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
 
@@ -82,7 +87,7 @@ use a top-level component name:
 
 ### Examples
 
-- `feat(QuestingAdventurer): support drag-to-reorder quests and moves`
+- `feat(QuestingAdventurer): support drag-to-reorder triggers and moves`
 - `fix(QuestingAdventurer): preserve overlay collapsed state across settings save`
 - `build: tighten plugins/** paths filter in deploy workflow`
 - `chore(codemap): regenerate after QuestingAdventurer rename`

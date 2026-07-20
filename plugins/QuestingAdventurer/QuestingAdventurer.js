@@ -50,10 +50,10 @@
 
   function getTotalActiveMoveCount() {
     let count = 0;
-    for (const node of state.quests) {
+    for (const node of state.triggers) {
       if (isActiveMove(node)) {
         count += 1;
-      } else if (node.type === "quest" && Array.isArray(node.items)) {
+      } else if (node.type === "trigger" && Array.isArray(node.items)) {
         for (const item of node.items) {
           if (isActiveMove(item)) count += 1;
         }
@@ -74,10 +74,10 @@
   // treated as active (post-migration default), so they are NOT in this pool.
   function getInactiveMoves() {
     const result = [];
-    for (const n of state.quests) {
+    for (const n of state.triggers) {
       if (n.type === "move" && n.active === false) {
         result.push(n);
-      } else if (n.type === "quest" && Array.isArray(n.items)) {
+      } else if (n.type === "trigger" && Array.isArray(n.items)) {
         for (const m of n.items) {
           if (m.type === "move" && m.active === false) result.push(m);
         }
@@ -90,10 +90,10 @@
   // Reward button (we deactivate one of them).
   function getActiveMoves() {
     const result = [];
-    for (const n of state.quests) {
+    for (const n of state.triggers) {
       if (isActiveMove(n)) {
         result.push(n);
-      } else if (n.type === "quest" && Array.isArray(n.items)) {
+      } else if (n.type === "trigger" && Array.isArray(n.items)) {
         for (const m of n.items) {
           if (isActiveMove(m)) result.push(m);
         }
@@ -146,12 +146,12 @@
   // Returns { node, container, index, parentId } or null.
   // parentId is null for top-level nodes.
   function findNodeLocation(id) {
-    for (let i = 0; i < state.quests.length; i++) {
-      const n = state.quests[i];
+    for (let i = 0; i < state.triggers.length; i++) {
+      const n = state.triggers[i];
       if (n.id === id) {
-        return { node: n, container: state.quests, index: i, parentId: null };
+        return { node: n, container: state.triggers, index: i, parentId: null };
       }
-      if (n.type === "quest" && Array.isArray(n.items)) {
+      if (n.type === "trigger" && Array.isArray(n.items)) {
         for (let j = 0; j < n.items.length; j++) {
           if (n.items[j].id === id) {
             return { node: n.items[j], container: n.items, index: j, parentId: n.id };
@@ -175,7 +175,7 @@
   // Given a pointer position, determine the drop target.
   // Returns { beforeId, parentId, dropClass } or null.
   // - beforeId: id of the row to insert before (null = append at end of parent)
-  // - parentId: id of the quest that should contain the moved node (null = top-level)
+  // - parentId: id of the trigger that should contain the moved node (null = top-level)
   // - dropClass: "drop-before" or "drop-after" for the line visual
   function getDropTarget(clientX, clientY, sourceId) {
     const panel = document.querySelector(".questing-adventurer-panel");
@@ -188,23 +188,23 @@
 
     const targetId = row.dataset.id;
     const targetType = row.dataset.rowType;
-    const targetParentId = row.dataset.parentQuest || null;
+    const targetParentId = row.dataset.parentTrigger || null;
     const rect = row.getBoundingClientRect();
     const isTopHalf = clientY < rect.top + rect.height / 2;
 
     const sourceLoc = findNodeLocation(sourceId);
     if (!sourceLoc) return null;
-    const sourceIsQuest = sourceLoc.node.type === "quest";
+    const sourceIsTrigger = sourceLoc.node.type === "trigger";
 
-    // If the source is a quest and the target is a child row (inside a quest),
-    // we forbid quest-into-quest nesting. Fall back to top-level insertion
-    // before/after the parent quest of the target child.
-    if (sourceIsQuest && targetParentId !== null) {
-      const parentIdx = state.quests.findIndex(function (n) {
+    // If the source is a trigger and the target is a child row (inside a trigger),
+    // we forbid trigger-into-trigger nesting. Fall back to top-level insertion
+    // before/after the parent trigger of the target child.
+    if (sourceIsTrigger && targetParentId !== null) {
+      const parentIdx = state.triggers.findIndex(function (n) {
         return n.id === targetParentId;
       });
       if (parentIdx === -1) return null;
-      const beforeRow = isTopHalf ? state.quests[parentIdx] : state.quests[parentIdx + 1];
+      const beforeRow = isTopHalf ? state.triggers[parentIdx] : state.triggers[parentIdx + 1];
       return {
         beforeId: beforeRow ? beforeRow.id : null,
         parentId: null,
@@ -212,11 +212,11 @@
       };
     }
 
-    // If the target is an empty quest (no children) and the source is a move,
-    // the bottom half of the quest header appends the move as the first child.
-    if (targetType === "quest" && sourceIsQuest === false) {
-      const targetQuest = state.quests.find(function (n) { return n.id === targetId; });
-      if (targetQuest && (!Array.isArray(targetQuest.items) || targetQuest.items.length === 0)) {
+    // If the target is an empty trigger (no children) and the source is a move,
+    // the bottom half of the trigger header appends the move as the first child.
+    if (targetType === "trigger" && sourceIsTrigger === false) {
+      const targetTrigger = state.triggers.find(function (n) { return n.id === targetId; });
+      if (targetTrigger && (!Array.isArray(targetTrigger.items) || targetTrigger.items.length === 0)) {
         if (!isTopHalf) {
           return {
             beforeId: null,
@@ -229,9 +229,9 @@
 
     // Standard insertion at the target's level.
     const container = targetParentId === null
-      ? state.quests
+      ? state.triggers
       : (function () {
-          const p = state.quests.find(function (n) { return n.id === targetParentId; });
+          const p = state.triggers.find(function (n) { return n.id === targetParentId; });
           return p && Array.isArray(p.items) ? p.items : null;
         })();
     if (!container) return null;
@@ -259,10 +259,10 @@
     // Resolve destination container
     let destContainer;
     if (parentId === null) {
-      destContainer = state.quests;
+      destContainer = state.triggers;
     } else {
-      const parent = state.quests.find(function (n) { return n.id === parentId; });
-      if (!parent || parent.type !== "quest") return;
+      const parent = state.triggers.find(function (n) { return n.id === parentId; });
+      if (!parent || parent.type !== "trigger") return;
       if (!Array.isArray(parent.items)) parent.items = [];
       destContainer = parent.items;
     }
@@ -431,11 +431,11 @@
           : [];
         if (legacyNodes.length === 0) return;
         const migrated = {
-          quests: legacyNodes.map(function (node) {
+          triggers: legacyNodes.map(function (node) {
             if (node.type === "category") {
               return {
                 id: node.id || generateId(),
-                type: "quest",
+                type: "trigger",
                 name: node.name,
                 items: (node.items || []).map(function (item) {
                   return { id: item.id || generateId(), type: "move", text: item.text, active: true };
@@ -467,12 +467,14 @@
   async function loadState() {
     try {
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
-      const raw = Array.isArray(stored.quests)
+      const raw = Array.isArray(stored.triggers)
+        ? stored.triggers
+        : Array.isArray(stored.quests) // v1 backward-compat
         ? stored.quests
         : Array.isArray(stored.rules)
         ? stored.rules
         : [];
-      state.quests = raw;
+      state.triggers = raw;
       state.collapsed = typeof stored.collapsed === "boolean" ? stored.collapsed : true;
       const o =
         typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
@@ -493,7 +495,7 @@
       }
     } catch (err) {
       console.error("QuestingAdventurer: failed to load configuration:", err);
-      state.quests = [];
+      state.triggers = [];
       state.collapsed = true;
       state.opacity = DEFAULT_OPACITY;
       state.panelPos = { ...DEFAULT_PANEL_POS };
@@ -509,7 +511,7 @@
     pendingSave = false;
     try {
       const result = csLib.setConfiguration(CONFIG_KEY, {
-        quests: state.quests,
+        triggers: state.triggers,
         collapsed: state.collapsed,
         opacity: state.opacity,
         panelPos: state.panelPos,
@@ -525,9 +527,9 @@
   }
 
   function findNode(id) {
-    for (const node of state.quests) {
+    for (const node of state.triggers) {
       if (node.id === id) return node;
-      if (node.type === "quest" && Array.isArray(node.items)) {
+      if (node.type === "trigger" && Array.isArray(node.items)) {
         for (const item of node.items) {
           if (item.id === id) return item;
         }
@@ -555,7 +557,7 @@
       if (newValue !== "") {
         const node = findNode(id);
         if (node) {
-          if (node.type === "quest") {
+          if (node.type === "trigger") {
             node.name = newValue;
           } else {
             node.text = newValue;
@@ -697,15 +699,15 @@
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
-    if (state.quests.length === 0) {
+    if (state.triggers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "questing-adventurer-panel__empty";
-      empty.textContent = "No quests yet. Add a quest or move below.";
+      empty.textContent = "No triggers yet. Add a trigger or move below.";
       list.appendChild(empty);
     } else {
-      state.quests.forEach(function (node) {
-        if (node.type === "quest") {
-          renderQuest(list, node);
+      state.triggers.forEach(function (node) {
+        if (node.type === "trigger") {
+          renderTrigger(list, node);
         } else {
           renderMove(list, node, false, null);
         }
@@ -718,11 +720,11 @@
     const input = document.createElement("input");
     input.type = "text";
     input.className = "questing-adventurer-panel__input";
-    input.placeholder = "New quest or move name";
+    input.placeholder = "New trigger or move name";
 
-    const addQuestBtn = document.createElement("button");
-    addQuestBtn.dataset.action = "add-quest-top";
-    addQuestBtn.textContent = "Add Quest";
+    const addTriggerBtn = document.createElement("button");
+    addTriggerBtn.dataset.action = "add-trigger-top";
+    addTriggerBtn.textContent = "Add Trigger";
 
     const addMoveBtn = document.createElement("button");
     addMoveBtn.dataset.action = "add-move-top";
@@ -730,7 +732,7 @@
 
     function syncButtons() {
       const empty = input.value.trim() === "";
-      addQuestBtn.disabled = empty;
+      addTriggerBtn.disabled = empty;
       addMoveBtn.disabled = empty;
       panel.querySelectorAll('[data-action="add-move-into"]').forEach(function (btn) {
         btn.disabled = empty;
@@ -747,33 +749,33 @@
     });
 
     footer.appendChild(input);
-    footer.appendChild(addQuestBtn);
+    footer.appendChild(addTriggerBtn);
     footer.appendChild(addMoveBtn);
     panel.appendChild(footer);
 
     syncButtons();
   }
 
-  function renderQuest(list, quest) {
+  function renderTrigger(list, trigger) {
     const row = document.createElement("div");
     row.className = "questing-adventurer-panel__quest";
-    row.dataset.id = quest.id;
-    row.dataset.rowType = "quest";
-    row.dataset.parentQuest = "";
+    row.dataset.id = trigger.id;
+    row.dataset.rowType = "trigger";
+    row.dataset.parentTrigger = "";
     row.style.setProperty("--qa-indent", "0px");
 
     const handle = document.createElement("button");
     handle.type = "button";
     handle.className = "questing-adventurer-panel__drag-handle";
     handle.dataset.action = "drag-handle";
-    handle.dataset.id = quest.id;
+    handle.dataset.id = trigger.id;
     handle.setAttribute("aria-label", "Drag to reorder");
     handle.title = "Drag to reorder";
     handle.textContent = "\u22ee\u22ee";
     handle.addEventListener("pointerdown", function (e) {
-      startDrag(e, quest.id, quest.name);
+      startDrag(e, trigger.id, trigger.name);
     });
-    if (editingId === quest.id) {
+    if (editingId === trigger.id) {
       row.classList.add("questing-adventurer-panel__row--editing");
     } else {
       row.appendChild(handle);
@@ -782,12 +784,12 @@
     const nameEl = document.createElement("span");
     nameEl.className = "questing-adventurer-panel__quest-name";
     nameEl.dataset.action = "edit";
-    nameEl.dataset.id = quest.id;
+    nameEl.dataset.id = trigger.id;
     nameEl.title = "Double-click to edit";
-    if (editingId === quest.id) {
-      nameEl.appendChild(createEditInput(quest.name, quest.id));
+    if (editingId === trigger.id) {
+      nameEl.appendChild(createEditInput(trigger.name, trigger.id));
     } else {
-      nameEl.textContent = quest.name;
+      nameEl.textContent = trigger.name;
     }
     row.appendChild(nameEl);
 
@@ -796,14 +798,14 @@
 
     const addBtn = document.createElement("button");
     addBtn.dataset.action = "add-move-into";
-    addBtn.dataset.id = quest.id;
-    addBtn.title = "Add move to this quest";
+    addBtn.dataset.id = trigger.id;
+    addBtn.title = "Add move to this trigger";
     addBtn.textContent = "+";
 
     const delBtn = document.createElement("button");
-    delBtn.dataset.action = "delete-quest";
-    delBtn.dataset.id = quest.id;
-    delBtn.title = "Delete quest";
+    delBtn.dataset.action = "delete-trigger";
+    delBtn.dataset.id = trigger.id;
+    delBtn.title = "Delete trigger";
     delBtn.textContent = "\u00d7";
 
     controls.appendChild(addBtn);
@@ -811,21 +813,21 @@
     row.appendChild(controls);
     list.appendChild(row);
 
-    if (Array.isArray(quest.items)) {
-      quest.items.forEach(function (move) {
-        renderMove(list, move, true, quest.id);
+    if (Array.isArray(trigger.items)) {
+      trigger.items.forEach(function (move) {
+        renderMove(list, move, true, trigger.id);
       });
     }
   }
 
-  function renderMove(list, move, indented, parentQuestId) {
+  function renderMove(list, move, indented, parentTriggerId) {
     const row = document.createElement("div");
     row.className =
       "questing-adventurer-panel__move" +
       (indented ? " questing-adventurer-panel__move--indented" : "");
     row.dataset.id = move.id;
     row.dataset.rowType = "move";
-    row.dataset.parentQuest = parentQuestId || "";
+    row.dataset.parentTrigger = parentTriggerId || "";
     row.style.setProperty("--qa-indent", indented ? "16px" : "0px");
 
     const handle = document.createElement("button");
@@ -872,38 +874,38 @@
   }
 
   function addMoveTop(text) {
-    state.quests.push({ id: generateId(), type: "move", text: text, active: true });
+    state.triggers.push({ id: generateId(), type: "move", text: text, active: true });
     queueSave();
     render();
   }
 
-  function addQuestTop(name) {
-    state.quests.push({ id: generateId(), type: "quest", name: name, items: [] });
+  function addTriggerTop(name) {
+    state.triggers.push({ id: generateId(), type: "trigger", name: name, items: [] });
     queueSave();
     render();
   }
 
-  function addMoveInto(questId, text) {
-    const quest = state.quests.find(function (n) {
-      return n.type === "quest" && n.id === questId;
+  function addMoveInto(triggerId, text) {
+    const trigger = state.triggers.find(function (n) {
+      return n.type === "trigger" && n.id === triggerId;
     });
-    if (quest) {
-      quest.items.push({ id: generateId(), type: "move", text: text, active: true });
+    if (trigger) {
+      trigger.items.push({ id: generateId(), type: "move", text: text, active: true });
       queueSave();
       render();
     }
   }
 
   function deleteMove(id) {
-    for (let i = 0; i < state.quests.length; i++) {
-      const node = state.quests[i];
+    for (let i = 0; i < state.triggers.length; i++) {
+      const node = state.triggers[i];
       if (node.type === "move" && node.id === id) {
-        state.quests.splice(i, 1);
+        state.triggers.splice(i, 1);
         queueSave();
         render();
         return;
       }
-      if (node.type === "quest" && Array.isArray(node.items)) {
+      if (node.type === "trigger" && Array.isArray(node.items)) {
         const idx = node.items.findIndex(function (r) {
           return r.id === id;
         });
@@ -917,18 +919,18 @@
     }
   }
 
-  function deleteQuest(id) {
-    const idx = state.quests.findIndex(function (n) {
-      return n.type === "quest" && n.id === id;
+  function deleteTrigger(id) {
+    const idx = state.triggers.findIndex(function (n) {
+      return n.type === "trigger" && n.id === id;
     });
     if (idx === -1) return;
-    const quest = state.quests[idx];
-    const itemCount = Array.isArray(quest.items) ? quest.items.length : 0;
+    const trigger = state.triggers[idx];
+    const itemCount = Array.isArray(trigger.items) ? trigger.items.length : 0;
     const confirmed = window.confirm(
-      'Delete quest "' + quest.name + '" and its ' + itemCount + " move(s)?"
+      'Delete trigger "' + trigger.name + '" and its ' + itemCount + " move(s)?"
     );
     if (confirmed) {
-      state.quests.splice(idx, 1);
+      state.triggers.splice(idx, 1);
       queueSave();
       render();
     }
@@ -978,7 +980,7 @@
         }
         break;
       }
-      case "add-quest-top": {
+      case "add-trigger-top": {
         const text = getFooterValue(panel);
         if (text) {
           addQuestTop(text);
@@ -999,8 +1001,8 @@
       case "delete-move":
         if (id) deleteMove(id);
         break;
-      case "delete-quest":
-        if (id) deleteQuest(id);
+      case "delete-trigger":
+        if (id) deleteTrigger(id);
         break;
     }
   }

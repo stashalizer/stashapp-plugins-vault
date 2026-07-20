@@ -6,10 +6,10 @@ A Stash plugin source-index repository that packages and publishes Stash plugins
 
 ### Questing Adventurer
 
-Turns scene playback into a quest: while a scene plays, the viewer is a "questing adventurer" who must respond to on-screen cues (gestures, dance moves, etc.) by performing the active moves from their quest log. The plugin surfaces the active moves in a player overlay; the full library is managed in a settings page.
+Turns scene playback into a quest: while a scene plays, the viewer is a "questing adventurer" who must respond to on-screen cues (gestures, dance moves, etc.) by performing the active moves from their quest log. The plugin surfaces the active triggers and their attached moves in a player overlay; the full library is managed in a settings page.
 
 - **Player overlay** — a collapsible panel pinned to the top-right of the scene player. Shows the active-move count when collapsed; expands to list quests and moves with inline add/edit/delete.
-- **Settings page** — a full-page CRUD interface at **Settings > Tools > Scene Tools > Questing Adventurer** (`/plugins/questingadventurer`) for managing the full quest library.
+- **Settings page** — a full-page CRUD interface at **Settings > Tools > Scene Tools > Questing Adventurer** (`/plugins/questingadventurer`) for managing the full trigger + move library.
 - **2-level structure** — top-level nodes are either standalone moves or quests; quests group leaf moves.
 - **Active / inactive** — every move has an `active` flag. The overlay only surfaces active moves; the settings page shows the whole library and lets you toggle moves in or out of the active set.
 - **Persisted** — all state is saved to Stash configuration under the key `QuestingAdventurer` and survives navigation/reload. A one-shot migration imports the legacy `SceneRules` key on first load.
