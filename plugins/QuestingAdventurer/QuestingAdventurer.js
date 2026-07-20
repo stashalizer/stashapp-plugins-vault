@@ -960,9 +960,9 @@
     addBtn.textContent = "+";
 
     const delBtn = document.createElement("button");
-    delBtn.dataset.action = "delete-trigger";
+    delBtn.dataset.action = "deactivate-trigger";
     delBtn.dataset.id = trigger.id;
-    delBtn.title = "Delete trigger";
+    delBtn.title = "Deactivate trigger";
     delBtn.textContent = "\u00d7";
 
     controls.appendChild(addBtn);
@@ -1052,6 +1052,22 @@
       active: false,
       attachedMoveIds: [],
     });
+    queueSave();
+    render();
+  }
+
+  // v2: the overlay's × button on a trigger deactivates it (active: false)
+  // and clears its attached moves — it does NOT delete the trigger. The
+  // trigger stays in the library and can be re-activated later via Penalty.
+  // The moves stay in the global library (clearing the references just
+  // makes them available again for Penalty's 2-trigger cap filter).
+  function deactivateTrigger(id) {
+    const trigger = state.triggers.find(function (n) {
+      return n.type === "trigger" && n.id === id;
+    });
+    if (!trigger) return;
+    trigger.active = false;
+    trigger.attachedMoveIds = [];
     queueSave();
     render();
   }
@@ -1184,8 +1200,8 @@
       case "delete-move":
         if (id) deleteMove(id);
         break;
-      case "delete-trigger":
-        if (id) deleteTrigger(id);
+      case "deactivate-trigger":
+        if (id) deactivateTrigger(id);
         break;
     }
   }
