@@ -1133,7 +1133,7 @@
       case "add-trigger-top": {
         const text = getFooterValue(panel);
         if (text) {
-          addQuestTop(text);
+          addTriggerTop(text);
           const input = panel.querySelector(".questing-adventurer-panel__input");
           if (input) input.value = "";
         }

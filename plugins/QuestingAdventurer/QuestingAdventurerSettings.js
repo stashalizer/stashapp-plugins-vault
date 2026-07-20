@@ -772,11 +772,11 @@
                 {
                   disabled: footerDisabled,
                   onClick: function () {
-                    addQuestTop(footerText);
+                    addTriggerTop(footerText);
                     setFooterText("");
                   },
                 },
-                "Add Quest"
+                "Add Trigger"
               ),
               h(
                 "button",
