@@ -35,13 +35,15 @@
   const MAX_BLUR = 80;
 
   const FALLBACK_DEFAULTS = {
-    blurAmount: 24,
+    blurAmount: 10,
     widthPct: 0.25,
     heightPct: 0.25,
     xPct: 0.1,
     yPct: 0.1,
     active: false,
     follow: false,
+    shape: 'rectangle',
+    mode: 'normal',
   };
 
   let settingsToolsCallCount = 0;
@@ -89,6 +91,8 @@
       yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
       active: typeof s.active === "boolean" ? s.active : d.active,
       follow: typeof s.follow === "boolean" ? s.follow : d.follow,
+      shape: (typeof s.shape === 'string' && (s.shape === 'rectangle' || s.shape === 'ellipse')) ? s.shape : d.shape,
+      mode: (typeof s.mode === 'string' && (s.mode === 'normal' || s.mode === 'reverse')) ? s.mode : d.mode,
     };
     out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
     out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
@@ -181,29 +185,67 @@
       );
     }
 
+    function selectField(label, fieldKey, options) {
+      return h("label", null,
+        h("span", null, label),
+        h("select", {
+          value: state[fieldKey],
+          onChange: function (e) {
+            updateField({ [fieldKey]: e.target.value });
+          },
+        },
+          options.map(function (opt) {
+            return h("option", { value: opt.value }, opt.label);
+          })
+        )
+      );
+    }
+
     return h("div", { className: "mosaic-filter-settings" },
       h("h1", null, "Mosaic Filter"),
       h("p", { className: "mosaic-filter-settings__intro" },
-        "Place a draggable, resizable blur rectangle over any region of a scene. ",
-        "Settings are global — the same rectangle is used on every scene. ",
-        "Turn on Follow so the rectangle tracks the cursor (the most common use case)."
+        "Place a draggable, resizable blur region over any scene. ",
+        "Settings are global — the same filter is used on every scene. ",
+        "Turn on Follow so the region tracks the cursor (the most common use case)."
       ),
 
       h("section", { className: "mosaic-filter-settings__section" },
-        h("h2", null, "Settings"),
+        h("h2", null, "Filter style"),
         h("p", { className: "mosaic-filter-settings__hint" },
-          "The same values are read by the overlay on every scene."
+          "Look and feel of the blur region."
         ),
         h("div", { className: "mosaic-filter-settings__row" },
           pixelField("Blur amount (px)", "blurAmount", 0, MAX_BLUR),
-          percentField("Width (% of player)", "widthPct",
-            Math.round(MIN_SIZE_PCT * 100), 100),
-          percentField("Height (% of player)", "heightPct",
-            Math.round(MIN_SIZE_PCT * 100), 100),
+          selectField("Shape", "shape", [
+            { value: "rectangle", label: "Rectangle" },
+            { value: "ellipse", label: "Ellipse" },
+          ]),
+          selectField("Mode", "mode", [
+            { value: "normal", label: "Normal — blur inside the filter" },
+            { value: "reverse", label: "Reverse — blur everything else" },
+          ]),
+        ),
+      ),
+
+      h("section", { className: "mosaic-filter-settings__section" },
+        h("h2", null, "Geometry"),
+        h("p", { className: "mosaic-filter-settings__hint" },
+          "Default size and position on the player."
         ),
         h("div", { className: "mosaic-filter-settings__row" },
+          percentField("Width (% of player)", "widthPct", Math.round(MIN_SIZE_PCT * 100), 100),
+          percentField("Height (% of player)", "heightPct", Math.round(MIN_SIZE_PCT * 100), 100),
           percentField("Position X (% from left)", "xPct", 0, 100),
           percentField("Position Y (% from top)", "yPct", 0, 100),
+        ),
+      ),
+
+      h("section", { className: "mosaic-filter-settings__section" },
+        h("h2", null, "Behavior"),
+        h("p", { className: "mosaic-filter-settings__hint" },
+          "Defaults when a scene starts."
+        ),
+        h("div", { className: "mosaic-filter-settings__row" },
           h("label", { className: "mosaic-filter-settings__checkbox" },
             h("input", {
               type: "checkbox",

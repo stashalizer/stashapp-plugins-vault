@@ -36,7 +36,7 @@
   // Hard-coded defaults used when no config has ever been written, and as
   // the target of the overlay's "Reset" button.
   const FALLBACK_DEFAULTS = {
-    blurAmount: 24,
+    blurAmount: 10,
     widthPct: 0.25,
     heightPct: 0.25,
     xPct: 0.1,
@@ -45,6 +45,8 @@
     // follow defaults to false: the user opts in to cursor-tracking from
     // the control bar. The rectangle is stationary until they toggle it on.
     follow: false,
+    shape: 'rectangle',
+    mode: 'normal',
   };
 
   const MIN_SIZE_PCT = 0.05;
@@ -64,6 +66,7 @@
   let rect = null;
   let resizeHandle = null;
   let bar = null;
+  let maskLayer = null;
 
   // Track the collapsed state of the control bar so that re-renders (which
   // rebuild the bar's innerHTML) don't silently re-expand the controls. The
@@ -130,6 +133,8 @@
       yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
       active: typeof s.active === "boolean" ? s.active : d.active,
       follow: typeof s.follow === "boolean" ? s.follow : d.follow,
+      shape: (typeof s.shape === 'string' && (s.shape === 'rectangle' || s.shape === 'ellipse')) ? s.shape : d.shape,
+      mode: (typeof s.mode === 'string' && (s.mode === 'normal' || s.mode === 'reverse')) ? s.mode : d.mode,
     };
     out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
     out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
@@ -208,6 +213,12 @@
     return r;
   }
 
+  function buildMaskLayer() {
+    const ml = document.createElement("div");
+    ml.className = "mosaic-filter-mask-layer";
+    return ml;
+  }
+
   function buildBar() {
     const b = document.createElement("div");
     b.className = "mosaic-filter-bar";
@@ -221,6 +232,8 @@
     if (!bar) return;
     const on = !!state.active;
     const follow = !!state.follow;
+    const shape = state.shape;
+    const mode = state.mode;
     bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
     bar.innerHTML =
       '<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls">' +
@@ -238,6 +251,12 @@
         '<button type="button" class="mosaic-filter-bar__button ' + (follow ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">' +
           "🎯 Follow" +
         "</button>" +
+        '<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-shape" title="' + (shape === "ellipse" ? "Shape: ellipse. Click to switch to rectangle." : "Shape: rectangle. Click to switch to ellipse.") + '">' +
+          (shape === "ellipse" ? "● Ellipse" : "▭ Rectangle") +
+        '</button>' +
+        '<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="' + (mode === "reverse" ? "Mode: reverse — blur outside the filter. Click to switch to normal." : "Mode: normal — blur inside the filter. Click to switch to reverse.") + '">' +
+          (mode === "reverse" ? "◈ Reverse" : "▣ Normal") +
+        '</button>' +
         '<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the mosaic to default size, position, and blur">' +
           "↺ Reset" +
         "</button>" +
@@ -258,8 +277,41 @@
     rect.style.top = (state.yPct * ph) + "px";
     rect.style.width = (state.widthPct * pw) + "px";
     rect.style.height = (state.heightPct * ph) + "px";
-    rect.style.setProperty("--mf-blur", state.blurAmount + "px");
+    player.style.setProperty("--mf-blur", state.blurAmount + "px");
     rect.classList.toggle("mosaic-filter-rectangle--hidden", !state.active);
+    rect.classList.toggle("mosaic-filter-rectangle--ellipse", state.shape === 'ellipse');
+    rect.classList.toggle("mosaic-filter-rectangle--reverse", state.mode === 'reverse');
+    updateMask();
+  }
+
+  // Update the reverse-mode mask layer position, size, and shape to match
+  // the current state. The mask layer uses CSS custom properties for the hole
+  // position/size so a single setProperty call updates it without re-generating
+  // a data URL or re-building the mask-image string.
+  //
+  // The mask layer is only meaningful when both `state.active` is true AND
+  // `state.mode === 'reverse'`. If the user toggles the filter off while in
+  // reverse mode, the mask layer must hide too — otherwise the entire player
+  // is blurred with no clear area and no indicator. The `--hidden` class
+  // collapses it to `display: none`, which overrides `--reverse`'s
+  // `display: block`.
+  function updateMask() {
+    if (!maskLayer || !player) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    const leftPx = state.xPct * pw;
+    const topPx = state.yPct * ph;
+    const wPx = Math.max(state.widthPct * pw, 1);
+    const hPx = Math.max(state.heightPct * ph, 1);
+    maskLayer.style.setProperty('--mf-mask-x', leftPx + 'px');
+    maskLayer.style.setProperty('--mf-mask-y', topPx + 'px');
+    maskLayer.style.setProperty('--mf-mask-w', wPx + 'px');
+    maskLayer.style.setProperty('--mf-mask-h', hPx + 'px');
+    const reverseOn = state.active && state.mode === 'reverse';
+    maskLayer.classList.toggle('mosaic-filter-mask-layer--ellipse', state.shape === 'ellipse');
+    maskLayer.classList.toggle('mosaic-filter-mask-layer--reverse', reverseOn);
+    maskLayer.classList.toggle('mosaic-filter-mask-layer--hidden', !state.active);
   }
 
   function render() {
@@ -275,9 +327,11 @@
     detachFollowListener();
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
+    if (maskLayer && maskLayer.parentElement) maskLayer.parentElement.removeChild(maskLayer);
     rect = null;
     resizeHandle = null;
     bar = null;
+    maskLayer = null;
     player = null;
     barCollapsed = false;
     lastPointer = null;
@@ -295,6 +349,10 @@
       teardown();
       player = freshPlayer;
       ensurePlayerRelative(player);
+    }
+    if (!maskLayer) {
+      maskLayer = buildMaskLayer();
+      player.appendChild(maskLayer);
     }
     if (!rect) {
       rect = buildRect();
@@ -455,6 +513,16 @@
         queueSave();
         renderBar();
         break;
+      case "toggle-shape":
+        state.shape = state.shape === 'rectangle' ? 'ellipse' : 'rectangle';
+        queueSave();
+        render();
+        break;
+      case "toggle-mode":
+        state.mode = state.mode === 'normal' ? 'reverse' : 'normal';
+        queueSave();
+        render();
+        break;
       case "reset-defaults":
         Object.assign(state, makeDefaultState());
         queueSave();
@@ -479,7 +547,7 @@
     if (target.dataset.action !== "blur-slider") return;
     const value = clamp(parseInt(target.value, 10) || 0, 0, MAX_BLUR);
     state.blurAmount = value;
-    rect.style.setProperty("--mf-blur", value + "px");
+    player.style.setProperty("--mf-blur", value + "px");
     const readout = bar.querySelector('[data-action="blur-readout"]');
     if (readout) readout.textContent = value + "px";
   }

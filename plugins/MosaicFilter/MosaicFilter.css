@@ -6,6 +6,7 @@
  *
  * Structure:
  *   #VideoJsPlayer (relative)
+ *     .mosaic-filter-mask-layer           (full-cover backdrop-filter for reverse mode)
  *     .mosaic-filter-rectangle            (the blurred censor rectangle; absolute)
  *     .mosaic-filter-rectangle__resize    (bottom-right resize handle)
  *     .mosaic-filter-bar                  (compact control bar; absolute top-right)
@@ -24,17 +25,26 @@
 }
 
 /* The blur rectangle: transparent, sits on top of the video, blurs whatever
-   is behind it via backdrop-filter. */
+   is behind it via backdrop-filter. In reverse mode, the rectangle itself
+   does NOT carry backdrop-filter (the mask layer handles it). */
 .mosaic-filter-rectangle {
   position: absolute;
   z-index: 8;
   /* backdrop-filter is the blur effect. Browsers without support will fall
      back to the semi-opaque background below (graceful degradation). */
-  backdrop-filter: blur(var(--mf-blur, 24px));
-  -webkit-backdrop-filter: blur(var(--mf-blur, 24px));
+  backdrop-filter: blur(var(--mf-blur, 10px));
+  -webkit-backdrop-filter: blur(var(--mf-blur, 10px));
   background: rgba(0, 0, 0, var(--mf-bg-alpha, 0.18));
-  border: 1px dashed rgba(255, 255, 255, 0.5);
-  border-radius: 2px;
+  /* Soft edge: subtle white line plus a dark outer glow so the indicator
+     reads on both light and dark frames. The thin solid border replaces
+     the previous dashed outline; the box-shadow halo softens the edge
+     so it doesn't feel like a debug rectangle. */
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 0 14px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
   cursor: move;
   touch-action: none;
@@ -46,6 +56,27 @@
 
 .mosaic-filter-rectangle--hidden {
   display: none;
+}
+
+/* Ellipse shape for the filter rectangle. Bounding box stays the same;
+   the visual is clipped to a circle/ellipse via border-radius. */
+.mosaic-filter-rectangle--ellipse {
+  border-radius: 50%;
+}
+
+/* Reverse mode: the rectangle does not carry backdrop-filter (the mask
+   layer does). It remains visible as the clear-area indicator. The edge is
+   lifted slightly so the user can find the clear area against the blurred
+   surroundings. */
+.mosaic-filter-rectangle--reverse {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 0 18px rgba(0, 0, 0, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 /* Resize handle in the bottom-right corner of the rectangle. The handle is
@@ -86,7 +117,72 @@
 .mosaic-filter-rectangle--dragging,
 .mosaic-filter-rectangle--resizing {
   /* Slightly stronger outline while interacting. */
-  border-color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.22),
+    0 0 20px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* ---------------------------------------------------------------------------
+   Reverse-mode mask layer
+   Full-cover element that carries backdrop-filter when mode === 'reverse'.
+   A CSS mask punches a hole in the shape of the bounding box, so the blur
+   applies everywhere EXCEPT inside the filter rectangle (which stays clear).
+   The hole position/size is driven by CSS custom properties set from JS:
+     --mf-mask-x, --mf-mask-y, --mf-mask-w, --mf-mask-h
+   Shape toggles between rectangle (two stacked linear gradients) and ellipse
+   (single radial gradient) via the --ellipse class.
+   --------------------------------------------------------------------------- */
+
+.mosaic-filter-mask-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  display: none;
+}
+
+.mosaic-filter-mask-layer--reverse {
+  display: block;
+  backdrop-filter: blur(var(--mf-blur, 10px));
+  -webkit-backdrop-filter: blur(var(--mf-blur, 10px));
+  /* Two-layer mask: layer 1 = full white; layer 2 = rectangle white tile
+     subtracted from layer 1 (destination-out / subtract) so the rectangle
+     area becomes a transparent hole — blur shows everywhere except there. */
+  mask-image:
+    linear-gradient(white, white),
+    linear-gradient(white, white);
+  mask-size:
+    100% 100%,
+    var(--mf-mask-w) var(--mf-mask-h);
+  mask-position:
+    0 0,
+    var(--mf-mask-x) var(--mf-mask-y);
+  mask-repeat:
+    no-repeat,
+    no-repeat;
+  mask-composite: subtract;
+  -webkit-mask-composite: destination-out;
+}
+
+/* Ellipse hole: replace the rectangle tile with a radial gradient so the
+   transparent hole is an ellipse matching the bounding box. The transparent
+   stop at 100% is essential — without it, the radial gradient extends the
+   last `white` color stop past 100%, so the area between the ellipse and
+   the bounding box is also white, producing a rectangular hole instead
+   of an elliptical one. */
+.mosaic-filter-mask-layer--ellipse {
+  mask-image:
+    linear-gradient(white, white),
+    radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 99%, transparent 100%);
+}
+
+/* Hide the mask layer entirely when the filter is off, even if the user
+   has reverse mode selected. Without this, toggling Active off in reverse
+   mode would leave the full-player blur running with no clear area. */
+.mosaic-filter-mask-layer--hidden {
+  display: none !important;
 }
 
 /* Control bar — top-right of the player, similar in spirit to the

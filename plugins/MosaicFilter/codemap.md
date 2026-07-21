@@ -13,7 +13,9 @@ State shape (persisted under the config key `"MosaicFilter"`):
   xPct: number,          // top-left x as % of player (0..1)
   yPct: number,          // top-left y as % of player (0..1)
   active: boolean,       // is the mosaic visible on the player?
-  follow: boolean        // does the rectangle track the cursor?
+  follow: boolean,       // does the rectangle track the cursor?
+  shape: 'rectangle' | 'ellipse',   // filter shape (v0.4.0)
+  mode: 'normal' | 'reverse',       // blur direction (v0.4.0)
 }
 ```
 The config is a **flat object** — no per-scene storage. All scenes share the same values. This matches the most common use case: the user opens a scene, the rectangle is there, and (with Follow on) it follows the cursor wherever they point.
@@ -92,8 +94,98 @@ Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a 
 - **Known limitation**: the overlay and settings page maintain separate save locks and do not coordinate across components; a concurrent write from both could race (last writer wins the whole config map). Settings edits will not live-reflect in an already-open overlay until the next navigation/reload.
 
 ## Files
-- `MosaicFilter.yml` — plugin manifest (name, description, version 0.3.0, `ui.requires`/`javascript`/`css`).
-- `MosaicFilter.js` — player overlay (vanilla JS) with toggle, follow, drag, resize, blur slider, and global persistence.
-- `MosaicFilter.css` — overlay styling (rectangle, control bar, drag handle, resize handle, blur slider).
-- `MosaicFilterSettings.js` — full-page React settings UI (Settings form editing the global config).
+- `MosaicFilter.yml` — plugin manifest (name, description, version 0.4.0, `ui.requires`/`javascript`/`css`).
+- `MosaicFilter.js` — player overlay (vanilla JS) with toggle, follow, drag, resize, blur slider, shape/mode toggles, and global persistence.
+- `MosaicFilter.css` — overlay styling (rectangle, control bar, drag handle, resize handle, blur slider, mask layer).
+- `MosaicFilterSettings.js` — full-page React settings UI (Settings form editing the global config, includes shape and mode selectors).
 - `MosaicFilterSettings.css` — settings page styling.
+
+## v0.4.0 Features
+
+### Mask layer element (reverse mode)
+
+When `state.mode === 'reverse'`, a `.mosaic-filter-mask-layer` sibling element
+is rendered as a full-cover absolutely-positioned child of `#VideoJsPlayer`.
+It carries `backdrop-filter: blur(...)` while the rectangle itself does not
+(controlled via `.mosaic-filter-rectangle--reverse` which sets
+`backdrop-filter: none`). A CSS mask on the mask layer punches a transparent
+hole in the shape of the bounding box, so the blur applies everywhere EXCEPT
+the filter area (the rectangle stays clear). The mask uses two layers:
+1. Full white (blur everywhere).
+2. A white tile sized/positioned to the bounding box, subtracted from layer 1
+   via `mask-composite: subtract` / `-webkit-mask-composite: destination-out`.
+
+The hole position and size are driven by four CSS custom properties set by
+`renderRect()` → `updateMask()`:
+- `--mf-mask-x`, `--mf-mask-y` — top-left corner of the hole (px).
+- `--mf-mask-w`, `--mf-mask-h` — hole dimensions (px).
+
+The mask-layer is `display: none` in normal mode and `display: block` in
+reverse mode. It has `pointer-events: none` so clicks pass through to the
+video controls. The rectangle's own drag/resize handlers still work because
+the mask layer is below the rectangle in z-order (`z-index: 7` vs `z-index: 8`).
+
+### shape and mode config fields
+
+- `shape`: `'rectangle'` (default) or `'ellipse'`. The rectangle element
+  toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). The
+  mask-layer hole shape also matches: for ellipse, the second mask-image
+  layer changes from `linear-gradient(white, white)` to
+  `radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 100%)`,
+  producing an elliptical transparent hole.
+- `mode`: `'normal'` (default) or `'reverse'`. Normal mode works as before
+  (the rectangle itself blurs its area). Reverse mode transfers the blur to
+  the mask layer, blurring everything outside the rectangle. The mask layer
+  toggles `.mosaic-filter-mask-layer--reverse`.
+
+Both fields are safe to add because `mergeStored` iterates over
+`Object.keys(FALLBACK_DEFAULTS)` and falls back to defaults for missing keys.
+`sanitizeState` coerces unknown values to the default.
+
+### Bar buttons
+
+Two new buttons in the control bar:
+- **toggle-shape**: flips `state.shape` between `'rectangle'` and `'ellipse'`,
+  queues save, and re-renders. Active state is always on (the label carries
+  the current value): `▭ Rectangle` or `● Ellipse`. The `title` tooltip
+  describes the current state and what the next click will do.
+- **toggle-mode**: flips `state.mode` between `'normal'` and `'reverse'`,
+  queues save, and re-renders. Same active-always pattern with labels
+  `▣ Normal` / `◈ Reverse` and a state-aware tooltip.
+
+Both buttons follow the existing `data-action` delegation pattern handled in
+`onBarClick`. The new handlers sit alongside the existing `toggle-active` /
+`toggle-follow` cases.
+
+### Settings page fields
+
+The settings page is now grouped into three sections for clarity:
+- **Filter style**: `Blur amount (px)`, `Shape` (Rectangle / Ellipse),
+  `Mode` (Normal / Reverse). Shape and Mode are new `<select>` dropdowns
+  built by the `selectField` helper, which sits alongside the existing
+  `pixelField` and `percentField` helpers and is bound to `state[fieldKey]`
+  via `updateField`.
+- **Geometry**: `Width`, `Height`, `Position X`, `Position Y` (all percent of
+  player) — unchanged from v0.3.x.
+- **Behavior**: `Active by default`, `Follow cursor by default` checkboxes
+  plus the **Save** button.
+
+The page intro is updated to say "blur region" instead of "blur rectangle"
+since the shape can now be a rectangle or an ellipse.
+
+### Soft border
+
+The previous `border: 1px dashed rgba(255, 255, 255, 0.5); border-radius: 2px;`
+on `.mosaic-filter-rectangle` was replaced with a soft treatment:
+
+- `border: 1px solid rgba(255, 255, 255, 0.38);` — a thin solid line at low
+  opacity, readable on both light and dark frames.
+- `border-radius: 4px;` for the default rectangle shape (the `--ellipse`
+  modifier still overrides with `50%`).
+- A three-layer `box-shadow` halo (subtle outer black glow, a thin black
+  ring, and an inset white highlight) for a soft, non-jarring edge.
+
+The reverse-mode indicator lifts the edge to `rgba(255, 255, 255, 0.55)` and
+strengthens the halo so the clear area is findable against the blurred
+surroundings. The dragging / resizing state further lifts the edge and the
+halo for tactile feedback.
