@@ -398,6 +398,170 @@
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* Bottom-toggles row. Wraps the + (add) and ≡ (manual) buttons so they
+   share a single centered row at the bottom of the panel. Using flexbox
+   with gap keeps them visually grouped and equally spaced. */
+.questing-adventurer-panel__bottom-toggles {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+/* Manual-selection toggle. Same shape as the add-toggle (round, 28×28,
+   semi-transparent), but the symbol is the equivalent-to (≡) glyph to
+   signal "list / library" rather than "add new". The aria-expanded
+   state is mirrored on the button so the active state is visible (the
+   same way the add-toggle shows its expanded state). */
+.questing-adventurer-panel__manual-toggle-button {
+  font-size: 16px;
+  font-weight: bold;
+  padding: 0 5px;
+  line-height: 1;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  font-family: sans-serif;
+}
+
+.questing-adventurer-panel__manual-toggle-button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.questing-adventurer-panel__manual-toggle-button[aria-expanded="true"] {
+  background: rgba(110, 160, 220, 0.25);
+  border-color: rgba(110, 160, 220, 0.6);
+}
+
+/* Library (manual-selection) section. Rendered between the active-trigger
+   list and the bottom-toggles row when the ≡ button is on. Uses a
+   subtle blue-tinted background to distinguish it from the active
+   triggers above (which have their own blue-tinted background per row)
+   — the user sees two related-but-different "blue surfaces" stacked,
+   signalling the library is a control surface for the active list. */
+.questing-adventurer-panel__library {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: rgba(110, 160, 220, 0.08);
+  border: 1px solid rgba(110, 160, 220, 0.25);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+  /* Keep the library from ballooning the panel when there are many
+     items. The active list above scrolls when needed; the library
+     should also scroll independently if it has more rows than fit. */
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.questing-adventurer-panel__library-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 2px;
+}
+
+.questing-adventurer-panel__library-subheader {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  margin-top: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 1px;
+}
+
+.questing-adventurer-panel__library-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 2px;
+  border-radius: 3px;
+  min-width: 0;
+}
+
+.questing-adventurer-panel__library-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.questing-adventurer-panel__library-item-text {
+  flex: 1 1 auto;
+  font-size: 13px;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.questing-adventurer-panel__library-item-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+}
+
+.questing-adventurer-panel__library-item button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.questing-adventurer-panel__library-item button:hover {
+  background: rgba(110, 160, 220, 0.25);
+  color: #8eff8e;
+}
+
+/* Trigger picker for the "Attach Move" subsection. Native <select>
+   styled to match the panel's dark theme. flex: 1 so it takes the
+   remaining width after the move text and any meta indicator. */
+.questing-adventurer-panel__library-trigger-picker {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 60%;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-family: sans-serif;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.questing-adventurer-panel__library-trigger-picker:focus-visible {
+  outline: 1px solid rgba(110, 160, 220, 0.7);
+  outline-offset: 1px;
+}
+
+.questing-adventurer-panel__library-trigger-picker option {
+  background: #1a1a1a;
+  color: #fff;
+}
+
+.questing-adventurer-panel__library-trigger-picker option:disabled {
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}
+
+.questing-adventurer-panel__library-empty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-style: italic;
+  padding: 2px 0;
+}
+
 /* Footer (input + Add buttons) hidden by default; revealed by the add-toggle. */
 .questing-adventurer-panel__footer {
   display: none;
@@ -493,8 +657,12 @@
   }
   .questing-adventurer-panel__trigger-name,
   .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text {
+  .questing-adventurer-panel__move-library-text,
+  .questing-adventurer-panel__library-item-text {
     font-size: 14px;
+  }
+  .questing-adventurer-panel__library-trigger-picker {
+    font-size: 12px;
   }
 }
 
@@ -513,8 +681,12 @@
   }
   .questing-adventurer-panel__trigger-name,
   .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text {
+  .questing-adventurer-panel__move-library-text,
+  .questing-adventurer-panel__library-item-text {
     font-size: 15px;
+  }
+  .questing-adventurer-panel__library-trigger-picker {
+    font-size: 13px;
   }
 }
 
@@ -533,8 +705,12 @@
   }
   .questing-adventurer-panel__trigger-name,
   .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text {
+  .questing-adventurer-panel__move-library-text,
+  .questing-adventurer-panel__library-item-text {
     font-size: 16px;
+  }
+  .questing-adventurer-panel__library-trigger-picker {
+    font-size: 14px;
   }
 }
 

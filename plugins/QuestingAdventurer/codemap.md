@@ -24,7 +24,8 @@ State shape:
   opacity: number,                                         // 0.0–1.0, panel background alpha
   panelPos: { top: number, right: number },                // overlay position
   locked: boolean,                                         // disable drag + dim controls
-  showAddControls: boolean                                 // show Add Trigger/Move footer
+  showAddControls: boolean,                                // show Add Trigger/Move footer
+  showManualControls: boolean                              // show Manual Selection library section
 }
 ```
 
@@ -124,9 +125,28 @@ State shape:
      default 0.6. The opacity slider drives an `input` listener that
      mutates `state.opacity`, updates `--qa-bg-alpha`, and calls
      `queueSave()`.
-   - **Close** (`toggle-collapse`): flips `state.collapsed`, `queueSave()`,
-     re-render.
-5. **List rendering** (only active triggers):
+  - **Close** (`toggle-collapse`): flips `state.collapsed`, `queueSave()`,
+    re-render.
+  - **Manual toggle** (`toggle-manual-controls`): flips
+    `state.showManualControls`, `queueSave()`, re-render. When on,
+    renders a "Library" section between the active list and the
+    bottom toggles. The Library is the manual-control surface for
+    the v2 model: it gives the user fine-grained actions that the
+    random Penalty/Reward buttons can't provide.
+    - **Activate Trigger** subsection: lists every inactive trigger
+      with a single-click ▶ button (`activate-trigger-manual`).
+      Allowed even when the trigger has no attached moves — manual
+      activation is an explicit user intent, not the atomic
+      activate+attach that Penalty performs.
+    - **Attach Move to Trigger** subsection: lists every library move
+      not at the global `MAX_MOVE_ATTACHMENTS` (2) cap, each with
+      a `<select>` listing all triggers (active first, then
+      inactive). The select fires `change` (not `click`); the
+      handler (`attachMoveToTriggerManual`) attaches the move and,
+      if the target trigger was inactive, also activates it
+      (mirroring Penalty's atomic behavior). Options for triggers
+      the move is already attached to are disabled.
+  5. **List rendering** (only active triggers):
    - `renderTrigger(list, trigger)` shows the trigger name + controls
      (drag handle, add-move button, delete button).
    - For each `attachedMoveIds` id, the move text is resolved from

@@ -40,6 +40,13 @@
     panelPos: { ...DEFAULT_PANEL_POS },
     panelSize: { width: DEFAULT_PANEL_WIDTH, height: undefined },
     showAddControls: false,
+    // Toggles the "Library" section in the expanded overlay — a manual-control
+    // surface where the user can (a) activate any inactive trigger and
+    // (b) attach any library move to any trigger (active or inactive — if
+    // the target is inactive, the attach also activates it). Lives next to
+    // showAddControls as a sibling view flag, persisted independently so
+    // the user's preferred panel state survives reloads.
+    showManualControls: false,
   };
   let editingId = null;
   let saving = false;
@@ -603,6 +610,7 @@
           : DEFAULT_OPACITY;
       state.opacity = Math.min(1, Math.max(0, o));
       state.showAddControls = stored.showAddControls === true;
+      state.showManualControls = stored.showManualControls === true;
       if (
         stored.panelSize &&
         typeof stored.panelSize.width === "number" &&
@@ -654,6 +662,7 @@
         panelPos: state.panelPos,
         panelSize: state.panelSize,
         showAddControls: state.showAddControls,
+        showManualControls: state.showManualControls,
       });
       await result;
       saving = false;
@@ -830,6 +839,21 @@
     // of the header. This is more natural for the expand-add-controls
     // action — the toggle lives where the controls it reveals (the
     // footer with input + Add Trigger + Add Move) lives.
+    //
+    // Sits next to the manual button in a bottom-toggles wrapper
+    // (see render() further down). The two toggles share the same row:
+    //   +     — Add new trigger or move (creates a fresh item)
+    //   ≡     — Manual selection (operate on EXISTING items: activate
+    //           inactive triggers, attach library moves to triggers)
+
+    const manualToggleBtn = document.createElement("button");
+    manualToggleBtn.type = "button";
+    manualToggleBtn.dataset.action = "toggle-manual-controls";
+    manualToggleBtn.className = "questing-adventurer-panel__manual-toggle-button";
+    manualToggleBtn.title = "Manual selection: activate an inactive trigger or attach a library move to a trigger";
+    manualToggleBtn.setAttribute("aria-label", "Manual selection");
+    manualToggleBtn.setAttribute("aria-expanded", state.showManualControls ? "true" : "false");
+    manualToggleBtn.textContent = "\u2261"; // ≡ — equivalent / library symbol
 
     const opacityWrap = document.createElement("span");
     opacityWrap.className = "questing-adventurer-panel__opacity-control";
@@ -894,12 +918,28 @@
     }
     panel.appendChild(list);
 
-    // Bottom-center add-controls toggle. The user expands/hides the footer
-    // (input + Add Trigger + Add Move) with this button. Centering it at the
-    // bottom (via the .questing-adventurer-panel__add-toggle-button CSS rule)
-    // matches where the controls it reveals live, and is more natural for
-    // a "add" action than a top-right corner.
-    panel.appendChild(addToggleBtn);
+    // Manual selection "Library" section. Rendered between the active-trigger
+    // list and the bottom toggles when the user has opened it via the ≡ button.
+    // The section gives the user fine-grained control that the random
+    // Penalty/Reward buttons can't provide:
+    //   - Activate any inactive trigger (without having to attach a move first)
+    //   - Attach any library move to any trigger (active or inactive)
+    // Hidden by default; revealed by state.showManualControls.
+    if (state.showManualControls) {
+      renderLibrarySection(panel);
+    }
+
+    // Bottom-center toggles. The + and ≡ buttons share a single row so the
+    // user can see at a glance that there are two related "show more"
+    // affordances sitting at the bottom of the panel. The CSS uses flexbox
+    // with gap to space them; both are align-self: center on the panel's
+    // flex column, so they sit centered horizontally below the list (or
+    // the library section, if open).
+    const bottomToggles = document.createElement("div");
+    bottomToggles.className = "questing-adventurer-panel__bottom-toggles";
+    bottomToggles.appendChild(addToggleBtn);
+    bottomToggles.appendChild(manualToggleBtn);
+    panel.appendChild(bottomToggles);
 
     const footer = document.createElement("div");
     footer.className = "questing-adventurer-panel__footer";
@@ -1122,6 +1162,230 @@
     render();
   }
 
+  // Manual-control surface. Two subsections:
+  //   1. "Activate Trigger" — list every inactive trigger with a single
+  //      click-to-activate button. The user can also leave the trigger
+  //      empty (no attached moves) and attach moves later via section 2
+  //      or the trigger's own + button. This intentionally diverges from
+  //      the Penalty atomicity rule (which refuses to activate a trigger
+  //      with no available moves) because manual activation is an
+  //      explicit user intent — the user can see the empty trigger in
+  //      the active list and choose to attach moves to it themselves.
+  //   2. "Attach Move" — list every library move (not at the global
+  //      MAX_MOVE_ATTACHMENTS cap) with a dropdown of all triggers
+  //      (active first, then inactive). Picking a trigger attaches the
+  //      move; if the target trigger is inactive, it's also activated
+  //      (mirroring Penalty's atomic behavior). The dropdown disables
+  //      options where the move is already attached to that trigger.
+  function renderLibrarySection(panel) {
+    const library = document.createElement("div");
+    library.className = "questing-adventurer-panel__library";
+
+    const headerEl = document.createElement("div");
+    headerEl.className = "questing-adventurer-panel__library-header";
+    headerEl.textContent = "Manual Selection";
+    library.appendChild(headerEl);
+
+    // --- Section 1: Activate inactive triggers ---
+    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
+    if (inactiveTriggers.length > 0) {
+      const subheader = document.createElement("div");
+      subheader.className = "questing-adventurer-panel__library-subheader";
+      subheader.textContent = "Activate Trigger";
+      library.appendChild(subheader);
+
+      for (const trigger of inactiveTriggers) {
+        const row = document.createElement("div");
+        row.className = "questing-adventurer-panel__library-item";
+        row.dataset.id = trigger.id;
+
+        const nameEl = document.createElement("span");
+        nameEl.className = "questing-adventurer-panel__library-item-text";
+        nameEl.textContent = trigger.name;
+        row.appendChild(nameEl);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.dataset.action = "activate-trigger-manual";
+        btn.dataset.id = trigger.id;
+        btn.title = "Activate this trigger";
+        btn.setAttribute("aria-label", "Activate " + trigger.name);
+        btn.textContent = "\u25b6"; // ▶ play / activate
+        row.appendChild(btn);
+
+        library.appendChild(row);
+      }
+    }
+
+    // --- Section 2: Attach library moves to triggers ---
+    // Show moves that still have attachment headroom (i.e. attached to
+    // fewer than MAX_MOVE_ATTACHMENTS triggers globally). Moves at the
+    // cap are filtered out — there's no point showing them, as the
+    // attach handler would refuse them anyway.
+    const availableMoves = getAvailableMoves();
+    const activeTriggers = state.triggers.filter(function (t) { return t.active; });
+    const inactiveForAttach = state.triggers.filter(function (t) { return !t.active; });
+
+    if (state.moves.length > 0) {
+      const subheader = document.createElement("div");
+      subheader.className = "questing-adventurer-panel__library-subheader";
+      subheader.textContent = "Attach Move to Trigger";
+      library.appendChild(subheader);
+
+      if (state.triggers.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "questing-adventurer-panel__library-empty";
+        empty.textContent = "No triggers exist yet. Add one via + above.";
+        library.appendChild(empty);
+      } else if (availableMoves.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "questing-adventurer-panel__library-empty";
+        empty.textContent = "All library moves are at the attachment cap. Detach one to free up a slot.";
+        library.appendChild(empty);
+      } else {
+        for (const move of availableMoves) {
+          const row = document.createElement("div");
+          row.className = "questing-adventurer-panel__library-item";
+          row.dataset.id = move.id;
+
+          const textEl = document.createElement("span");
+          textEl.className = "questing-adventurer-panel__library-item-text";
+          textEl.textContent = move.text;
+          // Show the user where the move is currently attached, so they
+          // know what the cap situation looks like for this move.
+          const attachedTo = state.triggers.filter(function (t) {
+            return Array.isArray(t.attachedMoveIds) && t.attachedMoveIds.indexOf(move.id) !== -1;
+          });
+          if (attachedTo.length > 0) {
+            const meta = document.createElement("span");
+            meta.className = "questing-adventurer-panel__library-item-meta";
+            meta.textContent = " (" + attachedTo.length + "/" + MAX_MOVE_ATTACHMENTS + ")";
+            textEl.appendChild(meta);
+          }
+          row.appendChild(textEl);
+
+          const select = document.createElement("select");
+          select.className = "questing-adventurer-panel__library-trigger-picker";
+          select.dataset.action = "attach-move-manual";
+          select.dataset.moveId = move.id;
+          select.setAttribute("aria-label", "Pick a trigger to attach " + move.text + " to");
+          // The <select> fires `change` (not `click`) when the user picks
+          // an option. Listen directly here rather than relying on the
+          // panel-level click delegation. After the attach, render()
+          // rebuilds the DOM — the old <select> is detached, so we don't
+          // need to clear its value manually. The "— pick trigger —"
+          // placeholder (value="") re-appears automatically.
+          select.addEventListener("change", function (e) {
+            const target = e.target;
+            const pickedTriggerId = target.value;
+            if (pickedTriggerId) {
+              attachMoveToTriggerManual(move.id, pickedTriggerId);
+            }
+          });
+
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "\u2192 pick trigger";
+          select.appendChild(placeholder);
+
+          // Active triggers first (the common case), then inactive.
+          const orderedTriggers = activeTriggers.concat(inactiveForAttach);
+          for (const trigger of orderedTriggers) {
+            const opt = document.createElement("option");
+            opt.value = trigger.id;
+            const alreadyAttached = Array.isArray(trigger.attachedMoveIds) &&
+              trigger.attachedMoveIds.indexOf(move.id) !== -1;
+            const status = alreadyAttached
+              ? " (attached)"
+              : trigger.active
+              ? " (active)"
+              : " (inactive)";
+            opt.textContent = trigger.name + status;
+            if (alreadyAttached) opt.disabled = true;
+            select.appendChild(opt);
+          }
+          row.appendChild(select);
+
+          library.appendChild(row);
+        }
+      }
+    }
+
+    // If the section is empty (no inactive triggers AND no moves in the
+    // library), show a single helpful message instead of an empty box.
+    if (inactiveTriggers.length === 0 && state.moves.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "questing-adventurer-panel__library-empty";
+      empty.textContent = "Library is empty. Add triggers and moves via + above, then come back here to manually activate them.";
+      library.appendChild(empty);
+    }
+
+    panel.appendChild(library);
+  }
+
+  // Manual activate: flip a trigger from inactive to active, without
+  // attaching any moves. The user can then attach moves via the library
+  // or the trigger's + button. Allowed even when the trigger has no
+  // attached moves — manual activation is an explicit user intent and
+  // doesn't need the Penalty atomicity guarantee (no empty active
+  // triggers by accident).
+  function activateTriggerManual(id) {
+    const trigger = state.triggers.find(function (n) {
+      return n.type === "trigger" && n.id === id;
+    });
+    if (!trigger || trigger.active) return;
+    trigger.active = true;
+    queueSave();
+    announceToAria("Activated " + trigger.name + ".");
+    render();
+  }
+
+  // Manual attach: attach a library move to a trigger. If the target
+  // trigger is inactive, also activate it (mirrors Penalty's atomic
+  // behavior — attaching a move to an inactive trigger is meaningless
+  // without activation, since the move wouldn't be visible in the
+  // active list). Enforces both the per-trigger uniqueness (a move can
+  // appear once per trigger's attachedMoveIds) and the global cap
+  // (a move can be attached to at most MAX_MOVE_ATTACHMENTS triggers).
+  function attachMoveToTriggerManual(moveId, triggerId) {
+    if (!moveId || !triggerId) return;
+    const move = state.moves.find(function (m) { return m.id === moveId; });
+    const trigger = state.triggers.find(function (n) {
+      return n.type === "trigger" && n.id === triggerId;
+    });
+    if (!move || !trigger) return;
+    if (!Array.isArray(trigger.attachedMoveIds)) trigger.attachedMoveIds = [];
+    if (trigger.attachedMoveIds.indexOf(moveId) !== -1) {
+      announceToAria(move.text + " is already attached to " + trigger.name + ".");
+      return;
+    }
+    // Global cap check (the dropdown is built from getAvailableMoves()
+    // so a move at the cap shouldn't appear in the list, but defend in
+    // depth in case state changed between render and click).
+    let attachCount = 0;
+    for (const t of state.triggers) {
+      if (Array.isArray(t.attachedMoveIds) && t.attachedMoveIds.indexOf(moveId) !== -1) {
+        attachCount++;
+      }
+    }
+    if (attachCount >= MAX_MOVE_ATTACHMENTS) {
+      announceToAria(
+        move.text + " is already attached to " + attachCount +
+          " triggers (max " + MAX_MOVE_ATTACHMENTS + "). Detach one to free a slot."
+      );
+      return;
+    }
+    trigger.attachedMoveIds.push(moveId);
+    const wasInactive = !trigger.active;
+    if (wasInactive) trigger.active = true;
+    queueSave();
+    announceToAria(
+      "Attached " + move.text + " to " + trigger.name +
+        (wasInactive ? "; trigger now active." : ".")
+    );
+    render();
+  }
+
   function addMoveInto(triggerId, text) {
     // v2: add the move to the global library AND attach it to the trigger.
     const newMoveId = generateId();
@@ -1214,6 +1478,23 @@
         state.showAddControls = !state.showAddControls;
         queueSave();
         render();
+        break;
+      case "toggle-manual-controls":
+        state.showManualControls = !state.showManualControls;
+        queueSave();
+        render();
+        break;
+      case "activate-trigger-manual":
+        if (id) activateTriggerManual(id);
+        break;
+      case "attach-move-manual":
+        // The <select> fires `change` events, not `click`. The delegation
+        // here catches the bubble of a change handler attached below in
+        // renderLibrarySection, but it's safer to handle the change
+        // directly on the element rather than rely on click delegation
+        // (clicks on a <select> don't fire on the select itself across
+        // all browsers when the user picks an option). The actual
+        // handler is registered in renderLibrarySection.
         break;
       case "add-move-top": {
         const text = getFooterValue(panel);
