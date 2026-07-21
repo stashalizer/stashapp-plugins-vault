@@ -40,8 +40,8 @@
     heightPct: 0.25,
     xPct: 0.1,
     yPct: 0.1,
-    active: true,
-    follow: true,
+    active: false,
+    follow: false,
   };
 
   let settingsToolsCallCount = 0;

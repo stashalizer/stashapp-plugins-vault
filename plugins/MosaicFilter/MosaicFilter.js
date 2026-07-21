@@ -41,10 +41,10 @@
     heightPct: 0.25,
     xPct: 0.1,
     yPct: 0.1,
-    active: true,
-    // follow defaults to true: the most common use case is the rectangle
-    // tracking the cursor. The user can toggle it off from the control bar.
-    follow: true,
+    active: false,
+    // follow defaults to false: the user opts in to cursor-tracking from
+    // the control bar. The rectangle is stationary until they toggle it on.
+    follow: false,
   };
 
   const MIN_SIZE_PCT = 0.05;
