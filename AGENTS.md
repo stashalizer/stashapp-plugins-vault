@@ -37,6 +37,7 @@ build_site.sh               # zips each plugin + writes index.yml
 - **Preview the build locally:** `./build_site.sh _site/main` from the repo root. Requires `zip`, `sha256sum`, `git`, `realpath` on `PATH`. Output: `_site/main/index.yml` + one `<PluginId>.zip` per plugin.
 - **Publish trigger:** `.github/workflows/deploy.yml` runs on push to `main` whose paths filter matches `plugins/**`. Doc/README/codemap-only changes do **not** trigger a publish.
 - **Published URL:** `https://<owner>.github.io/<repo>/main/index.yml` (the path segment is the branch name). Users add this under **Settings > Plugins > Available Plugins > Add Source** in Stash.
+- **Push the current branch, not always `main`.** After committing a plugin change, run `git push` (or `git push -u origin HEAD` if the branch has no upstream yet) and report which branch was pushed. The deploy trigger above only fires from `main`, so if you are inside a `git worktree` lane on a feature branch (`omos/...`, `feat/...`, `fix/...`), the push lands on that branch and will **not** publish — the user must merge to `main` (or open a PR) for the deploy to happen. Never force-push a feature branch without explicit confirmation.
 - `_site/` is generated and gitignored — never commit it.
 
 ## Plugin manifest gotchas
