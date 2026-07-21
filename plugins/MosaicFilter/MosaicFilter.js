@@ -333,7 +333,11 @@
     bar = null;
     maskLayer = null;
     player = null;
-    barCollapsed = false;
+    // Note: barCollapsed is NOT reset here. It is re-derived in setupPanel
+    // on the next fresh mount based on state.active, so the bar always
+    // starts collapsed when the filter is off. The user's manual choice
+    // within the current mount is remembered (handled by the barCollapsed
+    // module variable surviving teardown).
     lastPointer = null;
   }
 
@@ -392,6 +396,13 @@
     Promise.resolve()
       .then(function () { return loadState(); })
       .then(function () {
+        // Fresh mount: default the bar to collapsed when the filter is
+        // off, expanded when the filter is on. The user's manual choice
+        // within the current mount is remembered (the barCollapsed module
+        // variable is not reset in teardown; it is re-derived here on
+        // every fresh mount so opening a scene with mosaic off starts
+        // with the bar collapsed).
+        barCollapsed = !state.active;
         if (mountOnPlayer()) {
           render();
         }

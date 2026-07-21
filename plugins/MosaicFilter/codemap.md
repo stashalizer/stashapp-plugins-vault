@@ -51,7 +51,7 @@ Position and size are stored as **percentages of the player** so the rectangle s
    - **Toggle** (`toggle-active`): flips `state.active`, `queueSave()`, re-render.
    - **Follow** (`toggle-follow`): flips `state.follow`. When turned on, `snapRectToPointer()` jumps the rectangle to the current cursor position so the user doesn't see a "lag" from the saved location to the cursor on the next pointermove. While follow is on, the player-level `pointermove` listener centers the rectangle on the cursor; the rectangle's drag handler refuses to start (resize still works).
    - **Reset** (`reset-defaults`): replaces `state` with `FALLBACK_DEFAULTS`, `queueSave()`, re-render.
-   - **Close** (`close-bar`): collapses the control bar (the rectangle stays if it is `active`); the bar can be brought back by clicking the chip. Collapse state is tracked in a module-level `barCollapsed` so re-renders don't silently re-expand the controls.
+    - **Close** (`close-bar`): collapses the control bar (the rectangle stays if it is `active`); the bar can be brought back by clicking the chip. Collapse state is tracked in a module-level `barCollapsed` so re-renders don't silently re-expand the controls. On every fresh mount (i.e. after `teardown` — e.g. when navigating to a new scene), `setupPanel` re-derives `barCollapsed = !state.active` after `loadState`, so opening a scene with mosaic off starts with the bar collapsed.
    - **Chip click** (`toggle-bar`): toggles `barCollapsed` (expands/collapses the controls).
 5. **Rectangle drag**:
    - `pointerdown` on the rectangle starts a drag; we track the start pointer position and the start `xPct`/`yPct`.
@@ -108,31 +108,44 @@ When `state.mode === 'reverse'`, a `.mosaic-filter-mask-layer` sibling element
 is rendered as a full-cover absolutely-positioned child of `#VideoJsPlayer`.
 It carries `backdrop-filter: blur(...)` while the rectangle itself does not
 (controlled via `.mosaic-filter-rectangle--reverse` which sets
-`backdrop-filter: none`). A CSS mask on the mask layer punches a transparent
-hole in the shape of the bounding box, so the blur applies everywhere EXCEPT
-the filter area (the rectangle stays clear). The mask uses two layers:
-1. Full white (blur everywhere).
-2. A white tile sized/positioned to the bounding box, subtracted from layer 1
-   via `mask-composite: subtract` / `-webkit-mask-composite: destination-out`.
+`backdrop-filter: none`). The blur applies everywhere EXCEPT the filter area
+(the rectangle stays clear).
+
+The hole-cutting technique depends on the shape:
+- **Rectangle (default)**: `clip-path: polygon(...)` with 8 points. The
+  outer 4 points are the player rectangle (clockwise); the inner 4 points
+  are the bounding box (counter-clockwise). The `nonzero` fill rule makes
+  the inner rectangle a hole, so the element renders as a frame around the
+  bounding box. This is more reliable than `mask-composite: subtract`,
+  which the user's browser was computing as fully transparent (making the
+  whole mask layer invisible, so the backdrop-filter was not applied
+  outside the bounding box either).
+- **Ellipse**: `mask-image` with two layers — a full-cover white layer
+  and a radial gradient sized to the bounding box with a `transparent
+  100%` stop. Combined with `mask-composite: subtract` (and the
+  `-webkit-mask-composite: destination-out` fallback). The `.mosaic-filter-mask-layer--ellipse`
+  class overrides the rectangle `clip-path` with `none` and applies the
+  mask. `clip-path: ellipse()` cannot cut a hole (it only defines the
+  area to keep), so the mask approach is the natural fit for ellipses.
 
 The hole position and size are driven by four CSS custom properties set by
 `renderRect()` → `updateMask()`:
 - `--mf-mask-x`, `--mf-mask-y` — top-left corner of the hole (px).
 - `--mf-mask-w`, `--mf-mask-h` — hole dimensions (px).
 
-The mask-layer is `display: none` in normal mode and `display: block` in
-reverse mode. It has `pointer-events: none` so clicks pass through to the
-video controls. The rectangle's own drag/resize handlers still work because
-the mask layer is below the rectangle in z-order (`z-index: 7` vs `z-index: 8`).
+The mask layer is `display: none` in normal mode, `display: block` in
+reverse mode (with `--hidden` overriding to `display: none !important` when
+`!state.active`). It has `pointer-events: none` so clicks pass through to
+the video controls. The rectangle's own drag/resize handlers still work
+because the mask layer is below the rectangle in z-order (`z-index: 7` vs
+`z-index: 8`).
 
 ### shape and mode config fields
 
 - `shape`: `'rectangle'` (default) or `'ellipse'`. The rectangle element
   toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). The
-  mask-layer hole shape also matches: for ellipse, the second mask-image
-  layer changes from `linear-gradient(white, white)` to
-  `radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 100%)`,
-  producing an elliptical transparent hole.
+  mask-layer hole shape also matches via the `--ellipse` class on the mask
+  layer.
 - `mode`: `'normal'` (default) or `'reverse'`. Normal mode works as before
   (the rectangle itself blurs its area). Reverse mode transfers the blur to
   the mask layer, blurring everything outside the rectangle. The mask layer

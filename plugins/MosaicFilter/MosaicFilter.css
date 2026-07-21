@@ -147,12 +147,44 @@
   display: block;
   backdrop-filter: blur(var(--mf-blur, 10px));
   -webkit-backdrop-filter: blur(var(--mf-blur, 10px));
-  /* Two-layer mask: layer 1 = full white; layer 2 = rectangle white tile
-     subtracted from layer 1 (destination-out / subtract) so the rectangle
-     area becomes a transparent hole — blur shows everywhere except there. */
+  /* Rectangle (default): use clip-path to cut out the bounding box. The
+     polygon has 8 points: 4 for the outer rectangle (clockwise) and 4 for
+     the inner rectangle (counter-clockwise). The nonzero fill rule makes
+     the inner rectangle a hole, so the element renders as a frame around
+     the bounding box — backdrop-filter blurs the video everywhere except
+     inside the filter area.
+
+     This is more reliable than mask-composite: subtract, which the user's
+     browser was computing as fully transparent (making the whole mask
+     layer invisible, so the backdrop-filter was not applied outside the
+     bounding box either). clip-path: polygon with the nonzero fill rule
+     is the most cross-browser-reliable way to cut a hole. */
+  clip-path: polygon(
+    0 0, 100% 0, 100% 100%, 0 100%,
+    var(--mf-mask-x) var(--mf-mask-y),
+    var(--mf-mask-x) calc(var(--mf-mask-y) + var(--mf-mask-h)),
+    calc(var(--mf-mask-x) + var(--mf-mask-w)) calc(var(--mf-mask-y) + var(--mf-mask-h)),
+    calc(var(--mf-mask-x) + var(--mf-mask-w)) var(--mf-mask-y)
+  );
+}
+
+/* Ellipse hole: override the rectangle clip-path and use a CSS mask
+   instead. clip-path: ellipse() cannot cut a hole (it only defines the
+   area to keep), so the mask approach is the natural fit. The mask uses
+   two layers: layer 1 = full white (blur everywhere); layer 2 = radial
+   gradient with a transparent stop at 100% (so the area between the
+   ellipse and the bounding box is transparent, creating an elliptical
+   hole). The two layers are combined with mask-composite: subtract.
+
+   The transparent 100% stop is essential — without it, the radial
+   gradient extends the last `white` color stop past 100%, so the area
+   between the ellipse and the bounding box is also white, producing a
+   rectangular hole instead of an elliptical one. */
+.mosaic-filter-mask-layer--ellipse {
+  clip-path: none;
   mask-image:
     linear-gradient(white, white),
-    linear-gradient(white, white);
+    radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 99%, transparent 100%);
   mask-size:
     100% 100%,
     var(--mf-mask-w) var(--mf-mask-h);
@@ -164,18 +196,6 @@
     no-repeat;
   mask-composite: subtract;
   -webkit-mask-composite: destination-out;
-}
-
-/* Ellipse hole: replace the rectangle tile with a radial gradient so the
-   transparent hole is an ellipse matching the bounding box. The transparent
-   stop at 100% is essential — without it, the radial gradient extends the
-   last `white` color stop past 100%, so the area between the ellipse and
-   the bounding box is also white, producing a rectangular hole instead
-   of an elliptical one. */
-.mosaic-filter-mask-layer--ellipse {
-  mask-image:
-    linear-gradient(white, white),
-    radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 99%, transparent 100%);
 }
 
 /* Hide the mask layer entirely when the filter is off, even if the user
