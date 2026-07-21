@@ -285,9 +285,33 @@
   }
 
   // Update the reverse-mode mask layer position, size, and shape to match
-  // the current state. The mask layer uses CSS custom properties for the hole
-  // position/size so a single setProperty call updates it without re-generating
-  // a data URL or re-building the mask-image string.
+  // the current state. The hole is cut out via `clip-path: path()` with TWO
+  // separate subpaths (outer player rect + inner hole shape). The previous
+  // approach used `clip-path: polygon(...)` with 8 points for the rectangle
+  // and `mask-image` + `mask-composite: subtract` for the ellipse; both
+  // approaches were broken:
+  //
+  //   1. The 8-point polygon closed from the last inner point diagonally
+  //      back to the first outer point, making the path self-intersecting.
+  //      Under the nonzero fill rule, the L-shaped area (left of and above
+  //      the filter) ended up outside the clip, so the backdrop-filter
+  //      didn't apply there and the video stayed clear.
+  //
+  //   2. `mask-composite: subtract` (and its `-webkit-` prefix equivalent)
+  //      has inconsistent browser support — some browsers compute the mask
+  //      as fully transparent, making the whole mask layer invisible and
+  //      so the backdrop-filter was never applied outside the bounding box
+  //      either.
+  //
+  // `clip-path: path()` with two subpaths avoids both problems: the `Z M`
+  // separator creates two non-self-intersecting subpaths. The CSS uses
+  // `clip-rule: evenodd`, so the inner subpath becomes a hole regardless of
+  // winding direction — the rule is "inside iff a ray from the point crosses
+  // the path an odd number of times". A point inside the outer rect but
+  // outside the inner shape crosses once (odd → inside → blurred). A point
+  // inside both crosses twice (even → outside → clear). The path() function
+  // is supported in Chrome 88+, Firefox 70+, and Safari 13.1+ — well within
+  // Stash's bundled Chromium baseline.
   //
   // The mask layer is only meaningful when both `state.active` is true AND
   // `state.mode === 'reverse'`. If the user toggles the filter off while in
@@ -304,12 +328,42 @@
     const topPx = state.yPct * ph;
     const wPx = Math.max(state.widthPct * pw, 1);
     const hPx = Math.max(state.heightPct * ph, 1);
-    maskLayer.style.setProperty('--mf-mask-x', leftPx + 'px');
-    maskLayer.style.setProperty('--mf-mask-y', topPx + 'px');
-    maskLayer.style.setProperty('--mf-mask-w', wPx + 'px');
-    maskLayer.style.setProperty('--mf-mask-h', hPx + 'px');
+
+    let innerD;
+    if (state.shape === 'ellipse') {
+      const cx = leftPx + wPx / 2;
+      const cy = topPx + hPx / 2;
+      const rx = wPx / 2;
+      const ry = hPx / 2;
+      // Full ellipse as two half-arcs. Direction: 9 → 6 → 3 → 12 → 9
+      // (left → bottom → right → top → left, counter-clockwise visually).
+      //   First arc: leftmost → rightmost via the BOTTOM.
+      //     angles 180° → 90° → 0° (decreasing) → sweep-flag 0
+      //   Second arc: rightmost → leftmost via the TOP.
+      //     angles 0° → -90° (=270°) → -180° (=180°) (decreasing) → sweep-flag 0
+      // Both sweep-flags are 0 so the path traces a single closed loop.
+      // (An earlier draft had sweep-flag 1 for the second arc, which would
+      // route it through the BOTTOM too — producing a back-and-forth along
+      // the lower half instead of a closed ellipse.)
+      innerD = "M " + (cx - rx) + " " + cy +
+               " A " + rx + " " + ry + " 0 0 0 " + (cx + rx) + " " + cy +
+               " A " + rx + " " + ry + " 0 0 0 " + (cx - rx) + " " + cy +
+               " Z";
+    } else {
+      // Inner rectangle traced counter-clockwise: TL → BL → BR → TR → close.
+      innerD = "M " + leftPx + " " + topPx +
+               " L " + leftPx + " " + (topPx + hPx) +
+               " L " + (leftPx + wPx) + " " + (topPx + hPx) +
+               " L " + (leftPx + wPx) + " " + topPx +
+               " Z";
+    }
+    // Outer player rectangle traced clockwise: TL → TR → BR → BL → close.
+    // Winding: clockwise outer (+1) + counter-clockwise inner (-1) = frame
+    // with a hole under the default nonzero clip rule.
+    const outerD = "M 0 0 L " + pw + " 0 L " + pw + " " + ph + " L 0 " + ph + " Z";
+    maskLayer.style.clipPath = "path('" + outerD + " " + innerD + "')";
+
     const reverseOn = state.active && state.mode === 'reverse';
-    maskLayer.classList.toggle('mosaic-filter-mask-layer--ellipse', state.shape === 'ellipse');
     maskLayer.classList.toggle('mosaic-filter-mask-layer--reverse', reverseOn);
     maskLayer.classList.toggle('mosaic-filter-mask-layer--hidden', !state.active);
   }

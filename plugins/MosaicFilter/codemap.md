@@ -111,27 +111,38 @@ It carries `backdrop-filter: blur(...)` while the rectangle itself does not
 `backdrop-filter: none`). The blur applies everywhere EXCEPT the filter area
 (the rectangle stays clear).
 
-The hole-cutting technique depends on the shape:
-- **Rectangle (default)**: `clip-path: polygon(...)` with 8 points. The
-  outer 4 points are the player rectangle (clockwise); the inner 4 points
-  are the bounding box (counter-clockwise). The `nonzero` fill rule makes
-  the inner rectangle a hole, so the element renders as a frame around the
-  bounding box. This is more reliable than `mask-composite: subtract`,
-  which the user's browser was computing as fully transparent (making the
-  whole mask layer invisible, so the backdrop-filter was not applied
-  outside the bounding box either).
-- **Ellipse**: `mask-image` with two layers — a full-cover white layer
-  and a radial gradient sized to the bounding box with a `transparent
-  100%` stop. Combined with `mask-composite: subtract` (and the
-  `-webkit-mask-composite: destination-out` fallback). The `.mosaic-filter-mask-layer--ellipse`
-  class overrides the rectangle `clip-path` with `none` and applies the
-  mask. `clip-path: ellipse()` cannot cut a hole (it only defines the
-  area to keep), so the mask approach is the natural fit for ellipses.
+The hole is cut with `clip-path: path()` on the mask layer, built in JS by
+`renderRect()` → `updateMask()`. The path uses **TWO separate subpaths**
+(outer player rect + inner hole shape), separated by `Z M`:
 
-The hole position and size are driven by four CSS custom properties set by
-`renderRect()` → `updateMask()`:
-- `--mf-mask-x`, `--mf-mask-y` — top-left corner of the hole (px).
-- `--mf-mask-w`, `--mf-mask-h` — hole dimensions (px).
+- **Outer**: clockwise rectangle covering the whole player.
+  `M 0 0 L pw 0 L pw ph L 0 ph Z`
+- **Inner** (rectangle): counter-clockwise bounding box.
+  `M x y L x y+h L x+w y+h L x+w y Z`
+- **Inner** (ellipse): two half-ellipse arcs traced counter-clockwise
+  (sweep-flag 0 for the top half, 1 for the bottom half).
+  `M cx-rx cy A rx ry 0 0 0 cx+rx cy A rx ry 0 0 1 cx-rx cy Z`
+
+Under the default nonzero fill rule, clockwise outer + counter-clockwise
+inner = frame with a hole. Winding is +1 inside the outer but outside the
+inner (frame area, blurred) and 0 inside the inner (hole, clear).
+
+`clip-path: path()` is supported in Chrome 88+, Firefox 70+, and Safari
+13.1+, well within Stash's bundled Chromium baseline. It uses a single code
+path for both rectangle and ellipse, and avoids two earlier bugs:
+
+- **Rectangle L-shape bug** (pre-0.4.2): the v0.4.0 `clip-path: polygon(...)`
+  had 8 points and closed from the last inner point `(maskX+maskW, maskY)`
+  diagonally back to the first outer point `(0, 0)`. That diagonal made the
+  path self-intersecting, so the L-shaped area (left of and above the
+  filter) was outside the clip and the video stayed clear there.
+
+- **Ellipse invisible-mask bug** (pre-0.4.2): the v0.4.0 ellipse approach
+  used `mask-image` with two layers combined via `mask-composite: subtract`
+  (and the `-webkit-mask-composite: destination-out` fallback). That
+  composite has inconsistent browser support — some browsers computed the
+  mask as fully transparent, making the whole mask layer invisible so the
+  backdrop-filter never applied.
 
 The mask layer is `display: none` in normal mode, `display: block` in
 reverse mode (with `--hidden` overriding to `display: none !important` when
@@ -144,8 +155,11 @@ because the mask layer is below the rectangle in z-order (`z-index: 7` vs
 
 - `shape`: `'rectangle'` (default) or `'ellipse'`. The rectangle element
   toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). The
-  mask-layer hole shape also matches via the `--ellipse` class on the mask
-  layer.
+  mask-layer hole shape (in reverse mode) is determined by the path data
+  built in `updateMask()` — rectangle uses an inner sub-rectangle,
+  ellipse uses two half-ellipse arc commands. No class is needed on the
+  mask layer for the hole shape; the path is rebuilt whenever shape,
+  position, or size changes.
 - `mode`: `'normal'` (default) or `'reverse'`. Normal mode works as before
   (the rectangle itself blurs its area). Reverse mode transfers the blur to
   the mask layer, blurring everything outside the rectangle. The mask layer

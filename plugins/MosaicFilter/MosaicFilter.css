@@ -127,12 +127,28 @@
 /* ---------------------------------------------------------------------------
    Reverse-mode mask layer
    Full-cover element that carries backdrop-filter when mode === 'reverse'.
-   A CSS mask punches a hole in the shape of the bounding box, so the blur
-   applies everywhere EXCEPT inside the filter rectangle (which stays clear).
-   The hole position/size is driven by CSS custom properties set from JS:
-     --mf-mask-x, --mf-mask-y, --mf-mask-w, --mf-mask-h
-   Shape toggles between rectangle (two stacked linear gradients) and ellipse
-   (single radial gradient) via the --ellipse class.
+   A clip-path punches a hole in the shape of the bounding box, so the
+   blur applies everywhere EXCEPT inside the filter rectangle (which stays
+   clear). The path is built in JS (updateMask) and assigned via
+   element.style.clipPath — see MosaicFilter.js for the path data.
+
+   The path uses TWO separate subpaths (outer player rect + inner hole),
+   separated by `Z M`. The previous approaches were broken:
+
+     - 8-point `clip-path: polygon(...)`: the polygon closed from the last
+       inner point diagonally back to the first outer point, creating a
+       self-intersecting path. Under the nonzero fill rule the L-shaped
+       area (left of and above the filter) was outside the clip, so the
+       backdrop-filter never blurred that region.
+
+     - `mask-composite: subtract` / `-webkit-mask-composite: destination-out`
+       for the ellipse: inconsistent browser support. Some browsers
+       computed the mask as fully transparent, making the whole mask
+       layer invisible.
+
+   `clip-path: path()` with two subpaths is reliable in all modern
+   browsers (Chrome 88+, Firefox 70+, Safari 13.1+) and handles both
+   rectangle and ellipse with a single code path.
    --------------------------------------------------------------------------- */
 
 .mosaic-filter-mask-layer {
@@ -141,61 +157,24 @@
   z-index: 7;
   pointer-events: none;
   display: none;
+  /* No static clip-path here — updateMask() sets it via JS every time
+     the rectangle moves/resizes/shape-changes. Clearing any inherited
+     value defensively keeps the mask layer at full cover when JS is
+     mid-update (e.g. before the first renderRect() completes). */
+  clip-path: none;
+  /* Use the evenodd rule as a safety net: with two non-overlapping
+     subpaths (outer rect + inner hole) a point is "inside" iff a ray
+     from it crosses the path an odd number of times. This is
+     direction-independent, so it works regardless of which way the
+     ellipse arcs sweep. The nonzero rule would also work given the
+     winding choices in updateMask(), but evenodd is more forgiving. */
+  clip-rule: evenodd;
 }
 
 .mosaic-filter-mask-layer--reverse {
   display: block;
   backdrop-filter: blur(var(--mf-blur, 10px));
   -webkit-backdrop-filter: blur(var(--mf-blur, 10px));
-  /* Rectangle (default): use clip-path to cut out the bounding box. The
-     polygon has 8 points: 4 for the outer rectangle (clockwise) and 4 for
-     the inner rectangle (counter-clockwise). The nonzero fill rule makes
-     the inner rectangle a hole, so the element renders as a frame around
-     the bounding box — backdrop-filter blurs the video everywhere except
-     inside the filter area.
-
-     This is more reliable than mask-composite: subtract, which the user's
-     browser was computing as fully transparent (making the whole mask
-     layer invisible, so the backdrop-filter was not applied outside the
-     bounding box either). clip-path: polygon with the nonzero fill rule
-     is the most cross-browser-reliable way to cut a hole. */
-  clip-path: polygon(
-    0 0, 100% 0, 100% 100%, 0 100%,
-    var(--mf-mask-x) var(--mf-mask-y),
-    var(--mf-mask-x) calc(var(--mf-mask-y) + var(--mf-mask-h)),
-    calc(var(--mf-mask-x) + var(--mf-mask-w)) calc(var(--mf-mask-y) + var(--mf-mask-h)),
-    calc(var(--mf-mask-x) + var(--mf-mask-w)) var(--mf-mask-y)
-  );
-}
-
-/* Ellipse hole: override the rectangle clip-path and use a CSS mask
-   instead. clip-path: ellipse() cannot cut a hole (it only defines the
-   area to keep), so the mask approach is the natural fit. The mask uses
-   two layers: layer 1 = full white (blur everywhere); layer 2 = radial
-   gradient with a transparent stop at 100% (so the area between the
-   ellipse and the bounding box is transparent, creating an elliptical
-   hole). The two layers are combined with mask-composite: subtract.
-
-   The transparent 100% stop is essential — without it, the radial
-   gradient extends the last `white` color stop past 100%, so the area
-   between the ellipse and the bounding box is also white, producing a
-   rectangular hole instead of an elliptical one. */
-.mosaic-filter-mask-layer--ellipse {
-  clip-path: none;
-  mask-image:
-    linear-gradient(white, white),
-    radial-gradient(ellipse 50% 50% at 50% 50%, white 0%, white 99%, transparent 100%);
-  mask-size:
-    100% 100%,
-    var(--mf-mask-w) var(--mf-mask-h);
-  mask-position:
-    0 0,
-    var(--mf-mask-x) var(--mf-mask-y);
-  mask-repeat:
-    no-repeat,
-    no-repeat;
-  mask-composite: subtract;
-  -webkit-mask-composite: destination-out;
 }
 
 /* Hide the mask layer entirely when the filter is off, even if the user
