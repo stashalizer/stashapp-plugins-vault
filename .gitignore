@@ -1,6 +1,7 @@
 # OpenCode workflow state (not part of the plugin project)
 .opencode/
 .slim/
+.cortexkit/
 
 # OS / editor artifacts
 .DS_Store
