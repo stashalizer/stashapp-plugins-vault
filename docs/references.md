@@ -62,6 +62,41 @@ Key source file (the actual API surface — read this when debugging
   safety net because React re-renders can remove the injected element
   between navigations.
 
+## CSS gotchas for Stash overlays
+
+`backdrop-filter` is the standard way to "blur a region of video" — the
+plugin puts a transparent element over the player and the browser blurs
+whatever is behind it. Inverting the effect (blur *everywhere except* a
+region) requires stacking `backdrop-filter` with a clip-path or mask, and
+the obvious approaches are fragile. Notes from real bugs:
+
+- **`clip-path: polygon(...)` with 8+ points is self-intersecting.** A
+  polygon with N points closes diagonally from the last point back to the
+  first, so a naive "outer rect clockwise + inner rect counter-clockwise"
+  polygon (intended as a frame with a hole) becomes a single self-
+  intersecting path. Under the default `nonzero` fill rule, the L-shaped
+  area outside the inner rect can land *outside* the clip, leaving that
+  region unblurred. Use **`clip-path: path('…Z M …Z')` with TWO separate
+  subpaths** (the `Z M` separator creates non-intersecting subpaths)
+  instead, and add **`clip-rule: evenodd`** for direction-independent hole
+  cutting. SVG `A` arc commands handle ellipses uniformly in the same
+  path.
+
+- **`mask-composite: subtract` / `-webkit-mask-composite: destination-out`
+  has inconsistent browser support.** Some engines compute the composite
+  as fully transparent, which makes the whole masked element invisible
+  — so the `backdrop-filter` on it never applies at all. Don't use it
+  for plugin overlays; prefer the `clip-path: path()` two-subpath
+  approach above.
+
+- **No visual regression net in this repo.** There's no local toolchain
+  (no bundler, linter, typecheck, tests, or dev server — see
+  `AGENTS.md`). Visual CSS changes ship unreviewed until a user installs
+  the plugin in Stash. At minimum, manually install + reload Stash and
+  verify the change against a real scene before tagging a release. The
+  per-plugin `codemap.md` is the right place to capture the specific
+  fix history.
+
 ## Stash source code (for reference when the docs are thin)
 
 - [stashapp/stash](https://github.com/stashapp/stash) — the main
