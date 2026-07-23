@@ -215,7 +215,7 @@ State shape:
   navigation/reload.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.8,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.10.1,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
 - `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with

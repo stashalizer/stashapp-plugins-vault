@@ -94,7 +94,7 @@ Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a 
 - **Known limitation**: the overlay and settings page maintain separate save locks and do not coordinate across components; a concurrent write from both could race (last writer wins the whole config map). Settings edits will not live-reflect in an already-open overlay until the next navigation/reload.
 
 ## Files
-- `MosaicFilter.yml` — plugin manifest (name, description, version 0.4.0, `ui.requires`/`javascript`/`css`).
+- `MosaicFilter.yml` — plugin manifest (name, description, version 0.4.3, `ui.requires`/`javascript`/`css`).
 - `MosaicFilter.js` — player overlay (vanilla JS) with toggle, follow, drag, resize, blur slider, shape/mode toggles, and global persistence.
 - `MosaicFilter.css` — overlay styling (rectangle, control bar, drag handle, resize handle, blur slider, mask layer).
 - `MosaicFilterSettings.js` — full-page React settings UI (Settings form editing the global config, includes shape and mode selectors).
