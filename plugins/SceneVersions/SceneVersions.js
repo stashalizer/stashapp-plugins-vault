@@ -28,6 +28,10 @@
   var libraries = PluginApi.libraries;
   var components = PluginApi.components;
   var hooks = PluginApi.hooks;
+  // The Apollo Client instance is NOT libraries.Apollo (that's the
+  // @apollo/client namespace: gql, useQuery, etc.). The live client is
+  // exposed via StashService.getClient(). Use it for query/mutate calls.
+  var apolloClient = PluginApi.utils.StashService.getClient();
   var h = React.createElement;
   var useState = React.useState;
   var useEffect = React.useEffect;
@@ -47,7 +51,7 @@
   // ── Data layer ──────────────────────────────────────────────────────
 
   async function readRelatedIds(sceneId) {
-    var data = await libraries.Apollo.client.query({
+    var data = await apolloClient.query({
       query: GQL.FindSceneDocument,
       variables: { id: sceneId },
       fetchPolicy: "no-cache",
@@ -61,7 +65,7 @@
     if (!ids || ids.length === 0) return [];
     var results = await Promise.all(
       ids.map(function (id) {
-        return libraries.Apollo.client
+        return apolloClient
           .query({
             query: GQL.FindSceneDocument,
             variables: { id: id },
@@ -79,7 +83,7 @@
   }
 
   async function writeRelatedIds(sceneId, ids) {
-    await libraries.Apollo.client.mutate({
+    await apolloClient.mutate({
       mutation: GQL.SceneUpdateDocument,
       variables: {
         input: {
@@ -189,7 +193,7 @@
     if (!folderPath) return [];
     var excludeSet = new Set(excludeIds.map(String));
     try {
-      var result = await libraries.Apollo.client.query({
+      var result = await apolloClient.query({
         query: GQL.FindScenesDocument,
         variables: {
           filter: { per_page: 200, sort: "path" },

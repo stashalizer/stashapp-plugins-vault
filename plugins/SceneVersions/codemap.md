@@ -49,6 +49,6 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 - **Known limitation**: the suggest-from-folder query uses `path: { modifier: "INCLUDES" }` which is a substring match — scenes in subfolders whose path contains the folder string may also appear. This is acceptable for a suggestion feature since folders usually contain few scenes and irrelevant suggestions can be ignored.
 
 ## Files
-- `SceneVersions.yml` — plugin manifest (name, description, version 0.2.0, `ui.javascript`/`ui.css`).
+- `SceneVersions.yml` — plugin manifest (name, description, version 0.2.1, `ui.javascript`/`ui.css`).
 - `SceneVersions.js` — React component for the Related Scenes tab, including suggest-from-folder helper.
 - `SceneVersions.css` — tab styling (header, edit region, card list, empty/loading/error states, suggestions section, responsive breakpoints).
