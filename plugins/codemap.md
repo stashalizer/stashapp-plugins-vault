@@ -15,4 +15,4 @@ Container directory for Stash plugins. Each immediate subdirectory is one self-c
 
 ## Integration
 - Consumed by: `build_site.sh` (build), `.github/workflows/deploy.yml` (CI deploy).
-- Currently contains: `QuestingAdventurer/` — see [QuestingAdventurer codemap](QuestingAdventurer/codemap.md).
+- Currently contains: `QuestingAdventurer/` (see [QuestingAdventurer codemap](QuestingAdventurer/codemap.md)), `MosaicFilter/` (see [MosaicFilter codemap](MosaicFilter/codemap.md)), and `SceneVersions/` (see [SceneVersions codemap](SceneVersions/codemap.md)).

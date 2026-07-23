@@ -246,6 +246,93 @@
   margin-bottom: 0;
 }
 
+/* Suggestions from same folder */
+.scene-versions-suggestions {
+  margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 0.5rem;
+  background: var(--card-bg, transparent);
+}
+
+.scene-versions-suggestions__header {
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-bottom: 0.65rem;
+  color: var(--text-muted, rgba(128, 128, 128, 0.85));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.scene-versions-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.12));
+}
+
+.scene-versions-suggestion:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.scene-versions-suggestion:first-child {
+  padding-top: 0;
+}
+
+.scene-versions-suggestion__thumb {
+  width: 48px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 0.3rem;
+  flex-shrink: 0;
+  background: var(--secondary-bg, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+}
+
+.scene-versions-suggestion__thumb--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--secondary-bg, rgba(128, 128, 128, 0.15));
+}
+
+.scene-versions-suggestion__thumb--placeholder::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-top-color: transparent;
+  opacity: 0.5;
+}
+
+.scene-versions-suggestion__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--body-color, inherit);
+}
+
+.scene-versions-suggestion__add {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.scene-versions-suggestions-loading {
+  font-size: 0.8rem;
+  color: var(--text-muted, rgba(128, 128, 128, 0.7));
+  margin-bottom: 1.5rem;
+  padding: 0.5rem 0;
+}
+
 /* Responsive: smaller thumbnails on narrow panes */
 @media (max-width: 480px) {
   .scene-versions-thumb {
@@ -274,5 +361,15 @@
     width: 100%;
     margin-right: 0;
     margin-bottom: 0.25rem;
+  }
+
+  .scene-versions-suggestion {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .scene-versions-suggestion__add {
+    width: 100%;
+    text-align: center;
   }
 }

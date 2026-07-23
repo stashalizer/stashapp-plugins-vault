@@ -163,6 +163,52 @@
     return "Untitled";
   }
 
+  function getFolderPath(scene) {
+    if (!scene.files || scene.files.length === 0) return null;
+    var path = scene.files[0].path;
+    var parts = path.replace(/\\/g, "/").split("/");
+    parts.pop(); // drop the filename
+    return parts.join("/") + "/";
+  }
+
+  /**
+   * Fetch scenes sharing the same folder as the current scene.
+   *
+   * Approach: Use GQL.FindScenesDocument with a scene_filter on path
+   * (modifier: "INCLUDES"). This is the standard Stash API filter for
+   * path-based queries. The folder path is derived from the current
+   * scene's first file path with the basename stripped.
+   *
+   * We request up to 200 scenes sorted by path. The INCLUDES modifier
+   * is a substring match, which may also match scenes in subfolders
+   * whose path contains the folder string — acceptable for a suggestion
+   * feature since folders usually contain few scenes and the user can
+   * simply ignore irrelevant suggestions.
+   */
+  async function fetchSuggestions(folderPath, excludeIds) {
+    if (!folderPath) return [];
+    var excludeSet = new Set(excludeIds.map(String));
+    try {
+      var result = await libraries.Apollo.client.query({
+        query: GQL.FindScenesDocument,
+        variables: {
+          filter: { per_page: 200, sort: "path" },
+          scene_filter: {
+            path: { value: folderPath, modifier: "INCLUDES" },
+          },
+        },
+        fetchPolicy: "no-cache",
+      });
+      var scenes = result.data.findScenes.scenes || [];
+      return scenes.filter(function (s) {
+        return !excludeSet.has(String(s.id));
+      });
+    } catch (err) {
+      console.error("SceneVersions: fetchSuggestions failed", err);
+      return [];
+    }
+  }
+
   // ── React component ─────────────────────────────────────────────────
 
   function RelatedScenesTab(props) {
@@ -186,6 +232,12 @@
     var dirty = _f[0];
     var setDirty = _f[1];
     var loadedIdsRef = useRef([]);
+    var _g = useState([]);
+    var suggestions = _g[0];
+    var setSuggestions = _g[1];
+    var _h = useState(false);
+    var suggestionsLoading = _h[0];
+    var setSuggestionsLoading = _h[1];
     var Toast = hooks.useToast();
 
     // Load on mount
@@ -221,6 +273,35 @@
         };
       },
       [scene.id]
+    );
+
+    // Fetch suggestions from same folder (parallel, non-blocking)
+    useEffect(
+      function () {
+        var cancelled = false;
+        var folderPath = getFolderPath(scene);
+        if (!folderPath) {
+          setSuggestions([]);
+          setSuggestionsLoading(false);
+          return;
+        }
+        setSuggestionsLoading(true);
+        fetchSuggestions(folderPath, [scene.id].concat(relatedIds))
+          .then(function (scenes) {
+            if (cancelled) return;
+            setSuggestions(scenes);
+            setSuggestionsLoading(false);
+          })
+          .catch(function () {
+            if (cancelled) return;
+            setSuggestions([]);
+            setSuggestionsLoading(false);
+          });
+        return function () {
+          cancelled = true;
+        };
+      },
+      [scene.id, relatedIds]
     );
 
     var handleSelect = useCallback(function (scenes) {
@@ -276,6 +357,19 @@
           setError(err.message || String(err));
         });
     }, []);
+
+    var handleAddSuggestion = useCallback(function (suggestedScene) {
+      var sid = String(suggestedScene.id);
+      // Only add if not already in the list
+      if (relatedIds.indexOf(sid) !== -1) return;
+      var newIds = relatedIds.concat([sid]);
+      setRelatedIds(newIds);
+      setDirty(!shallowEqual(newIds, loadedIdsRef.current));
+      // Also add the scene object so it appears in the card list immediately
+      setRelatedScenes(function (prev) {
+        return prev.concat([suggestedScene]);
+      });
+    }, [relatedIds]);
 
     // ── Render ──────────────────────────────────────────────────────
 
@@ -429,6 +523,62 @@
           )
         )
       ),
+      // Suggestions from same folder
+      suggestions.length > 0
+        ? h(
+            "div",
+            { className: "scene-versions-suggestions" },
+            h(
+              "div",
+              { className: "scene-versions-suggestions__header" },
+              "Scenes in the same folder"
+            ),
+            suggestions.map(function (s) {
+              return h(
+                "div",
+                { key: s.id, className: "scene-versions-suggestion" },
+                s.paths && s.paths.screenshot
+                  ? h("img", {
+                      className: "scene-versions-suggestion__thumb",
+                      src: s.paths.screenshot,
+                      alt: "",
+                      loading: "lazy",
+                    })
+                  : h("div", {
+                      className:
+                        "scene-versions-suggestion__thumb scene-versions-suggestion__thumb--placeholder",
+                    }),
+                h(
+                  "span",
+                  { className: "scene-versions-suggestion__title" },
+                  sceneTitle(s)
+                ),
+                h(
+                  Button,
+                  {
+                    variant: "outline-primary",
+                    size: "sm",
+                    className: "scene-versions-suggestion__add",
+                    title: "Add this scene as a related version",
+                    "aria-label": "Add this scene as a related version",
+                    onClick: function (evt) {
+                      evt.preventDefault();
+                      evt.stopPropagation();
+                      handleAddSuggestion(s);
+                    },
+                  },
+                  "Add"
+                )
+              );
+            })
+          )
+        : suggestionsLoading
+          ? h(
+              "div",
+              { className: "scene-versions-suggestions-loading" },
+              "Finding scenes in the same folder\u2026"
+            )
+          : null,
       // Related scenes list
       h(
         "div",
