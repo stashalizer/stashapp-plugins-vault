@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships one plugin, **QuestingAdventurer**.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships two plugins: **QuestingAdventurer** and **MosaicFilter**.
 
 ## Repository map
 
@@ -48,7 +48,7 @@ build_site.sh               # zips each plugin + writes index.yml
 - `ui.javascript` / `ui.css` entries are paths relative to the plugin directory.
 - **Runtime globals are not bundled.** The plugin expects `window.csLib` and `window.PluginApi` to be provided by Stash; users must install **CommunityScriptsUILibrary** first (declared in `ui.requires`).
 
-## QuestingAdventurer (the only plugin today)
+## QuestingAdventurer
 
 - **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds}], collapsed, opacity, panelPos, locked, showAddControls }`.
 - **v2 data model**: moves are a global library (`moves: [{id,text}]`); triggers reference moves by id via `attachedMoveIds: [string]`. The `active` flag lives on the **trigger**, not the move. A trigger with no attached moves is `active: false` by design.
@@ -70,6 +70,21 @@ build_site.sh               # zips each plugin + writes index.yml
   2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
+
+## MosaicFilter
+
+- **Two UIs, one config key** `"MosaicFilter"`. State shape (flat object, no per-scene storage — all scenes share the same values): `{ blurAmount, widthPct, heightPct, xPct, yPct, active, follow, shape, mode }`. Percentages are of the player so the rectangle scales on resize.
+- **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a Scene-Tools-only launcher card (even-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
+- **Legacy shape migration**: versions ≤ 0.2.x stored `{ defaults: {...}, scenes: { [id]: {...} } }`. On load, `defaults` is used as the flat config and `scenes` is ignored; the next save writes the flat shape. `mergeStored` iterates `Object.keys(FALLBACK_DEFAULTS)` so new fields (e.g. `shape`, `mode`) are safe to add — missing keys fall back to defaults, and `sanitizeState` coerces unknown values.
+- **Write policy — never persist per animation frame.** `csLib.setConfiguration` is called only at user-driven boundaries: toggle buttons (immediate), drag/resize end `pointerup`/`pointercancel` (immediate), blur slider `change` event (slider release — the `input` event updates the visual `--mf-blur` only and must NOT save), and a best-effort `pagehide` write. Follow-cursor position updates are in-memory only.
+- **Follow-cursor mode**: when `state.follow` is on, a player-level `pointermove` re-centers the rectangle on the cursor; rectangle drag is disabled (resize still works). Toggling Follow on calls `snapRectToPointer()` so the rectangle jumps to the last recorded cursor position immediately (no lag from the saved location).
+- **`shape`** (`'rectangle'` | `'ellipse'`) toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). **`mode`** (`'normal'` | `'reverse'`) transfers the blur to a sibling `.mosaic-filter-mask-layer` that blurs everything EXCEPT the filter area (the rectangle stays clear).
+- **Reverse-mode hole is cut with `clip-path: path()`** built in JS by `updateMask()`. The path uses TWO subpaths separated by `Z M`: an outer clockwise player rect + an inner counter-clockwise hole (rectangle bounding box, or two half-ellipse arcs for ellipse). Under the nonzero fill rule, clockwise-outer + counter-clockwise-inner = frame with a hole. Do NOT switch back to `clip-path: polygon()` (pre-0.4.2 L-shape self-intersection bug) or `mask-image` + `mask-composite: subtract` (pre-0.4.2 ellipse invisible-mask bug — inconsistent browser support made the mask fully transparent).
+- **Bar collapse**: `barCollapsed` is module-level so re-renders don't silently re-expand the controls. On every fresh mount (after `teardown`, e.g. navigating to a new scene), `setupPanel` re-derives `barCollapsed = !state.active` after `loadState` — opening a scene with mosaic off starts with the bar collapsed.
+- **z-order**: mask layer `z-index: 7`, rectangle `z-index: 8` (so the rectangle's drag/resize handlers still work in reverse mode). Mask layer has `pointer-events: none` so clicks pass through to video controls.
+- Same cross-surface race caveat as QuestingAdventurer: overlay and settings maintain separate save locks and do not coordinate; last writer wins the whole config map. Settings edits won't live-reflect in an already-open overlay until next navigation/reload.
+- `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
+- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) — reference via `Refs #1` / `Fixes #1`.
 
 ## Conventions
 
@@ -121,6 +136,39 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 - `QuestingAdventurer` — no tracking issue at this time
 - `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1)
 
+### Codemap sync
+
+Codemaps are **living docs**, not generated artifacts — there is no
+auto-regeneration step. When you change code, you MUST hand-update the
+relevant codemap(s) in the same change set so the maps stay accurate for
+the next task (the workflow requires reading `codemap.md` before
+starting work, so a stale map misleads every subsequent agent).
+
+**Trigger rules:**
+
+| Change | Codemap update required |
+|--------|-------------------------|
+| `plugins/<PluginId>/*.js` / `*.css` / `*.yml` user-visible behavior (data model, control flow, UI, persistence, migrations) | Update `plugins/<PluginId>/codemap.md` (Data Model, Data & Control Flow, Files, version number). If the plugin's responsibility summary shifts, also update `plugins/codemap.md` and the top-level `codemap.md` directory table. |
+| Plugin directory structure change (add / rename / delete files or subdirectories) | Update the plugin codemap's Files section and the top-level `codemap.md` directory table. |
+| `build_site.sh`, `.github/workflows/`, `docs/`, README, or other non-plugin files | No codemap update — use `site` / `ci` / `docs` scope. |
+
+**Version numbers in codemaps:** the Files section of each plugin codemap
+records the current `version:` from the yml. When you bump the yml
+version (per the Version-bumping rule above), also update that line in
+the codemap so the two stay in sync.
+
+**Committing:** the codemap sync may be folded into the feature/fix
+commit or split into a separate `chore(codemap): ...` commit. Either is
+acceptable; a separate commit keeps the diff reviewable when the map
+rewrite is large. Examples of both forms appear in the Examples list
+below.
+
+**Publish note:** codemap files live outside `plugins/**`, so a
+codemap-only commit does NOT trigger the deploy workflow and does NOT
+publish a new plugin version. Publishing is driven solely by the yml
+`version:` bump on a `plugins/**` change — the codemap sync is a
+documentation concern, separate from the release.
+
 ### Examples
 
 - `feat(QuestingAdventurer): support drag-to-reorder triggers and moves`
@@ -131,3 +179,10 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 - `revert(QuestingAdventurer): drop the experimental node drag handler`
 - `feat(MosaicFilter): add follow-cursor mode for the rectangle`
 - `fix(MosaicFilter): stop writing config per pointermove during follow`
+
+## Cloned Dependency Source
+
+Read-only dependency source repositories are available under
+`.slim/clonedeps/repos/` for inspection. Do not edit these clones.
+
+- `.slim/clonedeps/repos/stashapp__stash/` - `stashapp/stash` at `v0.31.1`; Stash server source for the plugin API surface, GraphQL schema, and UI plugin injection points that the vault's plugins integrate against.
