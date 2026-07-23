@@ -37,6 +37,7 @@
   var useEffect = React.useEffect;
   var useRef = React.useRef;
   var useCallback = React.useCallback;
+  var useMemo = React.useMemo;
   var Tab = libraries.Bootstrap.Tab;
   var Nav = libraries.Bootstrap.Nav;
   var Button = libraries.Bootstrap.Button;
@@ -176,6 +177,33 @@
   }
 
   /**
+   * Build a duck-typed path criterion for SceneIDSelect's `extraCriteria`.
+   *
+   * SceneSelect spreads `extraCriteria` into `filter.criteria` and then
+   * calls `makeFilter()`, which invokes each criterion's
+   * `applyToCriterionInput(output)` to write `{ path: { value, modifier } }`
+   * into the scene_filter. We only need that one method, so a minimal
+   * duck-typed object is enough — no need to import the real
+   * PathCriterion class (which isn't exposed on PluginApi anyway).
+   *
+   * Restricting the picker to the current scene's folder makes the
+   * common "same performer/studio lives in one folder" workflow
+   * discoverable without paging through every scene in the library.
+   * Cross-folder links can still be added via the suggestions list or
+   * by removing this criterion in a future toggle.
+   */
+  function makeFolderCriterion(folderPath) {
+    return {
+      criterionOption: { type: "path" },
+      modifier: "INCLUDES",
+      value: folderPath,
+      applyToCriterionInput: function (output) {
+        output.path = { value: folderPath, modifier: "INCLUDES" };
+      },
+    };
+  }
+
+  /**
    * Fetch scenes sharing the same folder as the current scene.
    *
    * Approach: Use GQL.FindScenesDocument with a scene_filter on path
@@ -243,6 +271,18 @@
     var suggestionsLoading = _h[0];
     var setSuggestionsLoading = _h[1];
     var Toast = hooks.useToast();
+
+    // Restrict the scene picker to the current scene's folder so the
+    // common "same performer/studio lives in one folder" workflow is
+    // discoverable. Recomputed only when the scene changes.
+    var folderCriteria = useMemo(
+      function () {
+        var folderPath = getFolderPath(scene);
+        if (!folderPath) return [];
+        return [makeFolderCriterion(folderPath)];
+      },
+      [scene]
+    );
 
     // Load on mount
     useEffect(
@@ -470,12 +510,13 @@
         h(
           "label",
           { className: "scene-versions-label" },
-          "Link alternate versions of this scene"
+          "Link alternate versions of this scene (filtered to the same folder)"
         ),
         h(components.SceneIDSelect, {
           ids: relatedIds,
           isMulti: true,
           excludeIds: [scene.id],
+          extraCriteria: folderCriteria,
           onSelect: handleSelect,
         }),
         h(

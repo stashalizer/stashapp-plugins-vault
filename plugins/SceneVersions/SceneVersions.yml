@@ -1,6 +1,6 @@
 name: Scene Versions
 description: Associate alternate versions of a scene (e.g. same dance, different costume) with other scenes. Bidirectional links stored in scene custom fields. Adds a "Related Scenes" tab to the scene page with a multi-scene picker.
-version: 0.2.1
+version: 0.3.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:
