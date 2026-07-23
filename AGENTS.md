@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships two plugins: **QuestingAdventurer** and **MosaicFilter**.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships three plugins: **QuestingAdventurer**, **MosaicFilter**, and **SceneVersions**.
 
 ## Repository map
 
@@ -16,7 +16,7 @@ Before working on any task, read `codemap.md` to understand:
 - Directory responsibilities and design patterns
 - Data flow and integration points between modules
 
-For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`).
+For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`, `plugins/MosaicFilter/codemap.md`, `plugins/SceneVersions/codemap.md`).
 
 ## Layout
 
@@ -86,6 +86,20 @@ build_site.sh               # zips each plugin + writes index.yml
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed) — historical reference via `Refs #1` / `Fixes #1`.
 
+## SceneVersions
+
+- **No config key, no csLib dependency.** Data lives in each scene's `custom_fields` under key `"RelatedScenes"` (array of scene ID strings). No plugin-level config, so no cross-surface race (unlike QuestingAdventurer/MosaicFilter).
+- **Bidirectional links**: when scene A lists B, B also lists A. `syncBidirectional` writes both sides on every link/unlink using `custom_fields: { partial: { RelatedScenes: [...] } }` to avoid clobbering other custom fields. Self-links filtered at every step.
+- **Tab-only React plugin** (no player overlay, no `csLib.PathElementListener`, no SPA re-injection). Single component `RelatedScenesTab` injected via `PluginApi.patch.before` on `"ScenePage.Tabs"` (Nav link, `eventKey: "scene-versions-panel"`, inserted after the Details tab) and `"ScenePage.TabContent"` (Tab.Pane).
+- **Apollo client for all data**: `libraries.Apollo.client.query` for reads (`FindSceneDocument`, `FindScenesDocument`), `libraries.Apollo.client.mutate` for writes (`SceneUpdateDocument`). No `csLib.getConfiguration`/`setConfiguration`.
+- **SceneIDSelect picker** with `isMulti` + `excludeIds={[scene.id]}` to prevent self-links; `extraCriteria` restricts the dropdown to the current scene's folder via a path `INCLUDES` criterion (`makeFolderCriterion`).
+- **Suggest-from-folder helper**: `GQL.FindScenesDocument` with `scene_filter.path { modifier: "INCLUDES" }` queries other scenes in the same folder; "Add" button appends to `relatedIds` without saving (non-destructive). Rendered only when suggestions exist.
+- **patch.before error return shape**: handlers return `[props]` (pass-through) on error so the scene page doesn't break. Do NOT change to `[]` (zero args → original component called with `props=undefined` → breaks the whole scene page).
+- **`fetchPolicy: "no-cache"`** on all Apollo queries so stale cache doesn't hide bidirectional writes.
+- **No migrations** (new plugin, no legacy data).
+- **No settings page, no route injection** — tab injection only.
+- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
+
 ## Conventions
 
 - One plugin per directory. No cross-plugin imports.
@@ -107,6 +121,7 @@ use a top-level component name:
 
 - `QuestingAdventurer` — the QuestingAdventurer plugin
 - `MosaicFilter` — the MosaicFilter plugin
+- `SceneVersions` — the SceneVersions plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`
@@ -135,6 +150,7 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 
 - `QuestingAdventurer` — no tracking issue at this time
 - `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed)
+- `SceneVersions` — no tracking issue at this time
 
 ### Codemap sync
 
@@ -179,6 +195,7 @@ documentation concern, separate from the release.
 - `revert(QuestingAdventurer): drop the experimental node drag handler`
 - `feat(MosaicFilter): add follow-cursor mode for the rectangle`
 - `fix(MosaicFilter): stop writing config per pointermove during follow`
+- `feat(SceneVersions): add suggest-from-folder helper`
 
 ## Cloned Dependency Source
 

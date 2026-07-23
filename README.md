@@ -8,12 +8,13 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 
 - **[Questing Adventurer](#questing-adventurer)** — turns scene playback into a quest: respond to on-screen cues by performing the moves attached to your active triggers.
 - **[Mosaic Filter](#mosaic-filter)** — a movable, resizable blur rectangle (or ellipse) over any region of a scene, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
+- **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene (same dance, different costume, different angle) bidirectionally, with a suggest-from-folder helper.
 
 ## Requirements (all plugins)
 
 - [Stash](https://github.com/stashapp/stash) (tested against the v0.31.x line).
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** Both plugins depend on it; the player overlays will not load without it.
-- The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer and MosaicFilter depend on it; their player overlays will not load without it. SceneVersions is standalone and does not require csLib.
+- The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
 
 ## Tested environment
 
@@ -28,10 +29,10 @@ Add this repository as a plugin source in Stash:
    ```
    https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
    ```
-3. Install **Questing Adventurer** and/or **Mosaic Filter** from the list.
+3. Install **Questing Adventurer**, **Mosaic Filter**, and/or **Scene Versions** from the list.
 4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it.
 
-Each plugin then appears in two places: a **player overlay** on every scene page, and a **settings page** under **Settings → Tools → Scene Tools**.
+QuestingAdventurer and MosaicFilter each appear in two places: a **player overlay** on every scene page, and a **settings page** under **Settings → Tools → Scene Tools**. SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page).
 
 ---
 
@@ -132,12 +133,50 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 
 ---
 
+## Scene Versions
+
+Adds a "Related Scenes" tab to the scene page for associating alternate versions of a scene (same performance, different costume/angle/source). Links are bidirectional — if A links to B, B shows A too. Supports multiple related scenes per scene.
+
+### Why you might like it
+
+- **Bidirectional auto-sync.** Link once and both scenes show each other — no need to edit both sides.
+- **Suggest-from-folder.** Scenes sharing the same file folder surface as quick-add candidates, so the most likely related scenes are one click away.
+- **Multi-select picker restricted to the current scene's folder.** The dropdown only shows scenes in the same folder by default, making it easy to find related content without paging through the whole library.
+- **No extra dependency.** Works without CommunityScriptsUILibrary — no csLib required.
+
+### How to use it
+
+Open any scene and click the **Related Scenes** tab (after the Details tab):
+
+- Use the scene picker to select related scenes (filtered to the current folder by default; cross-folder links can be added via suggestions).
+- **Save** writes both directions — the linked scenes also get a back-link.
+- **Add** from the suggestions list queues a scene without saving (non-destructive).
+- **Discard** reverts to the last saved state.
+- **Remove** a related scene — the unlink is applied bidirectionally on save.
+
+### Features at a glance
+
+- Bidirectional custom_fields links — link once, both scenes reflect it.
+- Suggest-from-folder helper — other scenes in the same folder appear as quick-add buttons.
+- Folder-scoped picker — the multi-scene dropdown is restricted to the current scene's folder.
+- Standalone — no csLib dependency, no per-plugin config key.
+- Tab-only — no player overlay, no settings page.
+
+### Known limitations
+
+- Suggest-from-folder uses substring `INCLUDES` on path, so scenes in subfolders whose path contains the folder string may also appear. This is usually fine since folders hold few scenes, and irrelevant suggestions can be ignored.
+- Concurrent multi-user edits to the same scene's related list could race (acceptable for typical single-user Stash).
+- No batch query — N related scenes trigger N parallel `FindSceneDocument` calls. Fine for small N.
+
+---
+
 ## Repository layout
 
 ```
 plugins/                    # one subdirectory per plugin
   QuestingAdventurer/       # manifest + JS/CSS assets
   MosaicFilter/             # manifest + JS/CSS assets
+  SceneVersions/            # manifest + JS/CSS assets
 build_site.sh               # zips each plugin and generates index.yml
 .github/workflows/          # deploys the source index to GitHub Pages
 ```
@@ -152,12 +191,12 @@ To publish manually from a fork: open **Settings → Pages** and set the source 
 
 ## Feedback
 
-Both plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
+All three plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
 
 - Open a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues), or
 - Reply to the announcement thread on the [stashapp community forum](https://discourse.stashapp.cc/c/plugins/18/none).
 
-Particularly interested in: what kinds of triggers/moves you actually build, whether per-scene Mosaic Filter config would be useful, and what overlay interactions feel missing.
+Particularly interested in: what kinds of triggers/moves you actually build, whether per-scene Mosaic Filter config would be useful, what overlay interactions feel missing, and whether folder-based scene suggestions are the right discovery mechanism for Scene Versions.
 
 ## License
 
