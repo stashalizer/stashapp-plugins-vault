@@ -84,7 +84,7 @@ build_site.sh               # zips each plugin + writes index.yml
 - **z-order**: mask layer `z-index: 7`, rectangle `z-index: 8` (so the rectangle's drag/resize handlers still work in reverse mode). Mask layer has `pointer-events: none` so clicks pass through to video controls.
 - Same cross-surface race caveat as QuestingAdventurer: overlay and settings maintain separate save locks and do not coordinate; last writer wins the whole config map. Settings edits won't live-reflect in an already-open overlay until next navigation/reload.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
-- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) — reference via `Refs #1` / `Fixes #1`.
+- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed) — historical reference via `Refs #1` / `Fixes #1`.
 
 ## Conventions
 
@@ -134,7 +134,7 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 `Fixes #N`):
 
 - `QuestingAdventurer` — no tracking issue at this time
-- `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1)
+- `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed)
 
 ### Codemap sync
 
