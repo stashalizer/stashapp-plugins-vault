@@ -357,7 +357,7 @@
       React.Fragment,
       null,
       "Related Scenes",
-      count !== null
+      count !== null && count > 0
         ? h(
             Badge,
             {
