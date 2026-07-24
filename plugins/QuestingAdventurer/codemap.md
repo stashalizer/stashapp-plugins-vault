@@ -23,7 +23,6 @@ State shape:
   collapsed: boolean,                                      // overlay collapsed state
   opacity: number,                                         // 0.0–1.0, panel background alpha
   panelPos: { top: number, right: number },                // overlay position
-  locked: boolean,                                         // disable drag + dim controls
   showAddControls: boolean,                                // show Add Trigger/Move footer
   showManualControls: boolean                              // show Manual Selection library section
 }
@@ -31,7 +30,7 @@ State shape:
 
 - `active` lives on the **trigger**, not on the move. A trigger with no
   attached moves is `active: false` by design.
-- The **overlay** owns `collapsed`, `opacity`, `panelPos`, `locked`,
+- The **overlay** owns `collapsed`, `opacity`, `panelPos`,
   `showAddControls`. The **settings page** owns `moves` and `triggers`.
 - Both surfaces read-modify-write the entire config map. On save, each
   preserves the other surface's fields by reading them from the stored
@@ -88,9 +87,6 @@ State shape:
 - **Dynamic default collapsed**: on first load (no stored `collapsed`),
   the overlay is expanded if there are active triggers and collapsed
   otherwise. After the user manually toggles, the stored value is used.
-- **Lock state**: `locked: true` adds the `questing-adventurer-panel--locked`
-  class, which hides row drag handles, reverts the header cursor to default
-  (disabling panel drag), and dims penalty/reward/opacity controls.
 
 ## Data & Control Flow
 **Overlay (`QuestingAdventurer.js`):**
@@ -103,7 +99,7 @@ State shape:
    player, and calls `render()`.
 3. `render()` clears the panel and renders either a collapsed chip
    (showing the active-trigger count: `🗺️ Triggers (N)`) or an expanded view:
-   header (title + 🔒 lock + ➕ add-toggle + Penalty/Reward + opacity
+   header (title + ➕ add-toggle + Penalty/Reward + opacity
    hover-reveal slider + ✕ close) + scrollable list of active triggers
    with their attached moves + footer (input + Add Trigger / Add Move
    buttons, revealed by the add-toggle).
@@ -117,10 +113,9 @@ State shape:
      has attached moves → remove a random attached move. If the trigger
      ends with zero attached moves, set it `active: false`. Announces
      via aria-live.
-   - **Lock** (`toggle-lock`): flip `state.locked`, persist, re-render.
-   - **Add toggle** (`toggle-add-controls`): flip `state.showAddControls`,
-     persist, re-render. The footer (input + Add buttons) is hidden by
-     default; revealed when this is on.
+    - **Add toggle** (`toggle-add-controls`): flip `state.showAddControls`,
+      persist, re-render. The footer (input + Add buttons) is hidden by
+      default; revealed when this is on.
    - **Opacity icon** (`opacity-reset`): Ctrl/⌘+click resets to the
      default 0.6. The opacity slider drives an `input` listener that
      mutates `state.opacity`, updates `--qa-bg-alpha`, and calls
@@ -153,7 +148,7 @@ State shape:
      `state.moves` and rendered via `renderMove` (indented under the
      trigger).
 6. `queueSave` → `csLib.setConfiguration("QuestingAdventurer", { moves,
-   triggers, collapsed, opacity, panelPos, locked, showAddControls })`
+   triggers, collapsed, opacity, panelPos, showAddControls })`
    with the async save lock.
 
 **Settings (`QuestingAdventurerSettings.js`):**
@@ -190,7 +185,7 @@ State shape:
      immutable updates. Used by the ▲/▼ buttons.
 6. `commitTriggers` / `saveTriggersNow` — `saveTriggersNow` is `async`
    and re-reads stored config to preserve `collapsed`, `opacity`,
-   `panelPos`, `locked`, `showAddControls`, then `await
+   `panelPos`, `showAddControls`, then `await
    csLib.setConfiguration`.
 
 ## Integration Points

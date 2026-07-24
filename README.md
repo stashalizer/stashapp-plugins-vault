@@ -60,7 +60,6 @@ Turns scene playback into a quest. While a scene plays, the viewer is a "questin
 - **Penalty** — picks a random *inactive* trigger, activates it, and attaches a random *unattached* move from your library. If every trigger is already active, it picks an active trigger and just attaches a move. If the library has no unattached moves left, the trigger is still activated (the move part is a no-op).
 - **Reward** — picks a random *active* trigger that still has attached moves and removes a random attached move. If a trigger ends up with zero attached moves, it's set back to `active: false`.
 - **➕ Add toggle** — reveals an inline footer for adding a new trigger or a new move on the fly without leaving the player.
-- **🔒 Lock** — hides the row drag handles, disables panel dragging, and dims Penalty/Reward/opacity so you can't accidentally change things mid-scene.
 - **Manual Selection library** — for fine-grained control the random buttons can't give you: explicitly activate any inactive trigger, or attach any library move to any trigger via a dropdown. Lets you set up a specific configuration instead of relying on randomness.
 
 ### Known limitations

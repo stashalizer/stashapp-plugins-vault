@@ -365,17 +365,6 @@
   background: rgba(80, 220, 100, 0.18);
 }
 
-/* Lock button (🔒/🔓) — small icon, distinct from penalty/reward. */
-.questing-adventurer-panel__lock-button {
-  font-size: 13px;
-  padding: 0 4px;
-}
-
-.questing-adventurer-panel__lock-button[aria-pressed="true"] {
-  color: #ffb86b;
-  background: rgba(255, 140, 60, 0.18);
-}
-
 /* Add-controls toggle — expands the hidden footer (input + Add buttons).
    Appended directly to the panel (not inside the header) between the list
    and the footer, so it sits at the bottom-center of the panel via

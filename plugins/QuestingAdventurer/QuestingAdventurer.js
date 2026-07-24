@@ -791,7 +791,7 @@
     header.className = "questing-adventurer-panel__header";
     header.addEventListener("pointerdown", startPanelDrag);
     // The header used to have a 'Triggers' title element on the left, but
-    // the controls (lock, add-toggle, penalty, reward, opacity, close) are
+    // the controls (add-toggle, penalty, reward, opacity, close) are
     // self-explanatory. The title was visual noise that ate horizontal
     // space on a 360px max-width panel. Removed.
     const controls = document.createElement("span");
