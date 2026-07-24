@@ -18,6 +18,10 @@ Before working on any task, read `codemap.md` to understand:
 
 For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`, `plugins/MosaicFilter/codemap.md`, `plugins/SceneVersions/codemap.md`).
 
+## Language policy
+
+All code comments, commit messages, documentation, and user-facing text in this repository MUST be in English. Do not add non-English (e.g. Chinese) comments or docs. Existing non-English content should be translated to English when encountered.
+
 ## Layout
 
 ```
