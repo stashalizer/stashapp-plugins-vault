@@ -168,12 +168,29 @@
     return "Untitled";
   }
 
+  /**
+   * Derive the folder path of the current scene's first file.
+   *
+   * The path is kept in its ORIGINAL separator form (no `\` -> `/`
+   * normalisation) because the Stash backend builds the LIKE pattern
+   * from `folders.path || <filepath.Separator> || files.basename` and
+   * matches it against the raw value we send. On Windows the DB stores
+   * backslashes, so normalising to `/ here would make the INCLUDES
+   * criterion match nothing (the pre-0.3.0 suggestions list had this
+   * exact bug — it was always empty on Windows). We only split on BOTH
+   * separators to find the basename, then rejoin the folder parts
+   * with the same separator the original path used.
+   */
   function getFolderPath(scene) {
     if (!scene.files || scene.files.length === 0) return null;
     var path = scene.files[0].path;
-    var parts = path.replace(/\\/g, "/").split("/");
+    // Detect the dominant separator in the original path.
+    var sep = path.indexOf("\\") !== -1 ? "\\" : "/";
+    // Split on either separator so mixed paths still work, then
+    // rejoin with the original separator.
+    var parts = path.split(/[\\/]/);
     parts.pop(); // drop the filename
-    return parts.join("/") + "/";
+    return parts.join(sep) + sep;
   }
 
   /**

@@ -47,9 +47,9 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 - **Routes injected**: none (tab injection only, no settings page).
 - **DOM mount**: injected into the scene page tab content area via `PluginApi.patch.before`.
 - **Consumed by**: Stash app runtime, which loads the JS/CSS assets per the manifest.
-- **Known limitation**: the suggest-from-folder query uses `path: { modifier: "INCLUDES" }` which is a substring match — scenes in subfolders whose path contains the folder string may also appear. This is acceptable for a suggestion feature since folders usually contain few scenes and irrelevant suggestions can be ignored.
+- **Known limitation**: the suggest-from-folder query and the picker's folder criterion both use `path: { modifier: "INCLUDES" }`, which is a substring match — scenes in subfolders whose path contains the folder string may also appear. This is acceptable since folders usually contain few scenes and irrelevant entries can be ignored. `getFolderPath` preserves the original path separator (`\` on Windows, `/` elsewhere) because the Stash backend builds the LIKE pattern from `folders.path || <filepath.Separator> || files.basename` and matches it against the raw value sent — normalising to `/` made the criterion match nothing on Windows (fixed in 0.3.0; pre-0.3.0 the suggestions list was always empty on Windows). The INCLUDES modifier also splits the value on whitespace and ORs the terms, so folder paths containing spaces may match loosely.
 
 ## Files
-- `SceneVersions.yml` — plugin manifest (name, description, version 0.3.0, `ui.javascript`/`ui.css`).
+- `SceneVersions.yml` — plugin manifest (name, description, version 0.3.1, `ui.javascript`/`ui.css`).
 - `SceneVersions.js` — React component for the Related Scenes tab, including suggest-from-folder helper.
 - `SceneVersions.css` — tab styling (header, edit region, card list, empty/loading/error states, suggestions section, responsive breakpoints).
