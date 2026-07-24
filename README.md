@@ -115,6 +115,8 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 
 Adds a "Related Scenes" tab to the scene page for associating alternate versions of a scene (same performance, different costume/angle/source). Links are bidirectional — if A links to B, B shows A too. Supports multiple related scenes per scene.
 
+Think of it as a **lightweight alternative to Stash's built-in Groups**. Stash's native grouping requires you to create and name a Group entity up front, then manage membership through it — fine for curated collections, but too "heavy" when all you want is to mark "these scenes are versions of each other." Scene Versions skips the named-group layer entirely: you just link scenes directly to each other, the relationship lives on the scenes themselves (in `custom_fields`), and the back-link is created automatically. No group to name, no extra entity to maintain — just point-and-click peer associations.
+
 ### Features
 
 - **Bidirectional auto-sync.** Link once and both scenes show each other — no need to edit both sides.

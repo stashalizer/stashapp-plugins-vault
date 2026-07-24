@@ -3,6 +3,8 @@
 ## Responsibility
 The **Scene Versions** Stash plugin — adds a "Related Scenes" tab to the scene page that lets the user associate alternate versions of a scene (e.g. the same performance in a different costume or from a different angle). Bidirectional links are stored in scene custom fields under the key `"RelatedScenes"` (a JSON-serialised array of scene ID strings — Stash's custom_fields store only supports scalar values, so the id list is `JSON.stringify`'d before writing and `JSON.parse`'d on read). A "suggest from same folder" helper queries other scenes sharing the current scene's file folder and offers a quick "Add" button for each.
 
+**Design intent — a lightweight alternative to Stash's built-in Groups.** Stash's native grouping requires creating and naming a Group entity up front, then managing scene membership through that named group. That is the right tool for curated, titled collections, but it is too "heavy" for the common case of "these scenes are just versions of each other" — you don't want to invent a group name and maintain an extra entity just to record a peer relationship. Scene Versions removes the named-group layer entirely: scenes link directly to each other, the relationship is stored on the scenes themselves (in `custom_fields`), and the back-link is created automatically on save. No group to name, no extra entity to maintain — point-and-click peer associations only.
+
 ## Data Model
 Data is stored in each scene's `custom_fields` under the key `"RelatedScenes"`:
 ```js
