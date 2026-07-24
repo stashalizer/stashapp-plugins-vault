@@ -1,17 +1,18 @@
 # plugins/SceneVersions/
 
 ## Responsibility
-The **Scene Versions** Stash plugin — adds a "Related Scenes" tab to the scene page that lets the user associate alternate versions of a scene (e.g. the same performance in a different costume or from a different angle). Bidirectional links are stored in scene custom fields under the key `"RelatedScenes"` (an array of scene ID strings). A "suggest from same folder" helper queries other scenes sharing the current scene's file folder and offers a quick "Add" button for each.
+The **Scene Versions** Stash plugin — adds a "Related Scenes" tab to the scene page that lets the user associate alternate versions of a scene (e.g. the same performance in a different costume or from a different angle). Bidirectional links are stored in scene custom fields under the key `"RelatedScenes"` (a JSON-serialised array of scene ID strings — Stash's custom_fields store only supports scalar values, so the id list is `JSON.stringify`'d before writing and `JSON.parse`'d on read). A "suggest from same folder" helper queries other scenes sharing the current scene's file folder and offers a quick "Add" button for each.
 
 ## Data Model
 Data is stored in each scene's `custom_fields` under the key `"RelatedScenes"`:
 ```js
-// On each scene:
+// On each scene (stored as a JSON string because Stash custom_fields
+// only accept scalar values — arrays are rejected by the backend):
 custom_fields: {
-  RelatedScenes: string[]  // array of scene ID strings
+  RelatedScenes: string  // JSON.stringify(string[]) e.g. "[\"12\",\"34\"]"
 }
 ```
-Links are **bidirectional**: when scene A lists scene B, scene B also lists scene A. The `syncBidirectional` function ensures both sides are updated atomically (within the limits of async writes).
+On read, the string is `JSON.parse`'d back to `string[]`. Links are **bidirectional**: when scene A lists scene B, scene B also lists scene A. The `syncBidirectional` function ensures both sides are updated atomically (within the limits of async writes).
 
 No plugin-level config key is used — the data lives entirely on the scene objects themselves, so there is no cross-surface race condition (unlike QuestingAdventurer or MosaicFilter).
 
@@ -23,7 +24,7 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 - **SceneIDSelect picker**: uses `components.SceneIDSelect` for the multi-scene picker UI, with `excludeIds` to prevent self-links and `extraCriteria` set to a duck-typed path `INCLUDES` criterion (built by `makeFolderCriterion`) that restricts the dropdown to the current scene's folder — so the common "same performer/studio lives in one folder" workflow is discoverable without paging through the whole library. Cross-folder links can still be added via the suggestions list.
 - **Suggest-from-folder**: uses `GQL.FindScenesDocument` with a `scene_filter` on `path` (modifier: `"INCLUDES"`) to find other scenes in the same folder. Suggestions are fetched in a parallel `useEffect` and rendered as a compact list above the related scenes card list. The "Add" button appends the scene id to `relatedIds` and the scene object to `relatedScenes` without saving.
 - **Bidirectional sync**: `syncBidirectional` reads each added/removed scene's current `RelatedScenes`, patches it, and writes back. Self-links are filtered at every step.
-- **`custom_fields.partial` for writes**: all mutations use `custom_fields: { partial: { RelatedScenes: [...] } }` to avoid clobbering other custom fields.
+- **`custom_fields.partial` for writes**: all mutations use `custom_fields: { partial: { RelatedScenes: JSON.stringify([...]) } }` to avoid clobbering other custom fields. The value is a JSON string because Stash's custom_fields store only supports scalar values (arrays/objects are rejected by `getSQLValueFromCustomFieldInput`). `encodeIds`/`decodeIds` handle the (de)serialisation; `decodeIds` also tolerates a legacy bare-array value if one is ever encountered in cache.
 
 ## Data & Control Flow
 1. On script load, `PluginApi.patch.before` registers two patches:
@@ -50,6 +51,6 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 - **Known limitation**: the suggest-from-folder query and the picker's folder criterion both use `path: { modifier: "INCLUDES" }`, which is a substring match — scenes in subfolders whose path contains the folder string may also appear. This is acceptable since folders usually contain few scenes and irrelevant entries can be ignored. `getFolderPath` preserves the original path separator (`\` on Windows, `/` elsewhere) because the Stash backend builds the LIKE pattern from `folders.path || <filepath.Separator> || files.basename` and matches it against the raw value sent — normalising to `/` made the criterion match nothing on Windows (fixed in 0.3.0; pre-0.3.0 the suggestions list was always empty on Windows). The INCLUDES modifier also splits the value on whitespace and ORs the terms, so folder paths containing spaces may match loosely.
 
 ## Files
-- `SceneVersions.yml` — plugin manifest (name, description, version 0.3.1, `ui.javascript`/`ui.css`).
+- `SceneVersions.yml` — plugin manifest (name, description, version 0.3.2, `ui.javascript`/`ui.css`).
 - `SceneVersions.js` — React component for the Related Scenes tab, including suggest-from-folder helper.
 - `SceneVersions.css` — tab styling (header, edit region, card list, empty/loading/error states, suggestions section, responsive breakpoints).

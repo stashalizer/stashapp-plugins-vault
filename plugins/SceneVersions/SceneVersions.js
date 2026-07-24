@@ -5,7 +5,9 @@
  * - Adds a "Related Scenes" tab to the scene page via PluginApi.patch.before
  *   on "ScenePage.Tabs" and "ScenePage.TabContent".
  * - Stores bidirectional links in scene custom_fields under the key
- *   "RelatedScenes" (an array of scene ID strings).
+ *   "RelatedScenes" (a JSON-serialised array of scene ID strings). Stash's
+ *   custom_fields store only supports scalar values, so the id list is
+ *   JSON.stringify'd before writing and JSON.parse'd on read.
  * - ALWAYS uses custom_fields.partial for writes to avoid clobbering other
  *   custom fields.
  * - Self-links are prevented: the scene picker excludes the current scene,
@@ -50,6 +52,35 @@
   var TAB_KEY = "scene-versions-panel";
 
   // ── Data layer ──────────────────────────────────────────────────────
+  //
+  // Stash's custom_fields store only supports scalar values (string, int,
+  // float, bool). Arrays and objects are rejected by the backend with
+  // "unsupported custom field value type: []interface {}" (see
+  // pkg/sqlite/custom_fields.go:getSQLValueFromCustomFieldInput). We
+  // therefore serialise the RelatedScenes id list to a JSON string before
+  // writing, and parse it back on read. This keeps the bidirectional-link
+  // logic working while staying within the scalar-only constraint.
+
+  function encodeIds(ids) {
+    return JSON.stringify(ids);
+  }
+
+  function decodeIds(raw) {
+    // Current format: a JSON string.
+    if (typeof raw === "string") {
+      try {
+        var parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch (e) {
+        // fall through to legacy handling
+      }
+    }
+    // Legacy format: a bare array (only possible if written by an older
+    // plugin version before the backend rejected arrays — in practice
+    // never persisted, but tolerate it if present in cache).
+    if (Array.isArray(raw)) return raw.map(String);
+    return [];
+  }
 
   async function readRelatedIds(sceneId) {
     var data = await apolloClient.query({
@@ -58,8 +89,7 @@
       fetchPolicy: "no-cache",
     });
     var raw = data.data.findScene?.custom_fields?.[RELATED_KEY];
-    if (!Array.isArray(raw)) return [];
-    return raw.map(String);
+    return decodeIds(raw);
   }
 
   async function loadScenesByIds(ids) {
@@ -91,7 +121,7 @@
           id: sceneId,
           custom_fields: {
             partial: {
-              [RELATED_KEY]: ids,
+              [RELATED_KEY]: encodeIds(ids),
             },
           },
         },
