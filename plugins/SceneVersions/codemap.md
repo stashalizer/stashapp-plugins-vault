@@ -28,18 +28,20 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 
 ## Data & Control Flow
 1. On script load, `PluginApi.patch.before` registers two patches:
-   - `"ScenePage.Tabs"` — inserts a `Nav.Item` / `Nav.Link` with `eventKey: "scene-versions-panel"` after the "Details" tab.
+   - `"ScenePage.Tabs"` — inserts a `Nav.Item` / `Nav.Link` with `eventKey: "scene-versions-panel"` after the "Details" tab. The link content is the `RelatedScenesTabLabel` component, which renders "Related Scenes" plus a count badge. The label does its own `readRelatedIds` on mount (so the count is visible before the user opens the tab) and subscribes to a module-level pub/sub (`onCountChange`/`emitCountChange`, keyed by scene id) so it stays live as the user edits/saves inside the tab.
    - `"ScenePage.TabContent"` — inserts a `Tab.Pane` with the `RelatedScenesTab` component, mounted after the Details pane.
 2. `RelatedScenesTab` mounts:
-   - **Main load** (`useEffect` on `[scene.id]`): calls `readRelatedIds(scene.id)` → `loadScenesByIds(ids)` → sets `relatedIds`, `relatedScenes`, `loading`.
+   - **Main load** (`useEffect` on `[scene.id]`): calls `readRelatedIds(scene.id)` → `loadScenesByIds(ids)` → sets `relatedIds`, `relatedScenes`, `loading`; emits the initial count via `emitCountChange`.
+   - **Count sync** (`useEffect` on `[scene.id, relatedIds]`): emits the current `relatedIds.length` to the tab-label pub/sub whenever the edit state changes (load, picker select, remove, add-suggestion, discard).
    - **Folder criteria** (`useMemo` on `[scene]`): calls `getFolderPath(scene)` → `makeFolderCriterion(folderPath)` → `folderCriteria`, passed to `SceneIDSelect` as `extraCriteria` so the picker dropdown only lists scenes in the current scene's folder.
    - **Suggestions load** (parallel `useEffect` on `[scene.id, relatedIds]`): calls `getFolderPath(scene)` → `fetchSuggestions(folderPath, excludeIds)` → sets `suggestions`.
-3. **Picker selection** (`handleSelect`): replaces `relatedIds` with the selected scene IDs, sets `dirty` by comparing to `loadedIdsRef.current`.
-4. **Remove** (`handleRemove`): removes a scene id from `relatedIds` and the scene object from `relatedScenes`, sets `dirty`.
-5. **Add suggestion** (`handleAddSuggestion`): appends a scene id to `relatedIds` and the scene object to `relatedScenes`, sets `dirty`. Does NOT save.
-6. **Save** (`handleSave`): calls `syncBidirectional(scene.id, relatedIds, loadedIdsRef.current)`, updates `loadedIdsRef`, clears `dirty`, shows toast.
-7. **Discard** (`handleDiscard`): resets `relatedIds` to `loadedIdsRef.current`, reloads `relatedScenes`, clears `dirty` and `error`.
-8. **Error state**: if the main load fails, an error alert with a "Retry" button is shown. Suggestions errors are silently logged to console.
+3. **Render order** (top to bottom): related-scenes card list (or empty state) → edit region (picker + Save/Discard) → suggestions-from-folder. The in-tab section header (title + count badge) was removed in 0.4.0 because the count now lives on the tab strip itself.
+4. **Picker selection** (`handleSelect`): replaces `relatedIds` with the selected scene IDs, sets `dirty` by comparing to `loadedIdsRef.current`.
+5. **Remove** (`handleRemove`): removes a scene id from `relatedIds` and the scene object from `relatedScenes`, sets `dirty`.
+6. **Add suggestion** (`handleAddSuggestion`): appends a scene id to `relatedIds` and the scene object to `relatedScenes`, sets `dirty`. Does NOT save.
+7. **Save** (`handleSave`): calls `syncBidirectional(scene.id, relatedIds, loadedIdsRef.current)`, updates `loadedIdsRef`, clears `dirty`, shows toast.
+8. **Discard** (`handleDiscard`): resets `relatedIds` to `loadedIdsRef.current`, reloads `relatedScenes`, clears `dirty` and `error`.
+9. **Error state**: if the main load fails, an error alert with a "Retry" button is shown. Suggestions errors are silently logged to console.
 
 ## Integration Points
 - **Depends on**: `window.PluginApi` — `React` (`createElement`, `useState`/`useEffect`/`useRef`/`useCallback`), `GQL` (`FindSceneDocument`, `FindScenesDocument`, `SceneUpdateDocument`), `libraries.Apollo.client`, `libraries.Bootstrap` (`Tab`, `Nav`, `Button`, `Badge`, `Alert`, `Spinner`), `libraries.ReactRouterDOM` (`Link`), `components.SceneIDSelect`, `hooks.useToast`.
@@ -51,6 +53,6 @@ No plugin-level config key is used — the data lives entirely on the scene obje
 - **Known limitation**: the suggest-from-folder query and the picker's folder criterion both use `path: { modifier: "INCLUDES" }`, which is a substring match — scenes in subfolders whose path contains the folder string may also appear. This is acceptable since folders usually contain few scenes and irrelevant entries can be ignored. `getFolderPath` preserves the original path separator (`\` on Windows, `/` elsewhere) because the Stash backend builds the LIKE pattern from `folders.path || <filepath.Separator> || files.basename` and matches it against the raw value sent — normalising to `/` made the criterion match nothing on Windows (fixed in 0.3.0; pre-0.3.0 the suggestions list was always empty on Windows). The INCLUDES modifier also splits the value on whitespace and ORs the terms, so folder paths containing spaces may match loosely.
 
 ## Files
-- `SceneVersions.yml` — plugin manifest (name, description, version 0.3.2, `ui.javascript`/`ui.css`).
-- `SceneVersions.js` — React component for the Related Scenes tab, including suggest-from-folder helper.
+- `SceneVersions.yml` — plugin manifest (name, description, version 0.4.0, `ui.javascript`/`ui.css`).
+- `SceneVersions.js` — React component for the Related Scenes tab, including suggest-from-folder helper and a `RelatedScenesTabLabel` component (count badge in the tab strip, kept live via a module-level pub/sub keyed by scene id).
 - `SceneVersions.css` — tab styling (header, edit region, card list, empty/loading/error states, suggestions section, responsive breakpoints).

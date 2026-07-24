@@ -288,6 +288,89 @@
     }
   }
 
+  // ── Count sync (tab label <-> tab content) ──────────────────────────
+  //
+  // The tab label (rendered in the ScenePage.Tabs patch) and the tab
+  // content (RelatedScenesTab, rendered in ScenePage.TabContent) are two
+  // separate component instances. To keep the count badge in the tab
+  // label live while the user edits/saves inside the tab, we use a tiny
+  // module-level pub/sub keyed by scene id. RelatedScenesTab emits the
+  // current related-ids length whenever it changes; the label subscribes
+  // and re-renders. The label also does its own read on mount so it shows
+  // the count before the user ever opens the tab.
+
+  var countListeners = {};
+
+  function onCountChange(sceneId, fn) {
+    var key = String(sceneId);
+    if (!countListeners[key]) countListeners[key] = new Set();
+    countListeners[key].add(fn);
+    return function () {
+      var set = countListeners[key];
+      if (set) set.delete(fn);
+    };
+  }
+
+  function emitCountChange(sceneId, count) {
+    var set = countListeners[String(sceneId)];
+    if (set) set.forEach(function (fn) { fn(count); });
+  }
+
+  // ── Tab label (count badge) ─────────────────────────────────────────
+
+  /**
+   * Renders the "Related Scenes" tab link text plus a count badge.
+   * Queries the related-ids count on mount (so the user sees the number
+   * without opening the tab) and subscribes to live updates from the tab
+   * content via emitCountChange.
+   */
+  function RelatedScenesTabLabel(props) {
+    var sceneId = String(props.scene.id);
+    var _a = useState(null);
+    var count = _a[0];
+    var setCount = _a[1];
+    useEffect(
+      function () {
+        var cancelled = false;
+        readRelatedIds(sceneId)
+          .then(function (ids) {
+            if (cancelled) return;
+            var filtered = ids.filter(function (id) {
+              return id !== sceneId;
+            });
+            setCount(filtered.length);
+          })
+          .catch(function () {
+            if (!cancelled) setCount(0);
+          });
+        var unsub = onCountChange(sceneId, function (n) {
+          if (!cancelled) setCount(n);
+        });
+        return function () {
+          cancelled = true;
+          unsub();
+        };
+      },
+      [sceneId]
+    );
+    return h(
+      React.Fragment,
+      null,
+      "Related Scenes",
+      count !== null
+        ? h(
+            Badge,
+            {
+              pill: true,
+              bg: "secondary",
+              className: "scene-versions-tab-count",
+            },
+            String(count)
+          )
+        : null
+    );
+  }
+
   // ── React component ─────────────────────────────────────────────────
 
   function RelatedScenesTab(props) {
@@ -346,6 +429,7 @@
             loadedIdsRef.current = filtered.slice();
             setRelatedIds(filtered);
             setDirty(false);
+            emitCountChange(scene.id, filtered.length);
             return loadScenesByIds(filtered);
           })
           .then(function (scenes) {
@@ -364,6 +448,17 @@
         };
       },
       [scene.id]
+    );
+
+    // Keep the tab-label count badge in sync with the current edit state.
+    // Fires whenever relatedIds changes (initial load, picker selection,
+    // remove, add-suggestion, discard). The save handler also emits after
+    // the persisted list is committed.
+    useEffect(
+      function () {
+        emitCountChange(scene.id, relatedIds.length);
+      },
+      [scene.id, relatedIds]
     );
 
     // Fetch suggestions from same folder (parallel, non-blocking)
@@ -535,20 +630,94 @@
     return h(
       "div",
       { className: "scene-versions-tab" },
-      // Section header
+      // Related scenes list (shown first so the user sees what's linked
+      // immediately on opening the tab, without scrolling past the editor)
       h(
         "div",
-        { className: "scene-versions-header" },
-        h("h5", { className: "scene-versions-heading" }, "Related Scenes"),
-        h(
-          Badge,
-          {
-            pill: true,
-            bg: "secondary",
-            className: "scene-versions-count",
-          },
-          String(relatedIds.length)
-        )
+        { className: "scene-versions-list" },
+        relatedScenes.length === 0
+          ? h(
+              "div",
+              { className: "scene-versions-empty" },
+              h("div", {
+                className: "scene-versions-empty__illustration",
+                "aria-hidden": "true",
+              }),
+              h(
+                "div",
+                { className: "scene-versions-empty__title" },
+                "No related scenes yet"
+              ),
+              h(
+                "p",
+                null,
+                "Link alternate versions of this scene \u2014 for example, the same performance in a different costume or from a different angle."
+              )
+            )
+          : relatedScenes.map(function (s) {
+              return h(
+                "div",
+                { key: s.id, className: "scene-versions-card" },
+                h(
+                  Link,
+                  {
+                    to: "/scenes/" + s.id,
+                    className: "scene-versions-card__body",
+                    title: sceneTitle(s),
+                  },
+                  s.paths && s.paths.screenshot
+                    ? h("img", {
+                        className: "scene-versions-thumb",
+                        src: s.paths.screenshot,
+                        alt: "",
+                        loading: "lazy",
+                      })
+                    : h("div", {
+                        className:
+                          "scene-versions-thumb scene-versions-thumb--placeholder",
+                      }),
+                  h(
+                    "div",
+                    { className: "scene-versions-card__info" },
+                    h(
+                      "div",
+                      { className: "scene-versions-card__title" },
+                      sceneTitle(s)
+                    ),
+                    h(
+                      "div",
+                      { className: "scene-versions-card__meta" },
+                      s.date
+                        ? h("span", null, s.date)
+                        : null,
+                      s.studio && s.studio.name
+                        ? h("span", null, s.studio.name)
+                        : null
+                    )
+                  )
+                ),
+                h(
+                  "div",
+                  { className: "scene-versions-card__actions" },
+                  h(
+                    Button,
+                    {
+                      variant: "outline-danger",
+                      size: "sm",
+                      className: "scene-versions-remove",
+                      title: "Remove this related scene",
+                      "aria-label": "Remove this related scene",
+                      onClick: function (evt) {
+                        evt.preventDefault();
+                        evt.stopPropagation();
+                        handleRemove(String(s.id));
+                      },
+                    },
+                    "Remove"
+                  )
+                )
+              );
+            })
       ),
       // Edit region: picker + actions
       h(
@@ -670,95 +839,7 @@
               { className: "scene-versions-suggestions-loading" },
               "Finding scenes in the same folder\u2026"
             )
-          : null,
-      // Related scenes list
-      h(
-        "div",
-        { className: "scene-versions-list" },
-        relatedScenes.length === 0
-          ? h(
-              "div",
-              { className: "scene-versions-empty" },
-              h("div", {
-                className: "scene-versions-empty__illustration",
-                "aria-hidden": "true",
-              }),
-              h(
-                "div",
-                { className: "scene-versions-empty__title" },
-                "No related scenes yet"
-              ),
-              h(
-                "p",
-                null,
-                "Link alternate versions of this scene \u2014 for example, the same performance in a different costume or from a different angle."
-              )
-            )
-          : relatedScenes.map(function (s) {
-              return h(
-                "div",
-                { key: s.id, className: "scene-versions-card" },
-                h(
-                  Link,
-                  {
-                    to: "/scenes/" + s.id,
-                    className: "scene-versions-card__body",
-                    title: sceneTitle(s),
-                  },
-                  s.paths && s.paths.screenshot
-                    ? h("img", {
-                        className: "scene-versions-thumb",
-                        src: s.paths.screenshot,
-                        alt: "",
-                        loading: "lazy",
-                      })
-                    : h("div", {
-                        className:
-                          "scene-versions-thumb scene-versions-thumb--placeholder",
-                      }),
-                  h(
-                    "div",
-                    { className: "scene-versions-card__info" },
-                    h(
-                      "div",
-                      { className: "scene-versions-card__title" },
-                      sceneTitle(s)
-                    ),
-                    h(
-                      "div",
-                      { className: "scene-versions-card__meta" },
-                      s.date
-                        ? h("span", null, s.date)
-                        : null,
-                      s.studio && s.studio.name
-                        ? h("span", null, s.studio.name)
-                        : null
-                    )
-                  )
-                ),
-                h(
-                  "div",
-                  { className: "scene-versions-card__actions" },
-                  h(
-                    Button,
-                    {
-                      variant: "outline-danger",
-                      size: "sm",
-                      className: "scene-versions-remove",
-                      title: "Remove this related scene",
-                      "aria-label": "Remove this related scene",
-                      onClick: function (evt) {
-                        evt.preventDefault();
-                        evt.stopPropagation();
-                        handleRemove(String(s.id));
-                      },
-                    },
-                    "Remove"
-                  )
-                )
-              );
-            })
-      )
+          : null
     );
   }
 
@@ -800,7 +881,11 @@
           h(
             Nav.Item,
             { key: TAB_KEY },
-            h(Nav.Link, { eventKey: TAB_KEY }, "Related Scenes")
+            h(
+              Nav.Link,
+              { eventKey: TAB_KEY },
+              h(RelatedScenesTabLabel, { scene: props.scene })
+            )
           )
         );
         return [{ children: newChildren }];

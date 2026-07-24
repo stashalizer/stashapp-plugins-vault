@@ -4,27 +4,13 @@
   padding: 1rem 0;
 }
 
-/* Section header: title + count badge */
-.scene-versions-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
-}
-
-.scene-versions-heading {
-  margin: 0;
-  font-size: 1.15rem;
+/* Tab label count badge (rendered inside the scene page tab strip) */
+.scene-versions-tab-count {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  line-height: 1.2;
-}
-
-.scene-versions-count {
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.35em 0.65em;
+  padding: 0.25em 0.5em;
+  vertical-align: middle;
 }
 
 /* Edit region: picker + actions */
@@ -33,7 +19,6 @@
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
   border-radius: 0.5rem;
   background: var(--card-bg, transparent);
-  margin-bottom: 1.5rem;
 }
 
 .scene-versions-label {
@@ -59,11 +44,12 @@
   font-weight: 600;
 }
 
-/* Related scenes list */
+/* Related scenes list (shown at the top of the tab) */
 .scene-versions-list {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  margin-bottom: 1.5rem;
 }
 
 /* Card row */
