@@ -102,7 +102,11 @@ State shape:
    header (title + ➕ add-toggle + Penalty/Reward + opacity
    hover-reveal slider + ✕ close) + scrollable list of active triggers
    with their attached moves + footer (input + Add Trigger / Add Move
-   buttons, revealed by the add-toggle).
+   buttons, revealed by the add-toggle). When collapsed, inline
+   `width`/`height` are cleared and the `--collapsed` CSS rule sets
+   `min-width`/`min-height` to 0 so the box shrinks to the chip's
+   intrinsic size; when expanded, the persisted `panelSize` is
+   re-applied so a previous edge-resize isn't lost.
 4. **Header actions**:
    - **Penalty** (`apply-penalty`): pick a random inactive trigger →
      activate it AND attach a random unattached move from the library. If
@@ -210,7 +214,7 @@ State shape:
   navigation/reload.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.10.1,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.10.2,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
 - `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with

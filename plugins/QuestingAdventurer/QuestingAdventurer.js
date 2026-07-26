@@ -770,6 +770,13 @@
 
     if (state.collapsed) {
       panel.classList.add("questing-adventurer-panel--collapsed");
+      // Clear any inline width/height left over from a previous edge-resize
+      // so the collapsed panel can shrink to the chip's intrinsic size
+      // (the --collapsed CSS rule sets min-width/min-height to 0). Without
+      // this, a panel the user resized to e.g. 600×400 stays that big
+      // even when collapsed, leaving a huge empty box around the chip.
+      panel.style.width = "";
+      panel.style.height = "";
       panel.style.setProperty("--qa-bg-alpha", state.opacity);
       try {
         const chip = document.createElement("div");
@@ -785,6 +792,20 @@
     }
 
     panel.classList.remove("questing-adventurer-panel--collapsed");
+    // Restore the persisted panel size when expanding. The collapsed
+    // branch clears inline width/height so the box shrinks to the chip;
+    // here we re-apply the user's last resize so the expanded panel
+    // returns to the size they set. Only width is always restored;
+    // height is restored only if the user had set one (undefined →
+    // auto, letting the panel grow with content).
+    if (state.panelSize && typeof state.panelSize.width === "number") {
+      panel.style.width = state.panelSize.width + "px";
+    }
+    if (state.panelSize && typeof state.panelSize.height === "number") {
+      panel.style.height = state.panelSize.height + "px";
+    } else {
+      panel.style.height = "";
+    }
     panel.style.setProperty("--qa-bg-alpha", state.opacity);
 
     const header = document.createElement("div");
