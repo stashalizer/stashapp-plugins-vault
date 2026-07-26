@@ -61,7 +61,7 @@
     for (const node of oldTriggers) {
       if (node.type === "trigger") {
         const attachedMoveIds = [];
-        for (const item of (node.attachedMoveIds || [])) {
+        for (const item of (node.items || [])) {
           const moveId = item.id || generateId();
           moves.push({ id: moveId, type: "move", text: item.text });
           attachedMoveIds.push(moveId);
@@ -84,8 +84,8 @@
     return (async function () {
       try {
         const current = await csLib.getConfiguration(CONFIG_KEY);
-        const hasCurrent =
-          current && (Array.isArray(current.quests) || Array.isArray(current.rules));
+        // v2 shape: { moves: [...], triggers: [...] }
+        const hasCurrent = current && Array.isArray(current.moves) && Array.isArray(current.triggers);
         if (hasCurrent) return;
         const legacy = await csLib.getConfiguration(LEGACY_CONFIG_KEY);
         if (!legacy) return;
@@ -95,21 +95,35 @@
           ? legacy.rules
           : [];
         if (legacyNodes.length === 0) return;
-        const migrated = {
-          triggers: legacyNodes.map(function (node) {
-            if (node.type === "category") {
-              return {
-                id: node.id || generateId(),
-                type: "trigger",
-                name: node.name,
-                attachedMoveIds: (node.attachedMoveIds || []).map(function (item) {
-                  return { id: item.id || generateId(), type: "move", text: item.text, active: true };
-                }),
-              };
+        const moves = [];
+        const triggers = [];
+        for (const node of legacyNodes) {
+          if (node.type === "category" || node.type === "trigger") {
+            const attachedMoveIds = [];
+            for (const item of (node.items || [])) {
+              const moveId = item.id || generateId();
+              moves.push({ id: moveId, type: "move", text: item.text });
+              attachedMoveIds.push(moveId);
             }
-            return { id: node.id || generateId(), type: "move", text: node.text, active: true };
-          }),
-          collapsed: typeof legacy.collapsed === "boolean" ? legacy.collapsed : true,
+            triggers.push({
+              id: node.id || generateId(),
+              type: "trigger",
+              name: node.name,
+              active: true,
+              attachedMoveIds: attachedMoveIds,
+            });
+          } else if (node.type === "move" || node.type === "rule") {
+            moves.push({ id: node.id || generateId(), type: "move", text: node.text });
+          }
+        }
+        const migrated = {
+          moves: moves,
+          triggers: triggers,
+          opacity: typeof legacy.opacity === "number" ? legacy.opacity : 0.6,
+          panelPos:
+            legacy.panelPos && typeof legacy.panelPos.top === "number" && typeof legacy.panelPos.right === "number"
+              ? { top: legacy.panelPos.top, right: legacy.panelPos.right }
+              : { top: 8, right: 8 },
         };
         try {
           await csLib.setConfiguration(CONFIG_KEY, migrated);
@@ -118,7 +132,7 @@
           return;
         }
         try {
-          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { quests: [], collapsed: true });
+          await csLib.setConfiguration(LEGACY_CONFIG_KEY, { moves: [], triggers: [], collapsed: true });
         } catch (e) {
           console.error("QuestingAdventurer settings: failed to clear legacy config:", e);
         }
@@ -157,15 +171,27 @@
                 right: Math.max(0, stored.panelPos.right),
               }
             : { top: 8, right: 8 },
+        panelSize:
+          stored.panelSize &&
+          typeof stored.panelSize.width === "number" &&
+          stored.panelSize.width >= 200 &&
+          stored.panelSize.width <= 1200
+            ? {
+                width: stored.panelSize.width,
+                height: typeof stored.panelSize.height === "number" ? stored.panelSize.height : undefined,
+              }
+            : { width: 360, height: undefined },
+        showAddControls: stored.showAddControls === true,
+        showManualControls: stored.showManualControls === true,
       };
       const result = csLib.setConfiguration(CONFIG_KEY, merged);
       await result;
       saving = false;
-      if (pendingSave) saveQuestsNow();
+      if (pendingSave) saveTriggersNow();
     } catch (err) {
       console.error("QuestingAdventurer settings: save failed:", err);
       saving = false;
-      if (pendingSave) saveQuestsNow();
+      if (pendingSave) saveTriggersNow();
     }
   }
 
@@ -350,7 +376,7 @@
       if (loc.parent === null) {
         nextTriggers = nextContainer;
       } else {
-        nextTriggers = quests.map(function (n) {
+        nextTriggers = triggers.map(function (n) {
           if (n.id === loc.parent.id) {
             return { ...n, attachedMoveIds: nextContainer };
           }
@@ -402,26 +428,22 @@
         setEditingId(null);
         return;
       }
-      const nextTriggers = triggers.map(function (node) {
-        if (node.id === id) {
-          if (node.type === "trigger") {
+      // Check if the edited node is a trigger (name edit) or a move (text edit).
+      const isTrigger = triggers.some(function (n) { return n.id === id && n.type === "trigger"; });
+      if (isTrigger) {
+        const nextTriggers = triggers.map(function (node) {
+          if (node.id === id) {
             return { ...node, name: trimmed };
           }
-          return { ...node, text: trimmed };
-        }
-        if (node.type === "trigger") {
-          return {
-            ...node,
-            attachedMoveIds: (node.attachedMoveIds || []).map(function (item) {
-              return item.id === id ? { ...item, text: trimmed } : item;
-            }),
-          };
-        }
-        return node;
-      });
-      setEditingId(null);
-      setTriggers(nextTriggers);
-      saveQuests(nextTriggers);
+          return node;
+        });
+        setEditingId(null);
+        setTriggers(nextTriggers);
+        saveTriggers(nextTriggers);
+      } else {
+        // Move text lives in the global moves array, not inside triggers.
+        editMoveText(id, trimmed);
+      }
     }
 
     function renderEditInput(node) {

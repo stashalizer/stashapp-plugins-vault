@@ -188,7 +188,10 @@
     render();
   }
 
-  function announceToAria(message) {
+  // Ensure the shared aria-live element exists on document.body. Idempotent —
+  // returns the existing element if already present. The element lives outside
+  // the panel so it survives render() calls that clear the panel's children.
+  function ensureAriaLive() {
     let live = document.querySelector(".questing-adventurer-panel__aria-live");
     if (!live) {
       live = document.createElement("div");
@@ -198,6 +201,11 @@
         "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;";
       document.body.appendChild(live);
     }
+    return live;
+  }
+
+  function announceToAria(message) {
+    const live = ensureAriaLive();
     // Clear first so identical consecutive messages still announce.
     live.textContent = "";
     live.textContent = message;
@@ -212,10 +220,10 @@
       if (n.id === id) {
         return { node: n, container: state.triggers, index: i, parentId: null };
       }
-      if (n.type === "trigger" && Array.isArray(n.items)) {
-        for (let j = 0; j < n.items.length; j++) {
-          if (n.items[j].id === id) {
-            return { node: n.items[j], container: n.items, index: j, parentId: n.id };
+      if (n.type === "trigger" && Array.isArray(n.attachedMoveIds)) {
+        for (let j = 0; j < n.attachedMoveIds.length; j++) {
+          if (n.attachedMoveIds[j] === id) {
+            return { node: id, container: n.attachedMoveIds, index: j, parentId: n.id };
           }
         }
       }
@@ -255,7 +263,10 @@
 
     const sourceLoc = findNodeLocation(sourceId);
     if (!sourceLoc) return null;
-    const sourceIsTrigger = sourceLoc.node.type === "trigger";
+    // Top-level nodes (parentId === null) are triggers; child nodes are moves.
+    // This is more robust than checking sourceLoc.node.type, since for moves
+    // sourceLoc.node is the move ID string (not an object with .type).
+    const sourceIsTrigger = sourceLoc.parentId === null;
 
     // If the source is a trigger and the target is a child row (inside a trigger),
     // we forbid trigger-into-trigger nesting. Fall back to top-level insertion
@@ -277,7 +288,7 @@
     // the bottom half of the trigger header appends the move as the first child.
     if (targetType === "trigger" && sourceIsTrigger === false) {
       const targetTrigger = state.triggers.find(function (n) { return n.id === targetId; });
-      if (targetTrigger && (!Array.isArray(targetTrigger.items) || targetTrigger.items.length === 0)) {
+      if (targetTrigger && (!Array.isArray(targetTrigger.attachedMoveIds) || targetTrigger.attachedMoveIds.length === 0)) {
         if (!isTopHalf) {
           return {
             beforeId: null,
@@ -293,10 +304,16 @@
       ? state.triggers
       : (function () {
           const p = state.triggers.find(function (n) { return n.id === targetParentId; });
-          return p && Array.isArray(p.items) ? p.items : null;
+          return p && Array.isArray(p.attachedMoveIds) ? p.attachedMoveIds : null;
         })();
     if (!container) return null;
-    const targetIdx = container.findIndex(function (n) { return n.id === targetId; });
+    const isStringContainer = targetParentId !== null;
+    let targetIdx;
+    if (isStringContainer) {
+      targetIdx = container.indexOf(targetId);
+    } else {
+      targetIdx = container.findIndex(function (n) { return n.id === targetId; });
+    }
     if (targetIdx === -1) return null;
     if (isTopHalf) {
       return {
@@ -307,7 +324,7 @@
     }
     const next = container[targetIdx + 1];
     return {
-      beforeId: next ? next.id : null,
+      beforeId: next ? (isStringContainer ? next : next.id) : null,
       parentId: targetParentId,
       dropClass: "drop-after",
     };
@@ -319,18 +336,23 @@
     if (!sourceLoc) return;
     // Resolve destination container
     let destContainer;
+    let isStringContainer = false;
     if (parentId === null) {
       destContainer = state.triggers;
     } else {
       const parent = state.triggers.find(function (n) { return n.id === parentId; });
       if (!parent || parent.type !== "trigger") return;
-      if (!Array.isArray(parent.items)) parent.items = [];
-      destContainer = parent.items;
+      if (!Array.isArray(parent.attachedMoveIds)) parent.attachedMoveIds = [];
+      destContainer = parent.attachedMoveIds;
+      isStringContainer = true;
     }
     // Resolve insertion index
     let destIndex;
     if (beforeId === null) {
       destIndex = destContainer.length;
+    } else if (isStringContainer) {
+      destIndex = destContainer.indexOf(beforeId);
+      if (destIndex === -1) destIndex = destContainer.length;
     } else {
       destIndex = destContainer.findIndex(function (n) { return n.id === beforeId; });
       if (destIndex === -1) destIndex = destContainer.length;
@@ -428,13 +450,10 @@
     if (ds.list) maybeAutoScroll(ds.list, e.clientY);
   }
 
-  // CSS.escape polyfill (very small subset; Stash targets evergreen browsers so
-  // CSS.escape is available, but a tiny fallback prevents a crash on weird ids).
+  // CSS.escape wrapper. Stash targets evergreen browsers where CSS.escape is
+  // always available.
   function cssEscape(s) {
-    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(s);
-    return String(s).replace(/[^a-zA-Z0-9_-]/g, function (c) {
-      return "\\" + c;
-    });
+    return CSS.escape(s);
   }
 
   function startDrag(e, sourceId, sourceLabel) {
@@ -447,14 +466,7 @@
     // aria-live lives on document.body so it survives the render() that
     // happens after a successful drop. (If it were inside the panel,
     // reorder() -> render() would clear it before the announcement fires.)
-    let ariaLive = document.querySelector(".questing-adventurer-panel__aria-live");
-    if (!ariaLive) {
-      ariaLive = document.createElement("div");
-      ariaLive.className = "questing-adventurer-panel__aria-live";
-      ariaLive.setAttribute("aria-live", "polite");
-      ariaLive.style.cssText = "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;";
-      document.body.appendChild(ariaLive);
-    }
+    const ariaLive = ensureAriaLive();
     dragState = {
       sourceId: sourceId,
       sourceLabel: sourceLabel,
@@ -682,9 +694,12 @@
   function findNode(id) {
     for (const node of state.triggers) {
       if (node.id === id) return node;
-      if (node.type === "trigger" && Array.isArray(node.items)) {
-        for (const item of node.items) {
-          if (item.id === id) return item;
+      if (node.type === "trigger" && Array.isArray(node.attachedMoveIds)) {
+        for (const moveId of node.attachedMoveIds) {
+          if (moveId === id) {
+            const move = state.moves.find(function (m) { return m.id === id; });
+            return move || null;
+          }
         }
       }
     }
@@ -753,74 +768,39 @@
     return input ? input.value.trim() : "";
   }
 
-  function render() {
-    let panel = document.querySelector(".questing-adventurer-panel");
-    if (!panel) {
-      // Panel was removed (e.g., by a React re-render of the video player).
-      // Re-create it on the current player and bail — setupPanel calls render.
-      const player = document.querySelector("#VideoJsPlayer");
-      if (player) {
-        setupPanel(player);
-        return;
-      }
-      return;
-    }
-
-    // Always re-apply the persisted position so the panel never drifts to
-    // (0,0) if the inline style was clobbered.
-    panel.style.top = state.panelPos.top + "px";
-    panel.style.right = state.panelPos.right + "px";
-
-    clearChildren(panel);
-
-    if (state.collapsed) {
-      panel.classList.add("questing-adventurer-panel--collapsed");
-      // Clear any inline width/height left over from a previous edge-resize
-      // so the collapsed panel can shrink to the chip's intrinsic size
-      // (the --collapsed CSS rule sets min-width/min-height to 0). Without
-      // this, a panel the user resized to e.g. 600×400 stays that big
-      // even when collapsed, leaving a huge empty box around the chip.
-      panel.style.width = "";
-      panel.style.height = "";
-      panel.style.setProperty("--qa-bg-alpha", state.opacity);
-      try {
-        const chip = document.createElement("div");
-        chip.className = "questing-adventurer-panel__chip";
-        chip.dataset.action = "toggle-collapse";
-        chip.dataset.dragThreshold = "true";
-        chip.title = "Click to expand · Drag to move";
-        chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
-        // The collapsed chip doubles as a drag handle: pointerdown starts a
-        // threshold-gated panel drag (the panel only moves after 5px of
-        // movement; a sub-threshold release is a click that toggles
-        // collapse). See startPanelDrag for the threshold logic and
-        // suppressNextClick for how we keep the click from firing after a
-        // real drag.
-        chip.addEventListener("pointerdown", startPanelDrag);
-        panel.appendChild(chip);
-      } catch (chipErr) {
-        console.error("QuestingAdventurer: failed to render collapse chip:", chipErr);
-      }
-      return;
-    }
-
-    panel.classList.remove("questing-adventurer-panel--collapsed");
-    // Restore the persisted panel size when expanding. The collapsed
-    // branch clears inline width/height so the box shrinks to the chip;
-    // here we re-apply the user's last resize so the expanded panel
-    // returns to the size they set. Only width is always restored;
-    // height is restored only if the user had set one (undefined →
-    // auto, letting the panel grow with content).
-    if (state.panelSize && typeof state.panelSize.width === "number") {
-      panel.style.width = state.panelSize.width + "px";
-    }
-    if (state.panelSize && typeof state.panelSize.height === "number") {
-      panel.style.height = state.panelSize.height + "px";
-    } else {
-      panel.style.height = "";
-    }
+  function renderCollapsedChip(panel) {
+    panel.classList.add("questing-adventurer-panel--collapsed");
+    // Clear any inline width/height left over from a previous edge-resize
+    // so the collapsed panel can shrink to the chip's intrinsic size
+    // (the --collapsed CSS rule sets min-width/min-height to 0). Without
+    // this, a panel the user resized to e.g. 600×400 stays that big
+    // even when collapsed, leaving a huge empty box around the chip.
+    panel.style.width = "";
+    panel.style.height = "";
     panel.style.setProperty("--qa-bg-alpha", state.opacity);
+    try {
+      const chip = document.createElement("div");
+      chip.className = "questing-adventurer-panel__chip";
+      chip.dataset.action = "toggle-collapse";
+      chip.dataset.dragThreshold = "true";
+      chip.title = "Click to expand · Drag to move";
+      chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
+      // The collapsed chip doubles as a drag handle: pointerdown starts a
+      // threshold-gated panel drag (the panel only moves after 5px of
+      // movement; a sub-threshold release is a click that toggles
+      // collapse). See startPanelDrag for the threshold logic and
+      // suppressNextClick for how we keep the click from firing after a
+      // real drag.
+      chip.addEventListener("pointerdown", startPanelDrag);
+      panel.appendChild(chip);
+    } catch (chipErr) {
+      console.error("QuestingAdventurer: failed to render collapse chip:", chipErr);
+    }
+  }
 
+  // Render the expanded header: penalty, reward, opacity slider, close button.
+  // Returns { addToggleBtn, manualToggleBtn } for use by renderBottomToggles.
+  function renderHeader(panel) {
     const header = document.createElement("div");
     header.className = "questing-adventurer-panel__header";
     header.addEventListener("pointerdown", startPanelDrag);
@@ -866,16 +846,15 @@
     addToggleBtn.setAttribute("aria-label", "Add trigger or move");
     addToggleBtn.setAttribute("aria-expanded", state.showAddControls ? "true" : "false");
     addToggleBtn.textContent = "+";
-    // Moved out of the header controls (line 826 used to do
-    // `controls.appendChild(addToggleBtn)`) and instead appended to the
-    // panel itself between the list and the footer (see below), so it
-    // sits at the bottom-center of the panel rather than the top-right
+    // Moved out of the header controls and instead appended to the
+    // panel itself between the list and the footer (see renderBottomToggles),
+    // so it sits at the bottom-center of the panel rather than the top-right
     // of the header. This is more natural for the expand-add-controls
     // action — the toggle lives where the controls it reveals (the
     // footer with input + Add Trigger + Add Move) lives.
     //
-    // Sits next to the manual button in a bottom-toggles wrapper
-    // (see render() further down). The two toggles share the same row:
+    // Sits next to the manual button in a bottom-toggles wrapper.
+    // The two toggles share the same row:
     //   +     — Add new trigger or move (creates a fresh item)
     //   ≡     — Manual selection (operate on EXISTING items: activate
     //           inactive triggers, attach library moves to triggers)
@@ -944,6 +923,10 @@
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
+    return { addToggleBtn: addToggleBtn, manualToggleBtn: manualToggleBtn };
+  }
+
+  function renderActiveList(panel) {
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
@@ -959,18 +942,9 @@
       });
     }
     panel.appendChild(list);
+  }
 
-    // Manual selection "Library" section. Rendered between the active-trigger
-    // list and the bottom toggles when the user has opened it via the ≡ button.
-    // The section gives the user fine-grained control that the random
-    // Penalty/Reward buttons can't provide:
-    //   - Activate any inactive trigger (without having to attach a move first)
-    //   - Attach any library move to any trigger (active or inactive)
-    // Hidden by default; revealed by state.showManualControls.
-    if (state.showManualControls) {
-      renderLibrarySection(panel);
-    }
-
+  function renderBottomToggles(panel, addToggleBtn, manualToggleBtn) {
     // Bottom-center toggles. The + and ≡ buttons share a single row so the
     // user can see at a glance that there are two related "show more"
     // affordances sitting at the bottom of the panel. The CSS uses flexbox
@@ -982,7 +956,9 @@
     bottomToggles.appendChild(addToggleBtn);
     bottomToggles.appendChild(manualToggleBtn);
     panel.appendChild(bottomToggles);
+  }
 
+  function renderFooter(panel) {
     const footer = document.createElement("div");
     footer.className = "questing-adventurer-panel__footer";
     const input = document.createElement("input");
@@ -1042,7 +1018,67 @@
     // hide-by-default would be permanently overridden.
     panel.classList.toggle("questing-adventurer-panel--show-add-controls", state.showAddControls);
 
+    // syncButtons must run AFTER the list is rendered (so add-move-into
+    // buttons exist in the DOM). The caller (render()) ensures this order.
     syncButtons();
+  }
+
+  function render() {
+    let panel = document.querySelector(".questing-adventurer-panel");
+    if (!panel) {
+      // Panel was removed (e.g., by a React re-render of the video player).
+      // Re-create it on the current player and bail — setupPanel calls render.
+      const player = document.querySelector("#VideoJsPlayer");
+      if (player) {
+        setupPanel(player);
+        return;
+      }
+      return;
+    }
+
+    // Always re-apply the persisted position so the panel never drifts to
+    // (0,0) if the inline style was clobbered.
+    panel.style.top = state.panelPos.top + "px";
+    panel.style.right = state.panelPos.right + "px";
+
+    clearChildren(panel);
+
+    if (state.collapsed) {
+      renderCollapsedChip(panel);
+      return;
+    }
+
+    panel.classList.remove("questing-adventurer-panel--collapsed");
+    // Restore the persisted panel size when expanding. The collapsed
+    // branch clears inline width/height so the box shrinks to the chip;
+    // here we re-apply the user's last resize so the expanded panel
+    // returns to the size they set. Only width is always restored;
+    // height is restored only if the user had set one (undefined →
+    // auto, letting the panel grow with content).
+    if (state.panelSize && typeof state.panelSize.width === "number") {
+      panel.style.width = state.panelSize.width + "px";
+    }
+    if (state.panelSize && typeof state.panelSize.height === "number") {
+      panel.style.height = state.panelSize.height + "px";
+    } else {
+      panel.style.height = "";
+    }
+    panel.style.setProperty("--qa-bg-alpha", state.opacity);
+
+    const toggles = renderHeader(panel);
+
+    renderActiveList(panel);
+
+    // Manual selection "Library" section. Rendered between the active-trigger
+    // list and the bottom toggles when the user has opened it via the ≡ button.
+    if (state.showManualControls) {
+      renderLibrarySection(panel);
+    }
+
+    renderBottomToggles(panel, toggles.addToggleBtn, toggles.manualToggleBtn);
+    // renderFooter must come after renderActiveList so syncButtons() can
+    // query the add-move-into buttons that renderTrigger creates.
+    renderFooter(panel);
   }
 
   function renderTrigger(list, trigger) {
@@ -1469,7 +1505,7 @@
     });
     if (idx === -1) return;
     const trigger = state.triggers[idx];
-    const itemCount = Array.isArray(trigger.items) ? trigger.items.length : 0;
+    const itemCount = Array.isArray(trigger.attachedMoveIds) ? trigger.attachedMoveIds.length : 0;
     const confirmed = window.confirm(
       'Delete trigger "' + trigger.name + '" and its ' + itemCount + " move(s)?"
     );
@@ -1478,6 +1514,15 @@
       queueSave();
       render();
     }
+  }
+
+  // Read the footer input, call fn(text) if non-empty, then clear the input.
+  function consumeFooterText(panel, fn) {
+    const text = getFooterValue(panel);
+    if (!text) return;
+    fn(text);
+    const input = panel.querySelector(".questing-adventurer-panel__input");
+    if (input) input.value = "";
   }
 
   function handleClick(e) {
@@ -1525,7 +1570,6 @@
          // no-op. This prevents the click from bubbling to a parent action.
          break;
       case "toggle-add-controls":
-        console.log("QuestingAdventurer: toggle-add-controls clicked");
         state.showAddControls = !state.showAddControls;
         queueSave();
         render();
@@ -1548,29 +1592,16 @@
         // handler is registered in renderLibrarySection.
         break;
       case "add-move-top": {
-        const text = getFooterValue(panel);
-        if (text) {
-          addMoveTop(text);
-          const input = panel.querySelector(".questing-adventurer-panel__input");
-          if (input) input.value = "";
-        }
+        consumeFooterText(panel, function (text) { addMoveTop(text); });
         break;
       }
       case "add-trigger-top": {
-        const text = getFooterValue(panel);
-        if (text) {
-          addTriggerTop(text);
-          const input = panel.querySelector(".questing-adventurer-panel__input");
-          if (input) input.value = "";
-        }
+        consumeFooterText(panel, function (text) { addTriggerTop(text); });
         break;
       }
       case "add-move-into": {
-        const text = getFooterValue(panel);
-        if (text && id) {
-          addMoveInto(id, text);
-          const input = panel.querySelector(".questing-adventurer-panel__input");
-          if (input) input.value = "";
+        if (id) {
+          consumeFooterText(panel, function (text) { addMoveInto(id, text); });
         }
         break;
       }

@@ -267,7 +267,7 @@ If a change touches more than one of these, verify them in the order above
 an earlier trap can mask a later one.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.1,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.2,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
 - `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with
