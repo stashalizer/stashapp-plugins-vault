@@ -56,6 +56,7 @@
 }
 
 .questing-adventurer-panel__header {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -102,6 +103,23 @@
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+}
+
+/* Pin the close (collapse) button to the top-right corner of the header.
+   It's absolutely positioned (out of the flex flow) so the opacity slider's
+   hover-reveal expansion inside __header-controls can't push it sideways.
+   Previously close was the rightmost item in the controls span; when the
+   user moved the cursor left-to-right toward close, the opacity-control's
+   hover triggered the slider to expand (width 0 → 80px with a transition),
+   shifting close rightward and making it "run away" from the cursor.
+   z-index: 2 keeps the pinned button above the expanded slider so it
+   stays clickable even on narrow panels where they overlap. */
+.questing-adventurer-panel__close-button {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 2;
 }
 
 .questing-adventurer-panel__opacity-control {

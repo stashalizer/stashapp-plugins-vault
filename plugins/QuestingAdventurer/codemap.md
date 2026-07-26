@@ -99,8 +99,10 @@ State shape:
    player, and calls `render()`.
 3. `render()` clears the panel and renders either a collapsed chip
    (showing the active-trigger count: `🗺️ Triggers (N)`) or an expanded view:
-   header (title + ➕ add-toggle + Penalty/Reward + opacity
-   hover-reveal slider + ✕ close) + scrollable list of active triggers
+   header (Penalty/Reward + opacity hover-reveal slider, with the ✕ close
+   button absolutely pinned to the header's top-right corner so the
+   opacity slider's hover-expand can't push it sideways) + scrollable
+   list of active triggers
    with their attached moves + footer (input + Add Trigger / Add Move
    buttons, revealed by the add-toggle). When collapsed, inline
    `width`/`height` are cleared and the `--collapsed` CSS rule sets
@@ -222,7 +224,7 @@ State shape:
   navigation/reload.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.0,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.1,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
 - `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with

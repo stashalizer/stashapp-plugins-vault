@@ -928,12 +928,20 @@
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.dataset.action = "toggle-collapse";
+    closeBtn.className = "questing-adventurer-panel__close-button";
     closeBtn.title = "Collapse";
     closeBtn.setAttribute("aria-label", "Collapse panel");
     closeBtn.textContent = "\u00d7";
-    controls.appendChild(closeBtn);
 
     header.appendChild(controls);
+    // The close button is appended directly to the header (not inside the
+    // controls span) and absolutely positioned at the top-right corner via
+    // .questing-adventurer-panel__close-button. This decouples it from the
+    // opacity slider's hover-reveal expansion — previously, when the user
+    // moved the cursor left-to-right toward close, the opacity-control's
+    // hover triggered the slider to expand (width 0 → 80px), pushing close
+    // rightward and making it "run away" from the cursor.
+    header.appendChild(closeBtn);
     panel.appendChild(header);
 
     const list = document.createElement("div");
