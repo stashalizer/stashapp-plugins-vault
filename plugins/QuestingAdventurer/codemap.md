@@ -223,6 +223,49 @@ State shape:
   will not live-reflect in an already-open overlay until the next
   navigation/reload.
 
+## Overlay CSS change checklist
+Before committing a change to the overlay panel's CSS or the
+collapse/expand/drag/resize logic in `QuestingAdventurer.js`, re-check these
+interaction traps. Each one below was a separate fix commit (see
+`a55a166`, `a8426aa`, `f7085df`, `83c0d39`, `b0e1425`) after an earlier
+overlay change silently regressed it; verifying them up front avoids the
+1–3 follow-up fix iterations that recurred across recent sessions.
+
+- **min-width / min-height leak across collapse.** The expanded panel sets
+  `min-width: 240px` / `min-height: 80px` (base rule). The
+  `.questing-adventurer-panel--collapsed` override MUST reset both to `0`
+  (and re-cap `max-width: 360px`) or the collapsed "chip" stays a large box.
+  If you add a new size constraint to the expanded state, mirror the reset in
+  the collapsed rule.
+- **`container-type` rule ordering.** The base rule sets
+  `container-type: inline-size`, which makes the box keep its intrinsic width
+  and ignore `min-width: 0`. The collapsed override must come AFTER the base
+  rule in source order (or raise specificity) and set
+  `width: fit-content` + `container-type: normal` together to actually shrink.
+  Don't move the override above the base rule.
+- **Hover-expand pushing adjacent controls.** The opacity slider lives in
+  `.questing-adventurer-panel__header-controls` and expands on hover
+  (`width: 0 → 80px` with a transition). Any flex-flow sibling to its right
+  will shift when it expands. Keep the close button OUT of that flex flow:
+  it's absolutely positioned via `.questing-adventurer-panel__close-button`
+  (`position: absolute; top: 50%; right: 0; z-index: 2`). Don't re-inline it.
+- **Inline width/height persistence across collapse/expand.** `render()`
+  clears inline `width`/`height` when collapsing and restores the persisted
+  `panelSize` when expanding, so an edge-resize done while expanded isn't
+  lost. If you change the collapse/expand render path, preserve both the
+  clear-on-collapse and restore-on-expand halves or a previous user resize
+  will leak into the chip (or be dropped on re-expand).
+- **Chip-drag vs panel-drag guard.** The collapsed chip is draggable via the
+  same `pointerdown` delegation as the expanded panel. Click delegation uses
+  `closest('[data-action]')` and the drag guard uses `closest('button')` —
+  keep close as a `<button data-action="toggle-collapse">` so both the click
+  handler and the drag guard still recognise it. Don't change its tag or
+  drop `data-action`.
+
+If a change touches more than one of these, verify them in the order above
+(min-size → container-type → hover-expand → inline-size → drag guard), since
+an earlier trap can mask a later one.
+
 ## Files
 - `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.1,
   `ui.requires`/`javascript`/`css`).
