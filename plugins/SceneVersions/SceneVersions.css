@@ -111,13 +111,32 @@
   background: var(--secondary-bg, rgba(128, 128, 128, 0.15));
 }
 
-.scene-versions-thumb--placeholder::after {
+/* Placeholder spinner pseudo-elements — shared pattern:
+   content: "" + border-radius: 50% + border with transparent top edge.
+   Each variant overrides only its size/opacity. */
+.scene-versions-thumb--placeholder::after,
+.scene-versions-empty__illustration::after,
+.scene-versions-suggestion__thumb--placeholder::after {
   content: "";
-  width: 28px;
-  height: 28px;
   border-radius: 50%;
   border: 2px solid var(--border-color, rgba(128, 128, 128, 0.35));
   border-top-color: transparent;
+}
+
+.scene-versions-thumb--placeholder::after {
+  width: 28px;
+  height: 28px;
+  opacity: 0.5;
+}
+
+.scene-versions-empty__illustration::after {
+  width: 28px;
+  height: 28px;
+}
+
+.scene-versions-suggestion__thumb--placeholder::after {
+  width: 18px;
+  height: 18px;
   opacity: 0.5;
 }
 
@@ -195,12 +214,8 @@
 }
 
 .scene-versions-empty__illustration::after {
-  content: "";
   width: 28px;
   height: 28px;
-  border-radius: 50%;
-  border: 2px solid var(--border-color, rgba(128, 128, 128, 0.35));
-  border-top-color: transparent;
 }
 
 .scene-versions-empty__title {
@@ -282,16 +297,6 @@
   align-items: center;
   justify-content: center;
   background: var(--secondary-bg, rgba(128, 128, 128, 0.15));
-}
-
-.scene-versions-suggestion__thumb--placeholder::after {
-  content: "";
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--border-color, rgba(128, 128, 128, 0.35));
-  border-top-color: transparent;
-  opacity: 0.5;
 }
 
 .scene-versions-suggestion__title {

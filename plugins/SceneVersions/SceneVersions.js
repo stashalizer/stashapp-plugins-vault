@@ -131,12 +131,8 @@
 
   async function syncBidirectional(currentSceneId, newIds, originalIds) {
     // Filter out self-link from both sets
-    var filteredNew = newIds.filter(function (id) {
-      return id !== currentSceneId;
-    });
-    var filteredOrig = originalIds.filter(function (id) {
-      return id !== currentSceneId;
-    });
+    var filteredNew = excludeSelf(newIds, currentSceneId);
+    var filteredOrig = excludeSelf(originalIds, currentSceneId);
 
     var newSet = new Set(filteredNew);
     var origSet = new Set(filteredOrig);
@@ -148,35 +144,76 @@
       return !newSet.has(id);
     });
 
-    // Update added scenes: add currentSceneId to their RelatedScenes
+    // Best-effort peer writes — one failure must not block the others
+    // or the current scene's write.
+    var peerTasks = [];
     for (var i = 0; i < added.length; i++) {
-      var id = added[i];
-      var existing = await readRelatedIds(id);
+      peerTasks.push(addBackLink(added[i], currentSceneId));
+    }
+    for (var j = 0; j < removed.length; j++) {
+      peerTasks.push(removeBackLink(removed[j], currentSceneId));
+    }
+    await Promise.allSettled(peerTasks);
+
+    // Always write the current scene last, regardless of peer failures.
+    await writeRelatedIds(currentSceneId, filteredNew);
+
+    return;
+  }
+
+  async function addBackLink(peerId, currentSceneId) {
+    try {
+      var existing = await readRelatedIds(peerId);
       if (existing.indexOf(currentSceneId) === -1) {
         existing.push(currentSceneId);
-        await writeRelatedIds(id, existing);
+        await writeRelatedIds(peerId, existing);
       }
+    } catch (err) {
+      console.error("SceneVersions: failed to add back-link to " + peerId, err);
     }
+  }
 
-    // Update removed scenes: remove currentSceneId from their RelatedScenes
-    for (var j = 0; j < removed.length; j++) {
-      var rid = removed[j];
-      var existing = await readRelatedIds(rid);
+  async function removeBackLink(peerId, currentSceneId) {
+    try {
+      var existing = await readRelatedIds(peerId);
       var filtered = existing.filter(function (eid) {
         return eid !== currentSceneId;
       });
       if (filtered.length !== existing.length) {
-        await writeRelatedIds(rid, filtered);
+        await writeRelatedIds(peerId, filtered);
       }
+    } catch (err) {
+      console.error("SceneVersions: failed to remove back-link from " + peerId, err);
     }
-
-    // Write current scene's list
-    await writeRelatedIds(currentSceneId, filteredNew);
-
-    return { ok: true };
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────
+
+  function excludeSelf(ids, sceneId) {
+    return ids.filter(function (id) {
+      return id !== sceneId;
+    });
+  }
+
+  /**
+   * Load related scene IDs and full scene objects for a given scene.
+   * Calls the provided handlers at each stage so callers can wire in
+   * their own state setters, cancellation checks, and side effects.
+   */
+  function loadRelatedScenes(sceneId, handlers) {
+    return readRelatedIds(sceneId)
+      .then(function (ids) {
+        var filtered = excludeSelf(ids, sceneId);
+        if (handlers.onIds) handlers.onIds(filtered);
+        return loadScenesByIds(filtered);
+      })
+      .then(function (scenes) {
+        if (handlers.onScenes) handlers.onScenes(scenes || []);
+      })
+      .catch(function (err) {
+        if (handlers.onError) handlers.onError(err);
+      });
+  }
 
   function shallowEqual(a, b) {
     if (a === b) return true;
@@ -335,9 +372,7 @@
         readRelatedIds(sceneId)
           .then(function (ids) {
             if (cancelled) return;
-            var filtered = ids.filter(function (id) {
-              return id !== sceneId;
-            });
+            var filtered = excludeSelf(ids, sceneId);
             setCount(filtered.length);
           })
           .catch(function () {
@@ -420,29 +455,26 @@
         var cancelled = false;
         setLoading(true);
         setError(null);
-        readRelatedIds(scene.id)
-          .then(function (ids) {
+        loadRelatedScenes(scene.id, {
+          onIds: function (filtered) {
             if (cancelled) return;
-            var filtered = ids.filter(function (id) {
-              return id !== scene.id;
-            });
             loadedIdsRef.current = filtered.slice();
             setRelatedIds(filtered);
             setDirty(false);
             emitCountChange(scene.id, filtered.length);
-            return loadScenesByIds(filtered);
-          })
-          .then(function (scenes) {
+          },
+          onScenes: function (scenes) {
             if (cancelled) return;
-            setRelatedScenes(scenes || []);
+            setRelatedScenes(scenes);
             setLoading(false);
-          })
-          .catch(function (err) {
+          },
+          onError: function (err) {
             if (cancelled) return;
             console.error("SceneVersions: load failed", err);
             setError(err.message || String(err));
             setLoading(false);
-          });
+          },
+        });
         return function () {
           cancelled = true;
         };
@@ -495,6 +527,7 @@
         return String(s.id);
       });
       setRelatedIds(ids);
+      setRelatedScenes(scenes);
       setDirty(!shallowEqual(ids, loadedIdsRef.current));
     }, []);
 
@@ -600,24 +633,21 @@
                 onClick: function () {
                   setLoading(true);
                   setError(null);
-                  readRelatedIds(scene.id)
-                    .then(function (ids) {
-                      var filtered = ids.filter(function (id) {
-                        return id !== scene.id;
-                      });
+                  loadRelatedScenes(scene.id, {
+                    onIds: function (filtered) {
                       loadedIdsRef.current = filtered.slice();
                       setRelatedIds(filtered);
                       setDirty(false);
-                      return loadScenesByIds(filtered);
-                    })
-                    .then(function (scenes) {
-                      setRelatedScenes(scenes || []);
+                    },
+                    onScenes: function (scenes) {
+                      setRelatedScenes(scenes);
                       setLoading(false);
-                    })
-                    .catch(function (err) {
+                    },
+                    onError: function (err) {
                       setError(err.message || String(err));
                       setLoading(false);
-                    });
+                    },
+                  });
                 },
               },
               "Retry"
@@ -849,17 +879,12 @@
     var arr = Array.isArray(childrenArray) ? childrenArray : [childrenArray];
     for (var i = 0; i < arr.length; i++) {
       var el = arr[i];
-      if (el && el.props) {
-        // Direct eventKey (Tab.Pane)
-        if (el.props.eventKey === "scene-details-panel") return i + 1;
-        // Child Nav.Link eventKey (Nav.Item > Nav.Link)
-        if (
-          el.props.children &&
-          el.props.children.props &&
-          el.props.children.props.eventKey === "scene-details-panel"
-        )
-          return i + 1;
-      }
+      if (!el || !el.props) continue;
+      // Case 1: Tab.Pane with direct eventKey (TabContent patch)
+      if (el.props.eventKey === "scene-details-panel") return i + 1;
+      // Case 2: Nav.Item wrapping Nav.Link (Tabs patch)
+      var child = el.props.children;
+      if (child && child.props && child.props.eventKey === "scene-details-panel") return i + 1;
     }
     return arr.length;
   }
