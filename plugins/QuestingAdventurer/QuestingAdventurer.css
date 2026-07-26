@@ -44,10 +44,23 @@
      larger than the "🗺️ Triggers (N)" chip. Override them here
      so the collapsed panel contracts to the chip's intrinsic
      size. max-width is re-capped to 360px (the expanded default)
-     so a very long chip never runs off-screen. */
+     so a very long chip never runs off-screen.
+
+     `width: fit-content` + `container-type: normal` are both
+     required because the base rule sets `container-type:
+     inline-size`, which applies size containment — under size
+     containment the element's inline-size does NOT respond to
+     its contents, so the panel would otherwise ignore the chip's
+     intrinsic width and stretch to its default width. Dropping
+     back to normal containment + fit-content forces the box to
+     shrink to the chip. The expanded branch restores
+     inline-size containment via the base rule (the --collapsed
+     class is removed). */
   min-width: 0;
   min-height: 0;
   max-width: 360px;
+  width: fit-content;
+  container-type: normal;
 }
 
 .questing-adventurer-panel__chip {
