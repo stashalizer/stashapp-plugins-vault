@@ -41,12 +41,18 @@
 }
 
 .questing-adventurer-panel__chip {
-  cursor: pointer;
+  /* `move` (not `pointer`) signals the chip is a drag handle; the
+     click-to-expand action still works (a sub-threshold release is a
+     click — see startPanelDrag's threshold logic). touch-action: none
+     lets pointer events drive the drag without the browser also
+     panning/scrolling on touch devices. */
+  cursor: move;
   white-space: nowrap;
   user-select: none;
   display: inline-block;
   font-weight: 600;
   letter-spacing: 0.2px;
+  touch-action: none;
 }
 
 .questing-adventurer-panel__header {

@@ -52,6 +52,11 @@
   let saving = false;
   let pendingSave = false;
   let dragState = null; // { sourceId, startX, startY, isDragging, ghost, sourceRow, list, panel }
+  // When the user drags the collapsed chip (or the expanded header) past the
+  // drag threshold, we set this flag so the subsequent `click` event (which
+  // the browser fires after pointerup) is suppressed — otherwise dragging
+  // the chip would also toggle collapse. Reset on every pointerup.
+  let suppressNextClick = false;
 
   function generateId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -782,8 +787,16 @@
         const chip = document.createElement("div");
         chip.className = "questing-adventurer-panel__chip";
         chip.dataset.action = "toggle-collapse";
-        chip.title = "Click to expand";
+        chip.dataset.dragThreshold = "true";
+        chip.title = "Click to expand · Drag to move";
         chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
+        // The collapsed chip doubles as a drag handle: pointerdown starts a
+        // threshold-gated panel drag (the panel only moves after 5px of
+        // movement; a sub-threshold release is a click that toggles
+        // collapse). See startPanelDrag for the threshold logic and
+        // suppressNextClick for how we keep the click from firing after a
+        // real drag.
+        chip.addEventListener("pointerdown", startPanelDrag);
         panel.appendChild(chip);
       } catch (chipErr) {
         console.error("QuestingAdventurer: failed to render collapse chip:", chipErr);
@@ -1460,6 +1473,15 @@
   }
 
   function handleClick(e) {
+    // If the user just finished a panel drag (collapsed chip or expanded
+    // header), the browser still fires a `click` after pointerup. Suppress
+    // it so dragging the chip doesn't also toggle collapse, and dragging
+    // the header doesn't trigger any button that happened to be under the
+    // pointer at release time.
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      return;
+    }
     const el = e.target.closest("[data-action]");
     if (!el) return;
     const action = el.dataset.action;
@@ -1580,6 +1602,17 @@
     const startRight = state.panelPos.right;
     const startX = e.clientX;
     const startY = e.clientY;
+    // Whether to require a movement threshold before actually moving the
+    // panel. The collapsed chip doubles as a click-to-expand target, so we
+    // can't move the panel on the first pointermove — that would make it
+    // impossible to click the chip without dragging it. When threshold is
+    // true, the panel only moves after the pointer travels past 5px; if the
+    // user releases before that, no drag happened and the click goes
+    // through to toggle collapse. The expanded header doesn't need this
+    // (its buttons have their own pointerdown handlers and the header
+    // itself isn't a click target), so threshold defaults to false.
+    const threshold = e.currentTarget.dataset && e.currentTarget.dataset.dragThreshold === "true";
+    let dragMoved = false;
 
     function clampPosition(top, right) {
       const maxTop = Math.max(0, window.innerHeight - rect.height);
@@ -1593,6 +1626,13 @@
     function onMove(ev) {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
+      if (threshold && !dragMoved) {
+        // Wait until the user moves past a small threshold before starting
+        // the drag. This lets the user click the collapsed chip without
+        // accidentally dragging the panel.
+        if (Math.hypot(dx, dy) < 5) return;
+        dragMoved = true;
+      }
       // "right" decreases as the user drags right (the panel's right edge
       // moves toward the viewport's right edge).
       const next = clampPosition(startTop + dy, startRight - dx);
@@ -1605,7 +1645,12 @@
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onEnd);
       document.removeEventListener("pointercancel", onEnd);
-      queueSave();
+      // If a drag actually moved the panel, suppress the next click so the
+      // chip's click-to-expand handler doesn't fire on the pointerup.
+      if (dragMoved) {
+        suppressNextClick = true;
+        queueSave();
+      }
     }
 
     document.addEventListener("pointermove", onMove);

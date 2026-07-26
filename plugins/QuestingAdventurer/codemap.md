@@ -106,7 +106,15 @@ State shape:
    `width`/`height` are cleared and the `--collapsed` CSS rule sets
    `min-width`/`min-height` to 0 so the box shrinks to the chip's
    intrinsic size; when expanded, the persisted `panelSize` is
-   re-applied so a previous edge-resize isn't lost.
+   re-applied so a previous edge-resize isn't lost. The collapsed
+   chip is also a drag handle: `pointerdown` on the chip starts a
+   threshold-gated panel drag (the panel only moves after 5px of
+   movement; a sub-threshold release is a click that toggles
+   collapse). A `suppressNextClick` flag is set on a real drag so the
+   `click` event that follows `pointerup` doesn't also toggle collapse.
+   The expanded header's `pointerdown` uses the same `startPanelDrag`
+   without the threshold (header buttons have their own handlers and
+   the header itself isn't a click target).
 4. **Header actions**:
    - **Penalty** (`apply-penalty`): pick a random inactive trigger →
      activate it AND attach a random unattached move from the library. If
@@ -214,7 +222,7 @@ State shape:
   navigation/reload.
 
 ## Files
-- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.10.4,
+- `QuestingAdventurer.yml` — plugin manifest (name, description, version 0.11.0,
   `ui.requires`/`javascript`/`css`).
 - `QuestingAdventurer.js` — player overlay panel (vanilla JS).
 - `QuestingAdventurerSettings.js` — full-page React CRUD settings UI with
