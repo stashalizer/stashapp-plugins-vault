@@ -1,11 +1,12 @@
 name: Mosaic Filter
 description: Movable, resizable blur overlay (rectangle or ellipse) for any scene region, with follow-cursor and reverse modes that blur everything outside the filter. Single global config shared by all scenes; full settings page included.
-version: 0.4.3
+version: 0.4.4
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   requires:
     - CommunityScriptsUILibrary
   javascript:
+    - MosaicFilterShared.js
     - MosaicFilter.js
     - MosaicFilterSettings.js
   css:

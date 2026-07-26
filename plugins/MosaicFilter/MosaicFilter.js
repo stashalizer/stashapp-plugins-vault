@@ -16,6 +16,8 @@
  *   csLib.setConfiguration("MosaicFilter", state) wrapped in a lock to avoid
  *   concurrent saves. csLib.getConfiguration and setConfiguration are BOTH
  *   async — always await them.
+ * - Shared constants and pure functions (FALLBACK_DEFAULTS, clamp, etc.) live
+ *   in MosaicFilterShared.js, which MUST be loaded first per the manifest.
  * - Write policy: writes happen at user-driven boundaries (toggle, drag end,
  *   resize end, slider release, scene transition, pagehide). The blur slider
  *   updates the visual on every `input` event but only persists on `change`
@@ -31,26 +33,20 @@
     return;
   }
 
-  const CONFIG_KEY = "MosaicFilter";
+  const CONFIG_KEY = window.MosaicFilterShared.CONFIG_KEY;
+  const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
+  const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
+  const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
 
-  // Hard-coded defaults used when no config has ever been written, and as
-  // the target of the overlay's "Reset" button.
-  const FALLBACK_DEFAULTS = {
-    blurAmount: 10,
-    widthPct: 0.25,
-    heightPct: 0.25,
-    xPct: 0.1,
-    yPct: 0.1,
-    active: false,
-    // follow defaults to false: the user opts in to cursor-tracking from
-    // the control bar. The rectangle is stationary until they toggle it on.
-    follow: false,
-    shape: 'rectangle',
-    mode: 'normal',
-  };
+  // ---------------------------------------------------------------------------
+  // Utilities (from shared module MosaicFilterShared.js)
+  // ---------------------------------------------------------------------------
 
-  const MIN_SIZE_PCT = 0.05;
-  const MAX_BLUR = 80;
+  var clamp = window.MosaicFilterShared.clamp;
+  var isFiniteNumber = window.MosaicFilterShared.isFiniteNumber;
+  var makeDefaultState = window.MosaicFilterShared.makeDefaultState;
+  var mergeStored = window.MosaicFilterShared.mergeStored;
+  var sanitizeState = window.MosaicFilterShared.sanitizeState;
 
   // Module-level state. `state` is the single global config object. It is
   // reloaded from csLib on every fresh mount of the overlay (e.g. after
@@ -82,69 +78,6 @@
   let lastPointer = null;
 
   // ---------------------------------------------------------------------------
-  // Utilities
-  // ---------------------------------------------------------------------------
-
-  function clamp(value, min, max) {
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
-  }
-
-  function isFiniteNumber(n) {
-    return typeof n === "number" && isFinite(n);
-  }
-
-  function makeDefaultState() {
-    return { ...FALLBACK_DEFAULTS };
-  }
-
-  // Merge a stored config map onto a fresh default state. Tolerates the
-  // legacy { defaults, scenes } shape (used by 0.2.x) by reading the old
-  // `defaults` and ignoring `scenes` — the per-scene model is gone.
-  function mergeStored(stored) {
-    const out = makeDefaultState();
-    if (stored && typeof stored === "object") {
-      let source = stored;
-      // Legacy shape: { defaults: {...}, scenes: {...} } — use defaults,
-      // drop scenes.
-      if (stored.defaults && typeof stored.defaults === "object") {
-        source = stored.defaults;
-      }
-      for (const key of Object.keys(out)) {
-        if (source[key] !== undefined) {
-          out[key] = source[key];
-        }
-      }
-    }
-    return sanitizeState(out);
-  }
-
-  // Sanitize a state object: clamp values into valid ranges, fill missing
-  // fields from FALLBACK_DEFAULTS, coerce types. Mutates and returns the
-  // object.
-  function sanitizeState(s) {
-    const d = FALLBACK_DEFAULTS;
-    const out = {
-      blurAmount: isFiniteNumber(s.blurAmount) ? s.blurAmount : d.blurAmount,
-      widthPct: isFiniteNumber(s.widthPct) ? s.widthPct : d.widthPct,
-      heightPct: isFiniteNumber(s.heightPct) ? s.heightPct : d.heightPct,
-      xPct: isFiniteNumber(s.xPct) ? s.xPct : d.xPct,
-      yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
-      active: typeof s.active === "boolean" ? s.active : d.active,
-      follow: typeof s.follow === "boolean" ? s.follow : d.follow,
-      shape: (typeof s.shape === 'string' && (s.shape === 'rectangle' || s.shape === 'ellipse')) ? s.shape : d.shape,
-      mode: (typeof s.mode === 'string' && (s.mode === 'normal' || s.mode === 'reverse')) ? s.mode : d.mode,
-    };
-    out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
-    out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
-    out.heightPct = clamp(out.heightPct, MIN_SIZE_PCT, 1);
-    out.xPct = clamp(out.xPct, 0, 1 - out.widthPct);
-    out.yPct = clamp(out.yPct, 0, 1 - out.heightPct);
-    return out;
-  }
-
-  // ---------------------------------------------------------------------------
   // Persistence (csLib is async; coalesce concurrent writes with a lock)
   // ---------------------------------------------------------------------------
 
@@ -165,10 +98,6 @@
         saveNow();
       }
     }
-  }
-
-  function queueSave() {
-    saveNow();
   }
 
   // Load config from csLib and update the in-memory `state`.
@@ -236,34 +165,34 @@
     const mode = state.mode;
     bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
     bar.innerHTML =
-      '<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls">' +
-        "🔲 Mosaic " + (on ? "ON" : "OFF") +
-      "</span>" +
-      '<span class="mosaic-filter-bar__controls">' +
-        '<span class="mosaic-filter-bar__slider">' +
-          '<span class="mosaic-filter-bar__label">Blur</span>' +
-          '<input type="range" min="0" max="' + MAX_BLUR + '" step="1" value="' + state.blurAmount + '" data-action="blur-slider" aria-label="Mosaic blur amount (pixels)" />' +
-          '<span class="mosaic-filter-bar__label" data-action="blur-readout">' + state.blurAmount + "px</span>" +
-        "</span>" +
-        '<button type="button" class="mosaic-filter-bar__button ' + (on ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-active" title="Toggle the mosaic on or off">' +
-          (on ? "✓ Active" : "⏸ Off") +
-        "</button>" +
-        '<button type="button" class="mosaic-filter-bar__button ' + (follow ? "mosaic-filter-bar__button--active" : "") + '" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">' +
-          "🎯 Follow" +
-        "</button>" +
-        '<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-shape" title="' + (shape === "ellipse" ? "Shape: ellipse. Click to switch to rectangle." : "Shape: rectangle. Click to switch to ellipse.") + '">' +
-          (shape === "ellipse" ? "● Ellipse" : "▭ Rectangle") +
-        '</button>' +
-        '<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="' + (mode === "reverse" ? "Mode: reverse — blur outside the filter. Click to switch to normal." : "Mode: normal — blur inside the filter. Click to switch to reverse.") + '">' +
-          (mode === "reverse" ? "◈ Reverse" : "▣ Normal") +
-        '</button>' +
-        '<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the mosaic to default size, position, and blur">' +
-          "↺ Reset" +
-        "</button>" +
-        '<button type="button" class="mosaic-filter-bar__button" data-action="close-bar" title="Hide the control bar (the rectangle stays if it is active)" aria-label="Close controls">' +
-          "✕" +
-        "</button>" +
-      "</span>";
+      `<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls">` +
+        `🔲 Mosaic ${on ? "ON" : "OFF"}` +
+      `</span>` +
+      `<span class="mosaic-filter-bar__controls">` +
+        `<span class="mosaic-filter-bar__slider">` +
+          `<span class="mosaic-filter-bar__label">Blur</span>` +
+          `<input type="range" min="0" max="${MAX_BLUR}" step="1" value="${state.blurAmount}" data-action="blur-slider" aria-label="Mosaic blur amount (pixels)" />` +
+          `<span class="mosaic-filter-bar__label" data-action="blur-readout">${state.blurAmount}px</span>` +
+        `</span>` +
+        `<button type="button" class="mosaic-filter-bar__button ${on ? "mosaic-filter-bar__button--active" : ""}" data-action="toggle-active" title="Toggle the mosaic on or off">` +
+          `${on ? "✓ Active" : "⏸ Off"}` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button ${follow ? "mosaic-filter-bar__button--active" : ""}" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">` +
+          `🎯 Follow` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-shape" title="${shape === "ellipse" ? "Shape: ellipse. Click to switch to rectangle." : "Shape: rectangle. Click to switch to ellipse."}">` +
+          `${shape === "ellipse" ? "● Ellipse" : "▭ Rectangle"}` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="${mode === "reverse" ? "Mode: reverse — blur outside the filter. Click to switch to normal." : "Mode: normal — blur inside the filter. Click to switch to reverse."}">` +
+          `${mode === "reverse" ? "◈ Reverse" : "▣ Normal"}` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the mosaic to default size, position, and blur">` +
+          `↺ Reset` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="close-bar" title="Hide the control bar (the rectangle stays if it is active)" aria-label="Close controls">` +
+          `✕` +
+        `</button>` +
+      `</span>`;
   }
 
   // Position the rectangle based on the current state and player size.
@@ -359,7 +288,8 @@
     }
     // Outer player rectangle traced clockwise: TL → TR → BR → BL → close.
     // Winding: clockwise outer (+1) + counter-clockwise inner (-1) = frame
-    // with a hole under the default nonzero clip rule.
+    // with a hole under both the nonzero and evenodd clip rules (the CSS
+    // uses evenodd, which is more forgiving of winding direction).
     const outerD = "M 0 0 L " + pw + " 0 L " + pw + " " + ph + " L 0 " + ph + " Z";
     maskLayer.style.clipPath = "path('" + outerD + " " + innerD + "')";
 
@@ -433,7 +363,7 @@
     return true;
   }
 
-  function setupPanel(targetPlayer) {
+  async function setupPanel(targetPlayer) {
     if (player !== targetPlayer) {
       teardown();
     }
@@ -447,20 +377,17 @@
     // we were awaiting the config read; appending to a stale node would
     // silently lose the overlay.
     player = targetPlayer;
-    Promise.resolve()
-      .then(function () { return loadState(); })
-      .then(function () {
-        // Fresh mount: default the bar to collapsed when the filter is
-        // off, expanded when the filter is on. The user's manual choice
-        // within the current mount is remembered (the barCollapsed module
-        // variable is not reset in teardown; it is re-derived here on
-        // every fresh mount so opening a scene with mosaic off starts
-        // with the bar collapsed).
-        barCollapsed = !state.active;
-        if (mountOnPlayer()) {
-          render();
-        }
-      });
+    await loadState();
+    // Fresh mount: default the bar to collapsed when the filter is
+    // off, expanded when the filter is on. The user's manual choice
+    // within the current mount is remembered (the barCollapsed module
+    // variable is not reset in teardown; it is re-derived here on
+    // every fresh mount so opening a scene with mosaic off starts
+    // with the bar collapsed).
+    barCollapsed = !state.active;
+    if (mountOnPlayer()) {
+      render();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -476,7 +403,7 @@
       return;
     }
     const target = e.target;
-    const action = target && target.dataset && target.dataset.action;
+    const action = target?.dataset?.action;
     let type;
     if (action === "rect-resize") {
       type = "resize";
@@ -544,7 +471,7 @@
     document.removeEventListener("pointerup", onPointerUp);
     document.removeEventListener("pointercancel", onPointerUp);
     dragState = null;
-    queueSave();
+    saveNow();
   }
 
   function attachRectPointerListeners() {
@@ -563,39 +490,39 @@
     switch (action) {
       case "toggle-bar":
         barCollapsed = !barCollapsed;
-        bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
+        renderBar();
         e.preventDefault();
         break;
       case "toggle-active":
         state.active = !state.active;
-        queueSave();
+        saveNow();
         renderBar();
         renderRect();
         break;
       case "toggle-follow":
         state.follow = !state.follow;
         if (state.follow) snapRectToPointer();
-        queueSave();
+        saveNow();
         renderBar();
         break;
       case "toggle-shape":
         state.shape = state.shape === 'rectangle' ? 'ellipse' : 'rectangle';
-        queueSave();
+        saveNow();
         render();
         break;
       case "toggle-mode":
         state.mode = state.mode === 'normal' ? 'reverse' : 'normal';
-        queueSave();
+        saveNow();
         render();
         break;
       case "reset-defaults":
         Object.assign(state, makeDefaultState());
-        queueSave();
+        saveNow();
         render();
         break;
       case "close-bar":
         barCollapsed = true;
-        bar.classList.add("mosaic-filter-bar--collapsed");
+        renderBar();
         break;
       default:
         break;
@@ -623,7 +550,7 @@
     if (target.dataset.action !== "blur-slider") return;
     // Slider release: persist the final blur amount. (State was already
     // updated by `input`; this just commits it to csLib.)
-    queueSave();
+    saveNow();
   }
 
   function attachBarListeners() {
@@ -656,6 +583,7 @@
     renderRect();
   }
 
+  /** Snap the rectangle to the last known cursor position and persist. */
   function snapRectToPointer() {
     if (!player || !rect) return;
     const pw = player.clientWidth;
@@ -673,7 +601,7 @@
     state.xPct = clamp(cursorXPct - state.widthPct / 2, 0, 1 - state.widthPct);
     state.yPct = clamp(cursorYPct - state.heightPct / 2, 0, 1 - state.heightPct);
     renderRect();
-    queueSave();
+    saveNow();
   }
 
   function attachFollowListener() {
@@ -716,6 +644,6 @@
   // Async saves may not complete before the page unloads, but the request
   // is at least submitted.
   window.addEventListener("pagehide", function () {
-    queueSave();
+    saveNow();
   });
 })();

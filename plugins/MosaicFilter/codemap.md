@@ -48,31 +48,31 @@ Position and size are stored as **percentages of the player** so the rectangle s
    - Toggles the `mosaic-filter-rectangle--hidden` class based on `state.active`.
    - Renders the control bar: title chip, on/off toggle, blur slider, follow toggle, "Reset", and "Close" (×).
 4. **Header actions** (event delegation on `data-action`):
-   - **Toggle** (`toggle-active`): flips `state.active`, `queueSave()`, re-render.
+    - **Toggle** (`toggle-active`): flips `state.active`, `saveNow()`, re-render.
    - **Follow** (`toggle-follow`): flips `state.follow`. When turned on, `snapRectToPointer()` jumps the rectangle to the current cursor position so the user doesn't see a "lag" from the saved location to the cursor on the next pointermove. While follow is on, the player-level `pointermove` listener centers the rectangle on the cursor; the rectangle's drag handler refuses to start (resize still works).
-   - **Reset** (`reset-defaults`): replaces `state` with `FALLBACK_DEFAULTS`, `queueSave()`, re-render.
+    - **Reset** (`reset-defaults`): replaces `state` with `FALLBACK_DEFAULTS`, `saveNow()`, re-render.
     - **Close** (`close-bar`): collapses the control bar (the rectangle stays if it is `active`); the bar can be brought back by clicking the chip. Collapse state is tracked in a module-level `barCollapsed` so re-renders don't silently re-expand the controls. On every fresh mount (i.e. after `teardown` — e.g. when navigating to a new scene), `setupPanel` re-derives `barCollapsed = !state.active` after `loadState`, so opening a scene with mosaic off starts with the bar collapsed.
    - **Chip click** (`toggle-bar`): toggles `barCollapsed` (expands/collapses the controls).
 5. **Rectangle drag**:
    - `pointerdown` on the rectangle starts a drag; we track the start pointer position and the start `xPct`/`yPct`.
    - `pointermove` (with `setPointerCapture`) updates `xPct`/`yPct` from pointer delta / player size; clamps to `[0, 1 - widthPct/heightPct]`.
-   - `pointerup`/`pointercancel` ends the drag and calls `queueSave()`.
+    - `pointerup`/`pointercancel` ends the drag and calls `saveNow()`.
    - Disabled while `state.follow` is true (the cursor already drives the position); only the resize handle can start an interaction in that mode.
 6. **Resize**:
    - A bottom-right resize handle starts a resize drag on `pointerdown`.
    - `pointermove` updates `widthPct`/`heightPct` from pointer delta; clamps to a minimum (e.g. 0.05).
-   - `pointerup`/`pointercancel` ends and `queueSave()`.
+    - `pointerup`/`pointercancel` ends and `saveNow()`.
 7. **Follow-cursor**:
    - A `pointermove` listener is attached to the player (not the document) while the overlay is mounted. When `state.follow` is true, the handler re-centers the rectangle on the cursor.
    - **Follow-mode position updates are in-memory only** — no `csLib.setConfiguration` is called per pointermove. Every intermediate cursor position is throwaway, and persisting each one would mean a `configurePlugin` GraphQL mutation per frame. The position is persisted at the natural boundaries instead (see "Write policy" below).
    - The handler always records the latest cursor position in `lastPointer`; toggling Follow on later calls `snapRectToPointer()` so the rectangle jumps to that position immediately.
 8. **Blur slider**:
    - `<input type="range">` with `min=0 max=80 step=1`.
-   - The `input` event updates the visual blur (`--mf-blur` custom property and the readout span) on every value change. **It does NOT call `queueSave()`.**
-   - The `change` event (which fires when the user releases the thumb) calls `queueSave()`. This is the persistence boundary.
+    - The `input` event updates the visual blur (`--mf-blur` custom property and the readout span) on every value change. **It does NOT call `saveNow()`.**
+    - The `change` event (which fires when the user releases the thumb) calls `saveNow()`. This is the persistence boundary.
 
 ### Write policy
-Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a continuous animation:
+Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a continuous animation. All writes go through `saveNow()` (coalesced via the `saving`/`pendingSave` lock — there is no separate `queueSave` wrapper).
 - **Toggle buttons** (active, follow, reset): immediate write.
 - **Drag / resize end** (`pointerup`/`pointercancel`): immediate write.
 - **Blur slider**: one write on `change` (slider release). The `input` event updates the visual only.
@@ -94,7 +94,8 @@ Writes to `csLib.setConfiguration` happen at user-driven boundaries, never on a 
 - **Known limitation**: the overlay and settings page maintain separate save locks and do not coordinate across components; a concurrent write from both could race (last writer wins the whole config map). Settings edits will not live-reflect in an already-open overlay until the next navigation/reload.
 
 ## Files
-- `MosaicFilter.yml` — plugin manifest (name, description, version 0.4.3, `ui.requires`/`javascript`/`css`).
+- `MosaicFilter.yml` — plugin manifest (name, description, version 0.4.4, `ui.requires`/`javascript`/`css`). Lists `MosaicFilterShared.js` first under `ui.javascript` so the shared module loads before the overlay and settings scripts.
+- `MosaicFilterShared.js` — shared constants and pure functions (`FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `CONFIG_KEY`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `mergeStored`, `sanitizeState`) exposed as `window.MosaicFilterShared`. Loaded first per the manifest; both the overlay and the settings page reference it instead of defining their own copies.
 - `MosaicFilter.js` — player overlay (vanilla JS) with toggle, follow, drag, resize, blur slider, shape/mode toggles, and global persistence.
 - `MosaicFilter.css` — overlay styling (rectangle, control bar, drag handle, resize handle, blur slider, mask layer).
 - `MosaicFilterSettings.js` — full-page React settings UI (Settings form editing the global config, includes shape and mode selectors).

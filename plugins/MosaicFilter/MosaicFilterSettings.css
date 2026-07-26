@@ -41,13 +41,6 @@
   opacity: 0.7;
 }
 
-.mosaic-filter-settings__empty {
-  margin: 0;
-  font-size: 13px;
-  opacity: 0.6;
-  font-style: italic;
-}
-
 .mosaic-filter-settings__section {
   margin: 0 0 32px;
   padding: 16px;
@@ -75,22 +68,7 @@
   opacity: 0.85;
 }
 
-.mosaic-filter-settings__row input[type="number"] {
-  font: inherit;
-  padding: 4px 6px;
-  border: 1px solid rgba(128, 128, 128, 0.5);
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.mosaic-filter-settings__row input[type="number"]:focus {
-  outline: 2px solid rgba(100, 150, 255, 0.6);
-  outline-offset: 1px;
-}
-
+.mosaic-filter-settings__row input[type="number"],
 .mosaic-filter-settings__row select {
   font: inherit;
   padding: 4px 6px;
@@ -102,6 +80,7 @@
   box-sizing: border-box;
 }
 
+.mosaic-filter-settings__row input[type="number"]:focus,
 .mosaic-filter-settings__row select:focus {
   outline: 2px solid rgba(100, 150, 255, 0.6);
   outline-offset: 1px;

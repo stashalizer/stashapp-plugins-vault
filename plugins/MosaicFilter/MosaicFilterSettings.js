@@ -28,79 +28,22 @@
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
 
   const csLib = window.csLib;
-  const CONFIG_KEY = "MosaicFilter";
+  const CONFIG_KEY = window.MosaicFilterShared.CONFIG_KEY;
   const PLUGIN_ROUTE = "/plugins/mosaicfilter";
 
-  const MIN_SIZE_PCT = 0.05;
-  const MAX_BLUR = 80;
+  const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
+  const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
 
-  const FALLBACK_DEFAULTS = {
-    blurAmount: 10,
-    widthPct: 0.25,
-    heightPct: 0.25,
-    xPct: 0.1,
-    yPct: 0.1,
-    active: false,
-    follow: false,
-    shape: 'rectangle',
-    mode: 'normal',
-  };
+  const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
 
   let settingsToolsCallCount = 0;
 
-  function clamp(value, min, max) {
-    if (value < min) return min;
-    if (value > max) return max;
-    return value;
-  }
-
-  function isFiniteNumber(n) {
-    return typeof n === "number" && isFinite(n);
-  }
-
-  function makeDefaultState() {
-    return { ...FALLBACK_DEFAULTS };
-  }
-
-  // Merge a stored config map onto a fresh default state. Tolerates the
-  // legacy { defaults, scenes } shape by reading the old `defaults` and
-  // ignoring `scenes` (per-scene storage was removed in 0.3.0).
-  function mergeStored(stored) {
-    const out = makeDefaultState();
-    if (stored && typeof stored === "object") {
-      let source = stored;
-      if (stored.defaults && typeof stored.defaults === "object") {
-        source = stored.defaults;
-      }
-      for (const key of Object.keys(out)) {
-        if (source[key] !== undefined) {
-          out[key] = source[key];
-        }
-      }
-    }
-    return sanitizeState(out);
-  }
-
-  function sanitizeState(s) {
-    const d = FALLBACK_DEFAULTS;
-    const out = {
-      blurAmount: isFiniteNumber(s.blurAmount) ? s.blurAmount : d.blurAmount,
-      widthPct: isFiniteNumber(s.widthPct) ? s.widthPct : d.widthPct,
-      heightPct: isFiniteNumber(s.heightPct) ? s.heightPct : d.heightPct,
-      xPct: isFiniteNumber(s.xPct) ? s.xPct : d.xPct,
-      yPct: isFiniteNumber(s.yPct) ? s.yPct : d.yPct,
-      active: typeof s.active === "boolean" ? s.active : d.active,
-      follow: typeof s.follow === "boolean" ? s.follow : d.follow,
-      shape: (typeof s.shape === 'string' && (s.shape === 'rectangle' || s.shape === 'ellipse')) ? s.shape : d.shape,
-      mode: (typeof s.mode === 'string' && (s.mode === 'normal' || s.mode === 'reverse')) ? s.mode : d.mode,
-    };
-    out.blurAmount = clamp(out.blurAmount, 0, MAX_BLUR);
-    out.widthPct = clamp(out.widthPct, MIN_SIZE_PCT, 1);
-    out.heightPct = clamp(out.heightPct, MIN_SIZE_PCT, 1);
-    out.xPct = clamp(out.xPct, 0, 1 - out.widthPct);
-    out.yPct = clamp(out.yPct, 0, 1 - out.heightPct);
-    return out;
-  }
+  // Utilities from shared module MosaicFilterShared.js
+  var clamp = window.MosaicFilterShared.clamp;
+  var isFiniteNumber = window.MosaicFilterShared.isFiniteNumber;
+  var makeDefaultState = window.MosaicFilterShared.makeDefaultState;
+  var mergeStored = window.MosaicFilterShared.mergeStored;
+  var sanitizeState = window.MosaicFilterShared.sanitizeState;
 
   function MosaicFilterSettingsPage() {
     const [loaded, setLoaded] = useState(false);
