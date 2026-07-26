@@ -1,6 +1,6 @@
 name: Questing Adventurer
 description: Turns scene playback into a quest — build a move/trigger library, then activate triggers via random Penalty/Reward or manual selection. Collapsible, draggable, lockable player overlay plus a full settings page.
-version: 0.10.3
+version: 0.10.4
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   requires:

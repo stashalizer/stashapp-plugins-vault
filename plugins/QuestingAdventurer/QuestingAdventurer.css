@@ -38,29 +38,6 @@
 
 .questing-adventurer-panel--collapsed {
   padding: 4px 8px;
-  /* Shrink to fit just the chip content. The base rule sets
-     min-width: 240px / min-height: 80px so the expanded panel
-     stays usable, but those minimums make the collapsed box far
-     larger than the "🗺️ Triggers (N)" chip. Override them here
-     so the collapsed panel contracts to the chip's intrinsic
-     size. max-width is re-capped to 360px (the expanded default)
-     so a very long chip never runs off-screen.
-
-     `width: fit-content` + `container-type: normal` are both
-     required because the base rule sets `container-type:
-     inline-size`, which applies size containment — under size
-     containment the element's inline-size does NOT respond to
-     its contents, so the panel would otherwise ignore the chip's
-     intrinsic width and stretch to its default width. Dropping
-     back to normal containment + fit-content forces the box to
-     shrink to the chip. The expanded branch restores
-     inline-size containment via the base rule (the --collapsed
-     class is removed). */
-  min-width: 0;
-  min-height: 0;
-  max-width: 360px;
-  width: fit-content;
-  container-type: normal;
 }
 
 .questing-adventurer-panel__chip {
@@ -652,6 +629,26 @@
    wide panel). */
 .questing-adventurer-panel {
   container-type: inline-size;
+}
+
+/* Collapsed-panel size override — MUST come after the `.questing-adventurer-panel`
+   rules above (the base min-width/min-height/container-type are declared in two
+   earlier blocks at lines ~573 and ~630). Same specificity (one class), so source
+   order decides: this later rule wins.
+
+   The base rule sets `container-type: inline-size`, which applies size
+   containment — under size containment the element's inline-size does NOT
+   respond to its contents, so the panel would otherwise ignore the chip's
+   intrinsic width and stretch to its default width regardless of min-width: 0.
+   `width: fit-content` + `container-type: normal` together force the box to
+   shrink to the chip. The expanded branch restores inline-size containment
+   via the base rule (the --collapsed class is removed). */
+.questing-adventurer-panel--collapsed {
+  min-width: 0;
+  min-height: 0;
+  max-width: 360px;
+  width: fit-content;
+  container-type: normal;
 }
 
 @container (max-width: 360px) {
