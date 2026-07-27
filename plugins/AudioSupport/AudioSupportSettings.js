@@ -32,6 +32,14 @@
   const PLUGIN_ROUTE = "/plugins/audiosupport";
   const AUDIO_EXTENSIONS = ["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
   const DEFAULT_TAG_NAME = "Audio";
+  const SORT_OPTIONS = [
+    { value: "title_asc", label: "Title (A-Z)" },
+    { value: "title_desc", label: "Title (Z-A)" },
+    { value: "created_desc", label: "Date added (newest)" },
+    { value: "created_asc", label: "Date added (oldest)" },
+    { value: "duration_desc", label: "Duration (longest)" },
+    { value: "duration_asc", label: "Duration (shortest)" },
+  ];
 
   let settingsToolsCallCount = 0;
   let saving = false;
@@ -190,6 +198,44 @@
   }
 
   // ---------------------------------------------------------------------------
+  // ID3 embedded cover extraction
+  // ---------------------------------------------------------------------------
+
+  function loadJsMediaTags() {
+    return new Promise(function (resolve, reject) {
+      if (window.jsmediatags) { resolve(); return; }
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.7/jsmediatags.min.js";
+      script.onload = function () { resolve(); };
+      script.onerror = function () { reject(new Error("Failed to load jsmediatags from CDN")); };
+      document.head.appendChild(script);
+    });
+  }
+
+  function extractCoverFromScene(sceneId) {
+    return new Promise(function (resolve, reject) {
+      window.jsmediatags.read("/scene/" + sceneId + "/stream", {
+        onSuccess: function (tag) {
+          const picture = tag.tags && tag.tags.picture;
+          if (!picture || !picture.data || !picture.format) { resolve(null); return; }
+          let binary = "";
+          const data = picture.data;
+          for (let i = 0; i < data.length; i++) {
+            binary += String.fromCharCode(data[i]);
+          }
+          try {
+            const base64 = window.btoa(binary);
+            resolve("data:" + picture.format + ";base64," + base64);
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onError: function (err) { reject(err); }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Canvas cover generator
   // ---------------------------------------------------------------------------
 
@@ -254,6 +300,13 @@
     return mins + ":" + (secs < 10 ? "0" + secs : secs);
   }
 
+  function formatDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
   function getAudioFile(scene) {
     const files = scene && scene.files;
     if (!Array.isArray(files) || files.length === 0) return null;
@@ -264,34 +317,161 @@
     return files.find(function (f) { return f.video_codec === ""; }) || null;
   }
 
-  function AudioSceneRow(props) {
+  function useDebouncedValue(value, delay) {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(function () {
+      const t = setTimeout(function () { setDebounced(value); }, delay);
+      return function () { clearTimeout(t); };
+    }, [value, delay]);
+    return debounced;
+  }
+
+  function AudioSceneCard(props) {
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
     return h(
       Link,
-      { to: "/scenes/" + scene.id, className: "audio-support-settings__scene-row" },
+      {
+        to: "/scenes/" + scene.id,
+        className: "audio-support-settings__scene-card",
+        title: scene.title || "Untitled",
+      },
       h(
         "div",
-        { className: "audio-support-settings__scene-thumb" },
+        { className: "audio-support-settings__scene-cover" },
         scene.paths && scene.paths.screenshot
           ? h("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" })
-          : h("div", { className: "audio-support-settings__scene-thumb--placeholder" })
+          : h("div", { className: "audio-support-settings__scene-cover--placeholder" })
       ),
       h(
         "div",
-        { className: "audio-support-settings__scene-info" },
-        h("div", { className: "audio-support-settings__scene-title" }, scene.title || "Untitled"),
+        { className: "audio-support-settings__scene-card-info" },
+        h("div", { className: "audio-support-settings__scene-card-title" }, scene.title || "Untitled"),
         h(
           "div",
-          { className: "audio-support-settings__scene-meta" },
-          audioFile ? (audioFile.audio_codec || "Unknown").toUpperCase() : "Audio",
-          " \u00b7 ",
+          { className: "audio-support-settings__scene-card-meta" },
           formatDuration(audioFile && audioFile.duration),
+          " \u00b7 ",
+          (audioFile && audioFile.audio_codec ? audioFile.audio_codec.toUpperCase() : "AUDIO"),
           audioFile && audioFile.bit_rate
             ? " \u00b7 " + Math.round(audioFile.bit_rate / 1000) + " kbps"
             : null
-        )
+        ),
+        scene.created_at
+          ? h("div", { className: "audio-support-settings__scene-card-date" }, "Added " + formatDate(scene.created_at))
+          : null
       )
+    );
+  }
+
+  function AudioLibraryTab(props) {
+    const scenes = props.scenes || [];
+    const search = props.search;
+    const setSearch = props.setSearch;
+    const sortBy = props.sortBy;
+    const setSortBy = props.setSortBy;
+    const tag = props.tag;
+
+    const debouncedSearch = useDebouncedValue(search, 200);
+
+    const filteredSorted = React.useMemo(
+      function () {
+        let list = scenes.slice();
+        const q = debouncedSearch.trim().toLowerCase();
+        if (q) {
+          list = list.filter(function (s) {
+            return (s.title || "").toLowerCase().indexOf(q) !== -1;
+          });
+        }
+        list.sort(function (a, b) {
+          switch (sortBy) {
+            case "title_desc":
+              return (b.title || "").localeCompare(a.title || "");
+            case "created_desc":
+              return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+            case "created_asc":
+              return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+            case "duration_desc":
+              return (getAudioFile(b).duration || 0) - (getAudioFile(a).duration || 0);
+            case "duration_asc":
+              return (getAudioFile(a).duration || 0) - (getAudioFile(b).duration || 0);
+            case "title_asc":
+            default:
+              return (a.title || "").localeCompare(b.title || "");
+          }
+        });
+        return list;
+      },
+      [scenes, debouncedSearch, sortBy]
+    );
+
+    return h(
+      "section",
+      { className: "audio-support-settings__section" },
+      h("h2", null, "Audio Library"),
+      !tag
+        ? h("p", { className: "audio-support-settings__hint" }, "Create the audio tag on the Setup tab first.")
+        : h(
+            "div",
+            { className: "audio-support-settings__library-controls" },
+            h(
+              "div",
+              { className: "audio-support-settings__search" },
+              h("input", {
+                type: "text",
+                className: "audio-support-settings__input",
+                placeholder: "Search by title...",
+                value: search,
+                onChange: function (e) { setSearch(e.target.value); },
+              })
+            ),
+            h(
+              "div",
+              { className: "audio-support-settings__sort" },
+              h(
+                "label",
+                null,
+                "Sort:",
+                h(
+                  "select",
+                  {
+                    className: "audio-support-settings__select",
+                    value: sortBy,
+                    onChange: function (e) { setSortBy(e.target.value); },
+                  },
+                  SORT_OPTIONS.map(function (opt) {
+                    return h("option", { key: opt.value, value: opt.value }, opt.label);
+                  })
+                )
+              )
+            )
+          ),
+      tag && scenes.length > 0
+        ? h(
+            "div",
+            { className: "audio-support-settings__count" },
+            filteredSorted.length + " scene" + (filteredSorted.length === 1 ? "" : "s")
+          )
+        : null,
+      tag && filteredSorted.length === 0
+        ? h(
+            "div",
+            { className: "audio-support-settings__empty" },
+            h("p", null, "No scenes found."),
+            scenes.length === 0
+              ? h("p", { className: "audio-support-settings__hint" }, "Scan your library after enabling audio ingestion, then run the Tag all audio scenes task.")
+              : h("p", { className: "audio-support-settings__hint" }, "Try a different search term or sort option.")
+          )
+        : null,
+      tag && filteredSorted.length > 0
+        ? h(
+            "div",
+            { className: "audio-support-settings__scene-grid" },
+            filteredSorted.map(function (scene) {
+              return h(AudioSceneCard, { key: scene.id, scene: scene });
+            })
+          )
+        : null
     );
   }
 
@@ -308,6 +488,8 @@
     const [wizardConfirm, setWizardConfirm] = useState(false);
     const [wizardDiff, setWizardDiff] = useState([]);
     const [coverProgress, setCoverProgress] = useState(null);
+    const [search, setSearch] = useState("");
+    const [sortBy, setSortBy] = useState("title_asc");
 
     useEffect(function () {
       let mounted = true;
@@ -452,6 +634,126 @@
       } finally {
         setWorking(false);
       }
+    }
+
+    async function handleExtractEmbeddedCovers() {
+      if (!tag) {
+        setError("Create the audio tag first.");
+        return;
+      }
+      setWorking(true);
+      setError(null);
+      setCoverProgress("Loading ID3 parser...");
+      try {
+        await loadJsMediaTags();
+      } catch (err) {
+        setError("Failed to load jsmediatags: " + String((err && err.message) || err));
+        setCoverProgress(null);
+        setWorking(false);
+        return;
+      }
+
+      let target;
+      try {
+        setCoverProgress("Finding audio scenes without covers...");
+        target = await findAudioScenesMissingCover(tag.id);
+      } catch (err) {
+        setError("Failed to find scenes: " + String((err && err.message) || err));
+        setCoverProgress(null);
+        setWorking(false);
+        return;
+      }
+
+      let extracted = 0;
+      let skipped = 0;
+      let lastError = null;
+      for (let i = 0; i < target.length; i++) {
+        const scene = target[i];
+        setCoverProgress("Extracting " + (i + 1) + " / " + target.length + "...");
+        try {
+          const dataUrl = await extractCoverFromScene(scene.id);
+          if (dataUrl) {
+            await updateSceneCover(scene.id, dataUrl);
+            extracted += 1;
+          } else {
+            skipped += 1;
+          }
+        } catch (err) {
+          console.warn("AudioSupport: embedded cover extraction failed for scene " + scene.id, err);
+          skipped += 1;
+          lastError = err;
+        }
+      }
+
+      try {
+        const refreshed = await findAudioScenes(tag.id);
+        setAudioScenes(refreshed);
+      } catch (err) {
+        console.error("AudioSupport: failed to refresh scenes after extraction", err);
+      }
+
+      setCoverProgress(null);
+      let msg = "Extracted " + extracted + " cover" + (extracted === 1 ? "" : "s") + " from " + target.length + " scene" + (target.length === 1 ? "" : "s") + " (" + skipped + " had no embedded art).";
+      if (lastError) {
+        msg += " Some formats (e.g. OGG) may not be supported.";
+      }
+      setMessage(msg);
+      setWorking(false);
+    }
+
+    function GenerateCoversTab(props) {
+      return h(
+        "section",
+        { className: "audio-support-settings__section" },
+        h("h2", null, "Generate Covers"),
+        h(
+          "div",
+          { className: "audio-support-settings__covers-grid" },
+          h(
+            "div",
+            { className: "audio-support-settings__cover-option" },
+            h("h3", null, "Extract embedded covers"),
+            h(
+              "p",
+              { className: "audio-support-settings__hint" },
+              "Reads album art already embedded in MP3/FLAC/M4A files. Skips scenes with no embedded art."
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "audio-support-settings__button audio-support-settings__button--primary",
+                disabled: props.working || !props.tag,
+                onClick: props.onExtractEmbedded,
+              },
+              "Extract embedded covers"
+            )
+          ),
+          h(
+            "div",
+            { className: "audio-support-settings__cover-option" },
+            h("h3", null, "Generate default covers"),
+            h(
+              "p",
+              { className: "audio-support-settings__hint" },
+              "Creates a music-note-on-gradient placeholder for every audio scene that has no cover."
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "audio-support-settings__button",
+                disabled: props.working || !props.tag,
+                onClick: props.onGenerateDefault,
+              },
+              "Generate default covers"
+            )
+          )
+        ),
+        props.coverProgress
+          ? h("div", { className: "audio-support-settings__progress audio-support-settings__progress--center" }, props.coverProgress)
+          : null
+      );
     }
 
     function tabButton(id, label) {
@@ -626,49 +928,24 @@
         : null,
 
       activeTab === "browse"
-        ? h(
-            "section",
-            { className: "audio-support-settings__section" },
-            h("h2", null, "Audio Library"),
-            !tag
-              ? h("p", { className: "audio-support-settings__hint" }, "Create the audio tag on the Setup tab first.")
-              : audioScenes.length === 0
-              ? h("p", { className: "audio-support-settings__hint" }, "No audio-tagged scenes found. Scan your library after enabling audio ingestion.")
-              : h(
-                  "div",
-                  { className: "audio-support-settings__scene-list" },
-                  audioScenes.map(function (scene) {
-                    return h(AudioSceneRow, { key: scene.id, scene: scene });
-                  })
-                )
-          )
+        ? h(AudioLibraryTab, {
+            tag: tag,
+            scenes: audioScenes,
+            search: search,
+            setSearch: setSearch,
+            sortBy: sortBy,
+            setSortBy: setSortBy,
+          })
         : null,
 
       activeTab === "covers"
-        ? h(
-            "section",
-            { className: "audio-support-settings__section" },
-            h("h2", null, "Generate Covers"),
-            h(
-              "p",
-              { className: "audio-support-settings__hint" },
-              "Generate a default cover image (music note on a gradient) for audio scenes that have no screenshot. ",
-              "ID3 album-art extraction is not available in v0.1.0."
-            ),
-            h(
-              "button",
-              {
-                type: "button",
-                className: "audio-support-settings__button audio-support-settings__button--primary",
-                disabled: working || !tag,
-                onClick: handleGenerateCovers,
-              },
-              working && coverProgress ? coverProgress : "Generate default covers"
-            ),
-            coverProgress
-              ? h("div", { className: "audio-support-settings__progress" }, coverProgress)
-              : null
-          )
+        ? h(GenerateCoversTab, {
+            tag: tag,
+            working: working,
+            coverProgress: coverProgress,
+            onGenerateDefault: handleGenerateCovers,
+            onExtractEmbedded: handleExtractEmbeddedCovers,
+          })
         : null
     );
   }
