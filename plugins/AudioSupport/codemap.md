@@ -4,7 +4,7 @@
 Adds audio file support to Stash via the audio-as-scene path: a setup wizard that enables audio ingestion, an audio player overlay using direct-stream playback, and an audio browse/settings page. Designed to migrate to the native Audio type once PR #6824 lands.
 
 ## Files
-- `AudioSupport.yml` — plugin manifest (name, description, version 0.1.0, `ui.requires: CommunityScriptsUILibrary`, JS/CSS assets).
+- `AudioSupport.yml` — plugin manifest (name, description, version 0.1.1, `ui.requires: CommunityScriptsUILibrary`, JS/CSS assets).
 - `AudioSupport.js` — vanilla-JS player overlay. Detects audio-only scenes via GraphQL (`video_codec === ""` or `width === 0`), hides the broken video.js UI, and renders an HTML5 `<audio>` element loading the direct stream (`scene.paths.stream` or `/scene/{id}/stream`).
 - `AudioSupportSettings.js` — React settings page registered at `/plugins/audiosupport`. Includes a setup wizard, audio browse view, and default-cover generator.
 - `AudioSupport.css` — overlay styles.
@@ -25,7 +25,7 @@ Adds audio file support to Stash via the audio-as-scene path: a setup wizard tha
 7. Settings page tabs:
    - Setup: read `ConfigurationDocument`, show missing audio extensions, enable ingestion via `ConfigureGeneralDocument` with confirmation diff; create audio tag via `TagCreateDocument`.
    - Audio Library: query audio-tagged scenes via `FindScenesDocument` with `tags INCLUDES`.
-   - Generate Covers: iterate audio scenes with no screenshot, render a canvas gradient/music-note cover, and upload via `SceneUpdateDocument(cover_image: dataUrl)`.
+   - Generate Covers: query audio-tagged scenes missing a cover blob via `FindScenesDocument` with `is_missing: "cover"` (server-side `scenes.cover_blob IS NULL` check — `paths.screenshot` is always a non-empty URL so cannot be used client-side), render a canvas gradient/music-note cover, and upload via `SceneUpdateDocument(cover_image: dataUrl)`.
 
 ## Dependencies
 - `window.csLib` (CommunityScriptsUILibrary) — required by the overlay.

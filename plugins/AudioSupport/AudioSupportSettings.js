@@ -156,6 +156,27 @@
     return (result && result.data && result.data.findScenes && result.data.findScenes.scenes) || [];
   }
 
+  // Find audio-tagged scenes that have no cover blob. Uses the server-side
+  // `is_missing: "cover"` filter (maps to `scenes.cover_blob IS NULL` in
+  // pkg/sqlite/scene_filter.go). Do NOT filter on `paths.screenshot` client-side:
+  // the Stash resolver unconditionally builds a screenshot URL for every scene
+  // (it serves a default placeholder image when no cover blob exists), so a
+  // truthy `paths.screenshot` does NOT imply a cover exists.
+  async function findAudioScenesMissingCover(tagId) {
+    const result = await apolloClient.query({
+      query: GQL.FindScenesDocument,
+      variables: {
+        filter: { per_page: 500, sort: "title" },
+        scene_filter: {
+          tags: { value: [tagId], modifier: "INCLUDES" },
+          is_missing: "cover",
+        },
+      },
+      fetchPolicy: "no-cache",
+    });
+    return (result && result.data && result.data.findScenes && result.data.findScenes.scenes) || [];
+  }
+
   async function updateSceneCover(sceneId, base64Png) {
     await apolloClient.mutate({
       mutation: GQL.SceneUpdateDocument,
@@ -407,14 +428,12 @@
       setError(null);
       setCoverProgress("Finding audio scenes\u2026");
       try {
-        let scenes = audioScenes;
-        if (scenes.length === 0) {
-          scenes = await findAudioScenes(tag.id);
-          setAudioScenes(scenes);
-        }
-        const target = scenes.filter(function (s) {
-          return !(s.paths && s.paths.screenshot);
-        });
+        // Use the server-side `is_missing: "cover"` filter so we only generate
+        // covers for scenes that actually lack a cover blob. The previous
+        // client-side `!paths.screenshot` check was always false because the
+        // Stash resolver unconditionally returns a screenshot URL for every
+        // scene (placeholder image when no cover exists).
+        const target = await findAudioScenesMissingCover(tag.id);
         setCoverProgress("Generating covers for " + target.length + " scene(s)\u2026");
         let done = 0;
         for (const scene of target) {
