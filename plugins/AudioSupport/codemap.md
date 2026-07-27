@@ -4,8 +4,8 @@
 Adds audio file support to Stash via the audio-as-scene path: a setup wizard that enables audio ingestion, an audio player overlay using direct-stream playback, and an audio browse/settings page. Designed to migrate to the native Audio type once PR #6824 lands.
 
 ## Files
-- `AudioSupport.yml` — plugin manifest (name, description, version 0.2.0, `interface: js`, `exec: AudioSupportHook.js`, `hooks: Scene.Create.Post`, `tasks: tagAll`, `ui.requires: CommunityScriptsUILibrary`, JS/CSS assets).
-- `AudioSupport.js` — vanilla-JS player overlay. Detects audio-only scenes via GraphQL (`video_codec === ""` or `width === 0`), hides the broken video.js UI, and renders an HTML5 `<audio>` element loading the direct stream (`scene.paths.stream` or `/scene/{id}/stream`). Supports playback speed (0.5x–2x), loop toggle, keyboard shortcuts (Space/Arrows/m/l), and volume persistence.
+- `AudioSupport.yml` — plugin manifest (name, description, version 0.3.0, `interface: js`, `exec: AudioSupportHook.js`, `hooks: Scene.Create.Post`, `tasks: tagAll`, `ui.requires: CommunityScriptsUILibrary`, JS/CSS assets).
+- `AudioSupport.js` — vanilla-JS player overlay. Registers `PluginApi.patch.instead("ScenePlayer", ...)` at script load to replace video.js with a mount div (`#AudioSupportMount`) for audio-only scenes. Detects audio-only scenes via GraphQL (`video_codec === ""` or `width === 0`), renders an HTML5 `<audio>` element loading the direct stream (`scene.paths.stream` or `/scene/{id}/stream`). Supports playback speed (0.5x–2x), loop toggle, keyboard shortcuts (Space/Arrows/m/l), and volume persistence.
 - `AudioSupportHook.js` — backend Goja JS hook script (runs in Stash server, NOT browser). Handles `Scene.Create.Post` (auto-tags audio-only scenes during scan) and `tagAll` manual task (tags all existing audio scenes). Uses `gql.Do()` for GraphQL, `log.Info()` for logging. ES5.1 only (no arrow functions, no Promise).
 - `AudioSupportSettings.js` — React settings page registered at `/plugins/audiosupport`. Includes a setup wizard, audio browse view (search/sort/responsive card grid), and cover generator (ID3 embedded extraction via jsmediatags + default canvas covers).
 - `AudioSupport.css` — overlay styles (transport controls, speed/loop buttons, keyboard hint).
@@ -17,9 +17,9 @@ Adds audio file support to Stash via the audio-as-scene path: a setup wizard tha
 - Audio detection: primary file `video_codec === ""` (equivalently `width === 0`).
 
 ## Control flow
-1. On script load, `AudioSupport.js` registers `csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel)` plus a `stash:location` safety net.
+1. On script load, `AudioSupport.js` registers `PluginApi.patch.instead("ScenePlayer", ...)` to intercept the React ScenePlayer component. For audio-only scenes, it returns a `<div id="AudioSupportMount">` instead of the video.js player — video.js never initializes. Then registers `csLib.PathElementListener("/scenes/", "#AudioSupportMount", setupPanel)` plus a `stash:location` safety net.
 2. `setupPanel` parses the scene id from the URL, queries `FindSceneDocument`, and checks whether the scene is audio-only.
-3. If audio-only: hide the video player and render the audio overlay (cover art, metadata, transport controls, volume, playback speed, loop toggle).
+3. If audio-only: render the audio overlay (cover art, metadata, transport controls, volume, playback speed, loop toggle) inside `#AudioSupportMount` (a React-rendered div that replaces video.js for audio scenes).
 4. The `<audio>` element loads the direct stream exclusively; transcode endpoints are never used.
 5. Overlay interactions (collapse, opacity slider, drag, playback speed, loop toggle, volume slider, keyboard shortcuts) save to csLib at user-driven boundaries (`change` for sliders, drag end, collapse toggle, shortcut action, `pagehide`).
 6. `AudioSupportHook.js` runs in the Stash server's Goja JS VM (not browser). On `Scene.Create.Post` (fires during scan — `pkg/scene/scan.go:123`), it queries the new scene, checks `video_codec === ""` or `width === 0`, finds/creates the "Audio" tag via `allTags`/`tagCreate`, and appends the tag id via `sceneUpdate(tag_ids: [...existing, audioTagId])`. The `tagAll` manual task paginates all scenes and applies the same logic.

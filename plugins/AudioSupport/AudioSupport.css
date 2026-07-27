@@ -20,14 +20,13 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Hide the broken video.js controls when the audio overlay is active. */
-.audio-support-overlay__player-hidden .video-js,
-.audio-support-overlay__player-hidden video,
-.audio-support-overlay__player-hidden .vjs-control-bar,
-.audio-support-overlay__player-hidden .vjs-big-play-button {
-  opacity: 0 !important;
-  pointer-events: none !important;
-  visibility: hidden !important;
+/* Mount div that replaces video.js for audio-only scenes. */
+.audio-support-mount {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 450px;
+  background: #000;
 }
 
 .audio-support-overlay--collapsed {

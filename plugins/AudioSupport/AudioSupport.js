@@ -2,15 +2,19 @@
  * AudioSupport plugin — player overlay
  *
  * Architecture:
- * - Uses csLib.PathElementListener to inject on /scenes/ when #VideoJsPlayer exists,
- *   and on subsequent stash:location SPA navigations.
- * - Adds an extra window.PluginApi.Event "stash:location" safety net to re-inject the
- *   audio overlay if React re-renders remove it. There can be a brief flash between
- *   removal and re-injection.
+ * - Uses PluginApi.patch.instead("ScenePlayer", ...) to intercept the React
+ *   ScenePlayer component at script load. For audio-only scenes (video_codec === ""
+ *   or width === 0), returns a <div id="AudioSupportMount"> instead of the video.js
+ *   player. video.js never initializes for audio scenes — no errors, no visual
+ *   redundancy.
+ * - Uses csLib.PathElementListener to inject the audio overlay on /scenes/ when
+ *   #AudioSupportMount exists, and on subsequent stash:location SPA navigations.
+ * - Adds an extra window.PluginApi.Event "stash:location" safety net to re-inject
+ *   the audio overlay if React re-renders remove it. There can be a brief flash
+ *   between removal and re-injection.
  * - Audio-only scenes are detected via the GraphQL FindScene query: the primary file
- *   has video_codec === "" (or width === 0). For those scenes, we hide the broken
- *   video.js player UI and render a plain HTML5 <audio> element loading the direct
- *   stream URL.
+ *   has video_codec === "" (or width === 0). For those scenes, the overlay renders a
+ *   plain HTML5 <audio> element loading the direct stream URL.
  * - Stash's transcode endpoints (stream.mp4 / stream.webm / mkv) fail for audio-only
  *   files because FileGetCodec forces a video encode. The ONLY working endpoint is
  *   the direct stream, available as scene.paths.stream (fallback /scene/{id}/stream).
@@ -22,6 +26,28 @@
   "use strict";
 
   const csLib = window.csLib;
+
+  // --- ScenePlayer patch: replace video.js with a mount div for audio scenes ---
+  var PluginApi = window.PluginApi;
+  if (PluginApi && PluginApi.patch && PluginApi.React) {
+    var React = PluginApi.React;
+    PluginApi.patch.instead("ScenePlayer", function (props, next) {
+      var scene = props && props.scene;
+      var file = scene && scene.files && scene.files[0];
+      if (file && (file.video_codec === "" || file.width === 0 || file.height === 0)) {
+        // Audio-only scene: return a mount point; video.js never initializes.
+        return React.createElement("div", {
+          id: "AudioSupportMount",
+          className: "audio-support-mount",
+        });
+      }
+      // Normal video scene: render the original ScenePlayer.
+      return next()(props);
+    });
+  } else {
+    console.error("AudioSupport: PluginApi not available; cannot patch ScenePlayer.");
+  }
+
   if (!csLib) {
     console.error("AudioSupport: CommunityScriptsUILibrary not loaded. Install it first.");
     return;
@@ -512,7 +538,7 @@
       saveNow();
       // Re-render from the cached scene/audio file (set during the last
       // setupPanel) to avoid a fresh Apollo query on every expand.
-      const p = currentPlayer || document.querySelector("#VideoJsPlayer");
+      const p = currentPlayer || document.querySelector("#AudioSupportMount");
       if (p && cachedScene && cachedAudioFile) {
         renderExpanded(overlayRoot, cachedScene, cachedAudioFile);
       } else if (p) {
@@ -693,24 +719,14 @@
 
     const audioFile = getAudioFile(scene);
     if (!audioFile) {
-      // Normal video scene: make sure any hidden state is cleared.
-      playerEl.classList.remove("audio-support-overlay__player-hidden");
       cachedScene = null;
       cachedAudioFile = null;
       return;
     }
 
-    // This is an audio scene: hide the broken video.js UI.
-    playerEl.classList.add("audio-support-overlay__player-hidden");
-
     await loadState();
 
     if (playerEl.querySelector(".audio-support-overlay")) return;
-
-    const computed = window.getComputedStyle(playerEl);
-    if (computed.position === "static") {
-      playerEl.style.position = "relative";
-    }
 
     currentPlayer = playerEl;
     // Cache so the collapsed→expand path can re-render without a fresh query.
@@ -730,7 +746,7 @@
   }
 
   function tryInject() {
-    const p = document.querySelector("#VideoJsPlayer");
+    const p = document.querySelector("#AudioSupportMount");
     if (p) setupPanel(p);
   }
 
@@ -742,7 +758,7 @@
     tryInject();
   }
 
-  csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
+  csLib.PathElementListener("/scenes/", "#AudioSupportMount", setupPanel);
 
   if (window.PluginApi && window.PluginApi.Event && typeof window.PluginApi.Event.addEventListener === "function") {
     window.PluginApi.Event.addEventListener("stash:location", function () {
