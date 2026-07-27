@@ -1,7 +1,20 @@
 name: Audio Support
 description: Adds audio file support to Stash via the audio-as-scene path — a setup wizard that enables audio ingestion, a Scene.Create.Post hook that tags audio scenes and extracts metadata, an audio player overlay (direct-stream playback, no broken transcodes), cover-art extraction, and an audio browse view. Designed to migrate to the native Audio type once PR #6824 lands.
-version: 0.1.1
+version: 0.2.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
+interface: js
+exec:
+  - AudioSupportHook.js
+hooks:
+  - name: Tag audio scenes on create
+    description: Automatically tags audio-only scenes with the Audio tag when they are created during scan.
+    triggeredBy:
+      - Scene.Create.Post
+tasks:
+  - name: Tag all audio scenes
+    description: Scans all existing scenes and tags audio-only ones with the Audio tag. Run this once after installing to tag previously-ingested audio scenes.
+    defaultArgs:
+      mode: tagAll
 ui:
   requires:
     - CommunityScriptsUILibrary

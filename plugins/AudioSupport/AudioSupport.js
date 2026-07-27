@@ -37,6 +37,9 @@
     opacity: DEFAULT_OPACITY,
     panelPos: { ...DEFAULT_PANEL_POS },
     audioTagName: "Audio",
+    playbackRate: 1.0,
+    loop: false,
+    volume: 1.0,
   };
 
   let saving = false;
@@ -51,6 +54,9 @@
   // (fetchPolicy is "no-cache", so without this the expand would re-fetch).
   let cachedScene = null;
   let cachedAudioFile = null;
+
+  // Volume persistence debounce timer.
+  let volumeSaveTimeout = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -113,6 +119,9 @@
         opacity: state.opacity,
         panelPos: state.panelPos,
         audioTagName: state.audioTagName,
+        playbackRate: state.playbackRate,
+        loop: state.loop,
+        volume: state.volume,
       });
     } catch (err) {
       console.error("AudioSupport: failed to save configuration", err);
@@ -146,6 +155,16 @@
       }
       if (typeof stored.audioTagName === "string" && stored.audioTagName.trim()) {
         state.audioTagName = stored.audioTagName.trim();
+      }
+      // New fields: safe fallbacks for backward compatibility with old config.
+      if (typeof stored.playbackRate === "number" && !Number.isNaN(stored.playbackRate)) {
+        state.playbackRate = stored.playbackRate;
+      }
+      if (typeof stored.loop === "boolean") {
+        state.loop = stored.loop;
+      }
+      if (typeof stored.volume === "number" && !Number.isNaN(stored.volume)) {
+        state.volume = clamp(stored.volume, 0, 1);
       }
     }
   }
@@ -324,10 +343,36 @@
     volume.min = "0";
     volume.max = "1";
     volume.step = "0.05";
-    volume.value = "1";
+    volume.value = String(state.volume);
     volume.setAttribute("aria-label", "Volume");
     transport.appendChild(volume);
 
+    const speedLoop = document.createElement("div");
+    speedLoop.className = "audio-support-overlay__speed-loop";
+
+    const speedSelect = document.createElement("select");
+    speedSelect.className = "audio-support-overlay__speed-select";
+    speedSelect.title = "Playback speed";
+    speedSelect.setAttribute("aria-label", "Playback speed");
+    const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    for (const rate of speeds) {
+      const opt = document.createElement("option");
+      opt.value = String(rate);
+      opt.textContent = rate + "x";
+      if (Math.abs(rate - state.playbackRate) < 0.001) opt.selected = true;
+      speedSelect.appendChild(opt);
+    }
+    speedLoop.appendChild(speedSelect);
+
+    const loopBtn = document.createElement("button");
+    loopBtn.type = "button";
+    loopBtn.className = "audio-support-overlay__loop-button" + (state.loop ? " audio-support-overlay__loop-button--active" : "");
+    loopBtn.title = "Loop (l)";
+    loopBtn.setAttribute("aria-label", "Loop");
+    loopBtn.textContent = "\ud83d\udd01";
+    speedLoop.appendChild(loopBtn);
+
+    transport.appendChild(speedLoop);
     body.appendChild(transport);
     overlay.appendChild(body);
 
@@ -335,6 +380,9 @@
     const audio = document.createElement("audio");
     audio.className = "audio-support-overlay__audio";
     audio.preload = "metadata";
+    audio.playbackRate = state.playbackRate;
+    audio.loop = state.loop;
+    audio.volume = state.volume;
     const streamUrl = scene.paths && scene.paths.stream ? scene.paths.stream : "/scene/" + scene.id + "/stream";
     audio.src = streamUrl;
     overlay.appendChild(audio);
@@ -397,6 +445,52 @@
     volume.addEventListener("input", function () {
       audio.volume = clamp(parseFloat(volume.value), 0, 1);
     });
+    volume.addEventListener("change", function () {
+      // Slider release: commit immediately.
+      state.volume = clamp(parseFloat(volume.value), 0, 1);
+      saveNow();
+    });
+
+    function scheduleVolumeSave() {
+      if (volumeSaveTimeout) clearTimeout(volumeSaveTimeout);
+      volumeSaveTimeout = setTimeout(function () {
+        state.volume = clamp(audio.volume, 0, 1);
+        volume.value = String(state.volume);
+        saveNow();
+      }, 500);
+    }
+
+    audio.addEventListener("volumechange", function () {
+      const v = clamp(audio.volume, 0, 1);
+      // Keep the slider in sync when muted via keyboard shortcut or system changes.
+      if (Math.abs(parseFloat(volume.value) - v) > 0.001) {
+        volume.value = String(v);
+      }
+      // Debounced persistence: don't write on every pixel of a drag.
+      scheduleVolumeSave();
+    });
+
+    speedSelect.addEventListener("change", function () {
+      const rate = parseFloat(speedSelect.value);
+      if (!Number.isNaN(rate) && isFinite(rate) && rate > 0) {
+        state.playbackRate = rate;
+        audio.playbackRate = rate;
+        saveNow();
+      }
+    });
+
+    function updateLoopButton() {
+      loopBtn.classList.toggle("audio-support-overlay__loop-button--active", state.loop);
+    }
+
+    function toggleLoop() {
+      state.loop = !state.loop;
+      audio.loop = state.loop;
+      updateLoopButton();
+      saveNow();
+    }
+
+    loopBtn.addEventListener("click", toggleLoop);
 
     return { overlay: overlay, audio: audio, playBtn: playBtn, seek: seek, time: time };
   }
@@ -439,6 +533,83 @@
     const built = buildOverlay(scene, audioFile);
     panel.appendChild(built.overlay);
     audioEl = built.audio;
+    installKeyboardListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Keyboard shortcuts
+  // ---------------------------------------------------------------------------
+
+  function isEditingText() {
+    const active = document.activeElement;
+    if (!active) return false;
+    const tag = active.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || active.isContentEditable;
+  }
+
+  function onKeyDown(e) {
+    if (!audioEl || overlayRoot.classList.contains("audio-support-overlay--collapsed")) return;
+    if (isEditingText()) return;
+
+    switch (e.key) {
+      case " ":
+      case "Spacebar":
+        e.preventDefault();
+        if (audioEl.paused) {
+          audioEl.play().catch(function () {});
+        } else {
+          audioEl.pause();
+        }
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        if (isFinite(audioEl.duration) && audioEl.duration > 0) {
+          audioEl.currentTime = Math.max(0, audioEl.currentTime - 5);
+        }
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        if (isFinite(audioEl.duration) && audioEl.duration > 0) {
+          audioEl.currentTime = Math.min(audioEl.duration, audioEl.currentTime + 5);
+        }
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        audioEl.volume = clamp(audioEl.volume + 0.1, 0, 1);
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        audioEl.volume = clamp(audioEl.volume - 0.1, 0, 1);
+        break;
+      case "m":
+      case "M":
+        audioEl.muted = !audioEl.muted;
+        break;
+      case "l":
+      case "L":
+        {
+          state.loop = !state.loop;
+          audioEl.loop = state.loop;
+          saveNow();
+          // Update the button visual if it still exists in the DOM.
+          const loopBtn = overlayRoot.querySelector(".audio-support-overlay__loop-button");
+          if (loopBtn) loopBtn.classList.toggle("audio-support-overlay__loop-button--active", state.loop);
+        }
+        break;
+    }
+  }
+
+  let keyboardInstalled = false;
+  function installKeyboardListeners() {
+    if (keyboardInstalled) return;
+    keyboardInstalled = true;
+    document.addEventListener("keydown", onKeyDown);
+  }
+
+  function removeKeyboardListeners() {
+    if (!keyboardInstalled) return;
+    keyboardInstalled = false;
+    document.removeEventListener("keydown", onKeyDown);
   }
 
   // ---------------------------------------------------------------------------
@@ -498,6 +669,11 @@
   // ---------------------------------------------------------------------------
 
   function teardownOverlay() {
+    removeKeyboardListeners();
+    if (volumeSaveTimeout) {
+      clearTimeout(volumeSaveTimeout);
+      volumeSaveTimeout = null;
+    }
     if (overlayRoot && overlayRoot.parentElement) {
       overlayRoot.parentElement.removeChild(overlayRoot);
     }
@@ -575,6 +751,12 @@
   }
 
   window.addEventListener("pagehide", function () {
+    // Flush any pending volume save before leaving the page.
+    if (volumeSaveTimeout) {
+      clearTimeout(volumeSaveTimeout);
+      volumeSaveTimeout = null;
+      state.volume = audioEl ? clamp(audioEl.volume, 0, 1) : state.volume;
+    }
     saveNow();
   });
 })();
