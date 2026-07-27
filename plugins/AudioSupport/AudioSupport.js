@@ -46,6 +46,11 @@
   let currentPlayer = null;
   let overlayRoot = null;
   let audioEl = null;
+  // Cached scene + audio file from the last successful setupPanel, so the
+  // collapsed→expand path can re-render without a fresh Apollo query
+  // (fetchPolicy is "no-cache", so without this the expand would re-fetch).
+  let cachedScene = null;
+  let cachedAudioFile = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -234,6 +239,11 @@
     closeBtn.title = "Collapse";
     closeBtn.setAttribute("aria-label", "Collapse panel");
     closeBtn.textContent = "\u00d7";
+    closeBtn.addEventListener("click", function () {
+      state.collapsed = true;
+      saveNow();
+      renderCollapsed(overlayRoot);
+    });
     controls.appendChild(closeBtn);
 
     header.appendChild(controls);
@@ -406,9 +416,14 @@
     chip.addEventListener("click", function () {
       state.collapsed = false;
       saveNow();
-      // Re-render by re-running setup; the scene is cached from the last mount.
+      // Re-render from the cached scene/audio file (set during the last
+      // setupPanel) to avoid a fresh Apollo query on every expand.
       const p = currentPlayer || document.querySelector("#VideoJsPlayer");
-      if (p) setupPanel(p);
+      if (p && cachedScene && cachedAudioFile) {
+        renderExpanded(overlayRoot, cachedScene, cachedAudioFile);
+      } else if (p) {
+        setupPanel(p);
+      }
     });
     panel.appendChild(chip);
   }
@@ -416,7 +431,7 @@
   function renderExpanded(panel, scene, audioFile) {
     clearChildren(panel);
     panel.classList.remove("audio-support-overlay--collapsed");
-    panel.style.width = (state.panelSize && typeof state.panelSize.width === "number" ? state.panelSize.width : DEFAULT_PANEL_WIDTH) + "px";
+    panel.style.width = DEFAULT_PANEL_WIDTH + "px";
     panel.style.height = "";
     panel.style.top = state.panelPos.top + "px";
     panel.style.right = state.panelPos.right + "px";
@@ -504,6 +519,8 @@
     if (!audioFile) {
       // Normal video scene: make sure any hidden state is cleared.
       playerEl.classList.remove("audio-support-overlay__player-hidden");
+      cachedScene = null;
+      cachedAudioFile = null;
       return;
     }
 
@@ -520,6 +537,9 @@
     }
 
     currentPlayer = playerEl;
+    // Cache so the collapsed→expand path can re-render without a fresh query.
+    cachedScene = scene;
+    cachedAudioFile = audioFile;
     overlayRoot = document.createElement("div");
     overlayRoot.className = "audio-support-overlay";
     overlayRoot.style.top = state.panelPos.top + "px";
@@ -538,11 +558,19 @@
     if (p) setupPanel(p);
   }
 
+  // On SPA navigation, React may unmount the player element. Tear down any
+  // overlay bound to the previous (now-detached) player before re-injecting,
+  // so we don't leak a dangling overlay or double-mount on the new player.
+  function reInject() {
+    teardownOverlay();
+    tryInject();
+  }
+
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
 
   if (window.PluginApi && window.PluginApi.Event && typeof window.PluginApi.Event.addEventListener === "function") {
     window.PluginApi.Event.addEventListener("stash:location", function () {
-      tryInject();
+      reInject();
     });
   }
 

@@ -36,6 +36,10 @@
   let settingsToolsCallCount = 0;
   let saving = false;
   let pendingSave = false;
+  // Captures the latest patch so the saveConfig retry uses the most recent
+  // data instead of the first call's stale argument (matches the
+  // latestTriggers/latestMoves pattern in QuestingAdventurerSettings).
+  let latestPatch = null;
 
   // ---------------------------------------------------------------------------
   // Persistence helpers (overlay fields preserved)
@@ -44,6 +48,7 @@
   async function saveConfig(patch) {
     if (saving) {
       pendingSave = true;
+      latestPatch = patch;
       return;
     }
     saving = true;
@@ -69,7 +74,12 @@
       throw err;
     } finally {
       saving = false;
-      if (pendingSave) saveConfig(patch);
+      if (pendingSave) {
+        pendingSave = false;
+        const next = latestPatch;
+        latestPatch = null;
+        saveConfig(next);
+      }
     }
   }
 
