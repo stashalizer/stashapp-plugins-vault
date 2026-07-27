@@ -1,0 +1,304 @@
+.audio-support-settings {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  color: #fff;
+  font-family: sans-serif;
+  line-height: 1.4;
+}
+
+.audio-support-settings__header {
+  font-size: 1.75rem;
+  font-weight: bold;
+  margin: 0 0 1rem 0;
+}
+
+.audio-support-settings__tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 8px;
+}
+
+.audio-support-settings__tab {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.audio-support-settings__tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.audio-support-settings__tab--active {
+  background: rgba(110, 160, 220, 0.25);
+  border-color: rgba(110, 160, 220, 0.6);
+}
+
+.audio-support-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.audio-support-settings__section h2,
+.audio-support-settings__section h3 {
+  margin: 0;
+}
+
+.audio-support-settings__wizard-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.audio-support-settings__wizard-row label {
+  font-weight: 600;
+}
+
+.audio-support-settings__status {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.audio-support-settings__status--ok {
+  color: #8eff8e;
+}
+
+.audio-support-settings__status--bad {
+  color: #ff6b6b;
+}
+
+.audio-support-settings__hint {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.audio-support-settings__wizard-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.audio-support-settings__button {
+  display: inline-block;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+
+.audio-support-settings__button:hover:not([disabled]) {
+  background: rgba(128, 128, 128, 0.15);
+}
+
+.audio-support-settings__button[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.audio-support-settings__button--primary {
+  background: rgba(70, 130, 220, 0.85);
+  border-color: rgba(70, 130, 220, 0.85);
+  color: #fff;
+}
+
+.audio-support-settings__button--primary:hover:not([disabled]) {
+  background: rgba(70, 130, 220, 1);
+}
+
+.audio-support-settings__input {
+  flex: 1 1 200px;
+  padding: 6px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-size: 14px;
+  font-family: sans-serif;
+}
+
+.audio-support-settings__input:focus {
+  outline: 2px solid rgba(100, 150, 255, 0.6);
+  outline-offset: 1px;
+}
+
+.audio-support-settings__confirm {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.audio-support-settings__confirm ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.audio-support-settings__confirm li {
+  margin-bottom: 2px;
+}
+
+.audio-support-settings__confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.audio-support-settings__divider {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 8px 0;
+}
+
+.audio-support-settings__error {
+  padding: 10px 12px;
+  background: rgba(220, 60, 60, 0.15);
+  border: 1px solid rgba(220, 60, 60, 0.4);
+  border-radius: 4px;
+  color: #ff8e8e;
+  margin-bottom: 12px;
+}
+
+.audio-support-settings__message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(70, 160, 100, 0.15);
+  border: 1px solid rgba(70, 160, 100, 0.4);
+  border-radius: 4px;
+  color: #8eff8e;
+  margin-bottom: 12px;
+}
+
+.audio-support-settings__dismiss {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.audio-support-settings__loading {
+  opacity: 0.6;
+}
+
+.audio-support-settings__progress {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 4px;
+}
+
+.audio-support-settings__scene-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.audio-support-settings__scene-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.15s ease;
+}
+
+.audio-support-settings__scene-row:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.audio-support-settings__scene-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.audio-support-settings__scene-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.audio-support-settings__scene-thumb--placeholder::before {
+  content: "\266b";
+  font-size: 28px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.audio-support-settings__scene-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audio-support-settings__scene-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-support-settings__scene-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.audio-support-settings__launcher {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+
+.audio-support-settings__launcher-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 1rem;
+  transition: background 0.15s ease;
+}
+
+.audio-support-settings__launcher-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.audio-support-settings__launcher-card h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.1rem;
+}
+
+.audio-support-settings__launcher-card p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9rem;
+}
