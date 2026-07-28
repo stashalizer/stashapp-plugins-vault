@@ -1,23 +1,22 @@
 .audio-support-overlay {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  inset: 0;
   z-index: 20;
   pointer-events: auto;
-  max-width: 360px;
-  max-height: none;
-  overflow-y: auto;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: 100%;
+  overflow: hidden;
   background: rgba(0, 0, 0, var(--as-bg-alpha, 0.92));
   color: #fff;
   padding: 0;
-  border-radius: 8px;
   font-size: 14px;
   line-height: 1.4;
   font-family: sans-serif;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
 }
 
 /* Mount div that replaces video.js for audio-only scenes. */
@@ -30,9 +29,16 @@
 }
 
 .audio-support-overlay--collapsed {
-  padding: 4px 8px;
-  min-width: 0;
+  position: absolute;
+  inset: auto;
   width: fit-content;
+  height: auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: visible;
   container-type: normal;
 }
 
@@ -49,7 +55,13 @@
 .audio-support-overlay__panel {
   display: flex;
   flex-direction: column;
-  padding: 12px 14px;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .audio-support-overlay__header {
@@ -57,10 +69,10 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  width: 100%;
   font-weight: bold;
   margin-bottom: 12px;
   flex-shrink: 0;
-  cursor: move;
   user-select: none;
   touch-action: none;
 }
@@ -93,15 +105,11 @@
 .audio-support-overlay__header-controls {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .audio-support-overlay__close-button {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
   z-index: 2;
 }
 
@@ -172,20 +180,25 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 720px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .audio-support-overlay__cover {
   width: 100%;
-  max-width: 320px;
+  max-width: 400px;
   aspect-ratio: 1 / 1;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
 .audio-support-overlay__cover-img {
@@ -203,6 +216,7 @@
 
 .audio-support-overlay__meta {
   display: flex;
+  justify-content: center;
   gap: 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.8);
@@ -215,6 +229,7 @@
 
 .audio-support-overlay__transport {
   width: 100%;
+  max-width: 640px;
   display: flex;
   align-items: center;
   gap: 10px;

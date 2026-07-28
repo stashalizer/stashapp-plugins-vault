@@ -56,7 +56,6 @@
   const CONFIG_KEY = "AudioSupport";
   const DEFAULT_OPACITY = 0.92;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
-  const DEFAULT_PANEL_WIDTH = 360;
 
   let state = {
     collapsed: false,
@@ -236,7 +235,6 @@
 
     const header = document.createElement("div");
     header.className = "audio-support-overlay__header";
-    header.addEventListener("pointerdown", startPanelDrag);
 
     const title = document.createElement("span");
     title.className = "audio-support-overlay__title";
@@ -253,8 +251,8 @@
     opacityBtn.type = "button";
     opacityBtn.dataset.action = "opacity-reset";
     opacityBtn.className = "audio-support-overlay__opacity-button";
-    opacityBtn.title = "Panel opacity (Ctrl/\u2318+click to reset)";
-    opacityBtn.setAttribute("aria-label", "Panel opacity");
+    opacityBtn.title = "Background opacity (Ctrl/\u2318+click to reset)";
+    opacityBtn.setAttribute("aria-label", "Background opacity");
     opacityBtn.textContent = getOpacityIcon(state.opacity);
     opacityWrap.appendChild(opacityBtn);
 
@@ -266,7 +264,7 @@
     opacitySlider.max = "1";
     opacitySlider.step = "0.05";
     opacitySlider.value = String(state.opacity);
-    opacitySlider.setAttribute("aria-label", "Panel background opacity");
+    opacitySlider.setAttribute("aria-label", "Background opacity");
     opacitySlider.addEventListener("input", function () {
       const v = parseFloat(opacitySlider.value);
       if (Number.isNaN(v)) return;
@@ -528,6 +526,10 @@
     panel.classList.add("audio-support-overlay--collapsed");
     panel.style.width = "";
     panel.style.height = "";
+    panel.style.top = state.panelPos.top + "px";
+    panel.style.right = state.panelPos.right + "px";
+    panel.style.left = "auto";
+    panel.style.bottom = "auto";
 
     const chip = document.createElement("div");
     chip.className = "audio-support-overlay__chip";
@@ -553,10 +555,12 @@
   function renderExpanded(panel, scene, audioFile) {
     clearChildren(panel);
     panel.classList.remove("audio-support-overlay--collapsed");
-    panel.style.width = DEFAULT_PANEL_WIDTH + "px";
+    panel.style.width = "";
     panel.style.height = "";
-    panel.style.top = state.panelPos.top + "px";
-    panel.style.right = state.panelPos.right + "px";
+    panel.style.top = "";
+    panel.style.right = "";
+    panel.style.left = "";
+    panel.style.bottom = "";
 
     const built = buildOverlay(scene, audioFile);
     panel.appendChild(built.overlay);
@@ -650,6 +654,9 @@
     e.preventDefault();
     const panel = document.querySelector(".audio-support-overlay");
     if (!panel) return;
+    const isCollapsed = panel.classList.contains("audio-support-overlay--collapsed");
+    if (!isCollapsed) return;
+
     const rect = panel.getBoundingClientRect();
     const startTop = state.panelPos.top;
     const startRight = state.panelPos.right;
@@ -678,6 +685,8 @@
       state.panelPos = next;
       panel.style.top = next.top + "px";
       panel.style.right = next.right + "px";
+      panel.style.left = "auto";
+      panel.style.bottom = "auto";
     }
 
     function onEnd() {
@@ -736,8 +745,6 @@
     cachedAudioFile = audioFile;
     overlayRoot = document.createElement("div");
     overlayRoot.className = "audio-support-overlay";
-    overlayRoot.style.top = state.panelPos.top + "px";
-    overlayRoot.style.right = state.panelPos.right + "px";
     playerEl.appendChild(overlayRoot);
 
     if (state.collapsed) {
