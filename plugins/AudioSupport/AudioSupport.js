@@ -31,7 +31,10 @@
   var PluginApi = window.PluginApi;
   if (PluginApi && PluginApi.patch && PluginApi.React) {
     var React = PluginApi.React;
-    PluginApi.patch.instead("ScenePlayer", function (props, next) {
+    // PluginApi.patch.instead passes (props, _, original) where `original` is
+    // the next render function (called directly, not as a factory). The second
+    // arg is an unused context slot — do NOT treat it as the next fn.
+    PluginApi.patch.instead("ScenePlayer", function (props, _ctx, original) {
       var scene = props && props.scene;
       var file = scene && scene.files && scene.files[0];
       // Audio-only scene: return a mount point; video.js never initializes.
@@ -42,7 +45,7 @@
         });
       }
       // Normal video scene: render the original ScenePlayer.
-      return next()(props);
+      return original(props);
     });
   } else {
     console.error("AudioSupport: PluginApi not available; cannot patch ScenePlayer.");
