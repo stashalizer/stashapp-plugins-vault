@@ -34,8 +34,8 @@
     PluginApi.patch.instead("ScenePlayer", function (props, next) {
       var scene = props && props.scene;
       var file = scene && scene.files && scene.files[0];
-      if (file && (file.video_codec === "" || file.width === 0 || file.height === 0)) {
-        // Audio-only scene: return a mount point; video.js never initializes.
+      // Audio-only scene: return a mount point; video.js never initializes.
+      if (isAudioFile(file)) {
         return React.createElement("div", {
           id: "AudioSupportMount",
           className: "audio-support-mount",
@@ -104,8 +104,10 @@
     const secs = Math.floor(seconds % 60);
     const mins = Math.floor((seconds / 60) % 60);
     const hours = Math.floor(seconds / 3600);
-    const mmss = mins + ":" + (secs < 10 ? "0" + secs : secs);
-    return hours > 0 ? hours + ":" + (mins < 10 ? "0" + mins : mins) + ":" + (secs < 10 ? "0" + secs : secs) : mmss;
+    if (hours > 0) {
+      return hours + ":" + (mins < 10 ? "0" + mins : mins) + ":" + (secs < 10 ? "0" + secs : secs);
+    }
+    return mins + ":" + (secs < 10 ? "0" + secs : secs);
   }
 
   function parseSceneId() {

@@ -25,6 +25,51 @@ function main() {
     return { Output: "no action" };
 }
 
+// ---------------------------------------------------------------------------
+// Shared helpers (used by both handleHook and handleTagAll)
+// ---------------------------------------------------------------------------
+
+// Audio-only detection: video_codec is empty/undefined OR width is 0/null.
+function isAudioScene(scene) {
+    var files = scene.files;
+    if (files === undefined || files === null || files.length === 0) {
+        return false;
+    }
+    var primaryFile = files[0];
+    var codec = primaryFile.video_codec;
+    var width = primaryFile.width;
+    return codec === undefined || codec === null || codec === "" || width === 0 || width === null || width === undefined;
+}
+
+// Collect existing tag ids from a scene.
+function collectTagIds(scene) {
+    var ids = [];
+    if (scene.tags === undefined || scene.tags === null) {
+        return ids;
+    }
+    for (var i = 0; i < scene.tags.length; i++) {
+        ids.push(scene.tags[i].id);
+    }
+    return ids;
+}
+
+// Apply the Audio tag to a scene via SceneUpdate.
+function tagScene(sceneId, tagIds) {
+    var mutation = "\
+mutation SceneUpdate($input: SceneUpdateInput!) {\
+  sceneUpdate(input: $input) {\
+    id\
+  }\
+}";
+    var updateVariables = {
+        input: {
+            id: sceneId,
+            tag_ids: tagIds
+        }
+    };
+    gql.Do(mutation, updateVariables);
+}
+
 function handleHook() {
     var sceneId = input.Args.hookContext.id;
 
@@ -54,19 +99,7 @@ query FindScene($id: ID!) {\
         return { Output: "scene not found" };
     }
 
-    // Check if audio-only: video_codec is empty/undefined OR width is 0/null
-    var files = scene.files;
-    var isAudio = false;
-    if (files !== undefined && files !== null && files.length > 0) {
-        var primaryFile = files[0];
-        var codec = primaryFile.video_codec;
-        var width = primaryFile.width;
-        if (codec === undefined || codec === null || codec === "" || width === 0 || width === null || width === undefined) {
-            isAudio = true;
-        }
-    }
-
-    if (!isAudio) {
+    if (!isAudioScene(scene)) {
         return { Output: "not audio" };
     }
 
@@ -74,41 +107,15 @@ query FindScene($id: ID!) {\
     var audioTagId = getOrCreateTag();
 
     // Check if scene already has the Audio tag
-    var existingTagIds = [];
-    var alreadyTagged = false;
-    if (scene.tags !== undefined && scene.tags !== null) {
-        for (var i = 0; i < scene.tags.length; i++) {
-            var tag = scene.tags[i];
-            existingTagIds.push(tag.id);
-            if (tag.id === audioTagId) {
-                alreadyTagged = true;
-            }
-        }
-    }
-
-    if (alreadyTagged) {
+    var existingTagIds = collectTagIds(scene);
+    if (existingTagIds.indexOf(audioTagId) !== -1) {
         log.Info("AudioSupport: scene " + sceneId + " already has Audio tag");
         return { Output: "already tagged" };
     }
 
     // Add the Audio tag
     existingTagIds.push(audioTagId);
-
-    var mutation = "\
-mutation SceneUpdate($input: SceneUpdateInput!) {\
-  sceneUpdate(input: $input) {\
-    id\
-  }\
-}";
-
-    var updateVariables = {
-        input: {
-            id: sceneId,
-            tag_ids: existingTagIds
-        }
-    };
-
-    gql.Do(mutation, updateVariables);
+    tagScene(sceneId, existingTagIds);
     log.Info("AudioSupport: tagged scene " + sceneId + " as audio");
     return { Output: "tagged" };
 }
@@ -160,57 +167,19 @@ query FindScenes($filter: FindFilterType) {\
             var scene = scenes[i];
             var sceneId = scene.id;
 
-            // Check if audio-only
-            var files = scene.files;
-            var isAudio = false;
-            if (files !== undefined && files !== null && files.length > 0) {
-                var primaryFile = files[0];
-                var codec = primaryFile.video_codec;
-                var width = primaryFile.width;
-                if (codec === undefined || codec === null || codec === "" || width === 0 || width === null || width === undefined) {
-                    isAudio = true;
-                }
-            }
-
-            if (!isAudio) {
+            if (!isAudioScene(scene)) {
                 continue;
             }
 
             // Check if already tagged
-            var existingTagIds = [];
-            var alreadyTagged = false;
-            if (scene.tags !== undefined && scene.tags !== null) {
-                for (var j = 0; j < scene.tags.length; j++) {
-                    var tag = scene.tags[j];
-                    existingTagIds.push(tag.id);
-                    if (tag.id === audioTagId) {
-                        alreadyTagged = true;
-                    }
-                }
-            }
-
-            if (alreadyTagged) {
+            var existingTagIds = collectTagIds(scene);
+            if (existingTagIds.indexOf(audioTagId) !== -1) {
                 continue;
             }
 
             // Tag the scene
             existingTagIds.push(audioTagId);
-
-            var mutation = "\
-mutation SceneUpdate($input: SceneUpdateInput!) {\
-  sceneUpdate(input: $input) {\
-    id\
-  }\
-}";
-
-            var updateVariables = {
-                input: {
-                    id: sceneId,
-                    tag_ids: existingTagIds
-                }
-            };
-
-            gql.Do(mutation, updateVariables);
+            tagScene(sceneId, existingTagIds);
             taggedCount++;
             log.Info("AudioSupport: processing scene " + (taggedCount) + " of " + total);
         }

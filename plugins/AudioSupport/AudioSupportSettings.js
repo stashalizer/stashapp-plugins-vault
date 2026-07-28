@@ -53,6 +53,26 @@
   // Persistence helpers (overlay fields preserved)
   // ---------------------------------------------------------------------------
 
+  // Normalize a raw stored config into the canonical shape, preserving the
+  // overlay-owned fields (collapsed/opacity/panelPos) and the settings-owned
+  // field (audioTagName) with safe fallbacks. Shared by loadConfig and saveConfig
+  // so the two surfaces agree on the persisted shape.
+  function normalizeConfig(stored) {
+    const s = stored || {};
+    return {
+      collapsed: typeof s.collapsed === "boolean" ? s.collapsed : false,
+      opacity: typeof s.opacity === "number" && !Number.isNaN(s.opacity)
+        ? Math.min(1, Math.max(0, s.opacity))
+        : 0.92,
+      panelPos: s.panelPos && typeof s.panelPos.top === "number" && typeof s.panelPos.right === "number"
+        ? { top: Math.max(0, s.panelPos.top), right: Math.max(0, s.panelPos.right) }
+        : { top: 8, right: 8 },
+      audioTagName: typeof s.audioTagName === "string" && s.audioTagName.trim()
+        ? s.audioTagName.trim()
+        : DEFAULT_TAG_NAME,
+    };
+  }
+
   async function saveConfig(patch) {
     if (saving) {
       pendingSave = true;
@@ -63,18 +83,7 @@
     pendingSave = false;
     try {
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
-      const merged = {
-        collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : false,
-        opacity: typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
-          ? Math.min(1, Math.max(0, stored.opacity))
-          : 0.92,
-        panelPos: stored.panelPos && typeof stored.panelPos.top === "number" && typeof stored.panelPos.right === "number"
-          ? { top: Math.max(0, stored.panelPos.top), right: Math.max(0, stored.panelPos.right) }
-          : { top: 8, right: 8 },
-        audioTagName: typeof stored.audioTagName === "string" && stored.audioTagName.trim()
-          ? stored.audioTagName.trim()
-          : DEFAULT_TAG_NAME,
-      };
+      const merged = normalizeConfig(stored);
       Object.assign(merged, patch);
       await csLib.setConfiguration(CONFIG_KEY, merged);
     } catch (err) {
@@ -94,26 +103,10 @@
   async function loadConfig() {
     try {
       const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
-      return {
-        collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : false,
-        opacity: typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
-          ? Math.min(1, Math.max(0, stored.opacity))
-          : 0.92,
-        panelPos: stored.panelPos && typeof stored.panelPos.top === "number" && typeof stored.panelPos.right === "number"
-          ? { top: Math.max(0, stored.panelPos.top), right: Math.max(0, stored.panelPos.right) }
-          : { top: 8, right: 8 },
-        audioTagName: typeof stored.audioTagName === "string" && stored.audioTagName.trim()
-          ? stored.audioTagName.trim()
-          : DEFAULT_TAG_NAME,
-      };
+      return normalizeConfig(stored);
     } catch (err) {
       console.error("AudioSupport settings: load failed", err);
-      return {
-        collapsed: false,
-        opacity: 0.92,
-        panelPos: { top: 8, right: 8 },
-        audioTagName: DEFAULT_TAG_NAME,
-      };
+      return normalizeConfig(null);
     }
   }
 
