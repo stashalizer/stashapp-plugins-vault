@@ -58,6 +58,7 @@
   }
 
   const CONFIG_KEY = "AudioSupport";
+  const QUEUE_CONFIG_KEY = "AudioSupportQueue";
   const DEFAULT_OPACITY = 0.92;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
 
@@ -78,6 +79,16 @@
   let saving = false;
   let pendingSave = false;
 
+  // Queue state lives in a separate config key to avoid racing with the settings
+  // page over the main "AudioSupport" key.
+  let queueState = { queue: [], currentIndex: 0, repeat: "off" };
+  let queueSaving = false;
+  let queuePendingSave = false;
+  // Whether the current scene is part of the persisted queue. When false
+  // (user navigated to a scene outside the queue), queue controls are hidden
+  // but the queue itself is preserved for later resumption.
+  let sceneInQueue = false;
+
   // Current audio overlay references.
   let currentPlayer = null;
   let overlayRoot = null;
@@ -97,8 +108,110 @@
   // Container element for lyrics DOM nodes, used for sync scrolling.
   let lyricsContainer = null;
 
-  // Name of the scene custom field used for LRC lyrics (matches ui.settings.AudioLyricsField).
+  // Name of the scene custom field used for LRC lyrics.
   let lyricsFieldName = "AudioLyrics";
+
+  // ---------------------------------------------------------------------------
+  // Queue helpers
+  // ---------------------------------------------------------------------------
+
+  function sanitizeQueueState(stored) {
+    const s = stored && typeof stored === "object" ? stored : {};
+    const queue = Array.isArray(s.queue)
+      ? s.queue.filter(function (id) { return typeof id === "string" && id; })
+      : [];
+    const idx = typeof s.currentIndex === "number" && !Number.isNaN(s.currentIndex)
+      ? Math.max(0, Math.min(queue.length - 1, Math.floor(s.currentIndex)))
+      : 0;
+    const repeat = ["off", "all", "one"].indexOf(s.repeat) !== -1 ? s.repeat : "off";
+    return { queue: queue, currentIndex: queue.length > 0 ? idx : 0, repeat: repeat };
+  }
+
+  async function saveQueueNow() {
+    if (queueSaving) {
+      queuePendingSave = true;
+      return;
+    }
+    queueSaving = true;
+    queuePendingSave = false;
+    try {
+      await csLib.setConfiguration(QUEUE_CONFIG_KEY, {
+        queue: queueState.queue,
+        currentIndex: queueState.currentIndex,
+        repeat: queueState.repeat,
+      });
+    } catch (err) {
+      console.error("AudioSupport: failed to save queue configuration", err);
+    } finally {
+      queueSaving = false;
+      if (queuePendingSave) {
+        queuePendingSave = false;
+        saveQueueNow();
+      }
+    }
+  }
+
+  async function loadQueueState() {
+    let stored = null;
+    try {
+      stored = await csLib.getConfiguration(QUEUE_CONFIG_KEY);
+    } catch (err) {
+      console.error("AudioSupport: failed to read queue configuration", err);
+      stored = null;
+    }
+    queueState = sanitizeQueueState(stored);
+  }
+
+  function updateQueueIndicator(el) {
+    if (!el) return;
+    const len = queueState.queue.length;
+    if (len > 1 && sceneInQueue) {
+      el.textContent = (queueState.currentIndex + 1) + " / " + len;
+      el.style.display = "";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  function updatePrevNextButtons(prevBtn, nextBtn) {
+    if (!prevBtn || !nextBtn) return;
+    const len = queueState.queue.length;
+    const active = len > 1 && sceneInQueue;
+    prevBtn.style.display = active ? "" : "none";
+    nextBtn.style.display = active ? "" : "none";
+    if (!active) return;
+    const canGoBack = queueState.currentIndex > 0 || queueState.repeat === "all";
+    const canGoForward = queueState.currentIndex + 1 < len || queueState.repeat === "all";
+    prevBtn.disabled = !canGoBack;
+    nextBtn.disabled = !canGoForward;
+  }
+
+  function updateRepeatButton(btn) {
+    if (!btn) return;
+    btn.classList.toggle("audio-support-overlay__repeat-button--off", queueState.repeat === "off");
+    btn.classList.toggle("audio-support-overlay__repeat-button--all", queueState.repeat === "all");
+    btn.classList.toggle("audio-support-overlay__repeat-button--one", queueState.repeat === "one");
+    btn.title = "Repeat: " + queueState.repeat + " (r)";
+    btn.setAttribute("aria-label", "Repeat mode: " + queueState.repeat);
+    btn.textContent = queueState.repeat === "one" ? "1" : "\ud83d\udd01";
+  }
+
+  function navigateToScene(sceneId) {
+    if (!sceneId) return;
+    // Use React Router's history API if it is exposed; otherwise pushState + a
+    // synthetic popstate so the SPA picks up the route change without a reload.
+    const router = window.PluginApi && window.PluginApi.libraries && window.PluginApi.libraries.ReactRouterDOM;
+    if (router && router.history) {
+      try {
+        router.history.push("/scenes/" + sceneId);
+        return;
+      } catch (err) {
+        console.warn("AudioSupport: ReactRouter history.push failed", err);
+      }
+    }
+    window.history.pushState({}, "", "/scenes/" + sceneId);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -459,12 +572,28 @@
     const transport = document.createElement("div");
     transport.className = "audio-support-overlay__transport";
 
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "audio-support-overlay__prev-button";
+    prevBtn.title = "Previous track (p / MediaTrackPrevious)";
+    prevBtn.setAttribute("aria-label", "Previous track");
+    prevBtn.textContent = "\u23ee";
+    transport.appendChild(prevBtn);
+
     const playBtn = document.createElement("button");
     playBtn.type = "button";
     playBtn.className = "audio-support-overlay__play-button";
     playBtn.textContent = "\u25b6";
     playBtn.setAttribute("aria-label", "Play");
     transport.appendChild(playBtn);
+
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "audio-support-overlay__next-button";
+    nextBtn.title = "Next track (n / MediaTrackNext)";
+    nextBtn.setAttribute("aria-label", "Next track");
+    nextBtn.textContent = "\u23ed";
+    transport.appendChild(nextBtn);
 
     const seek = document.createElement("input");
     seek.type = "range";
@@ -524,8 +653,25 @@
     loopBtn.textContent = "\ud83d\udd01";
     speedLoop.appendChild(loopBtn);
 
+    const repeatBtn = document.createElement("button");
+    repeatBtn.type = "button";
+    repeatBtn.className = "audio-support-overlay__repeat-button";
+    repeatBtn.title = "Repeat (r)";
+    repeatBtn.setAttribute("aria-label", "Repeat");
+    repeatBtn.textContent = "\ud83d\udd01";
+    speedLoop.appendChild(repeatBtn);
+
+    const queueIndicator = document.createElement("span");
+    queueIndicator.className = "audio-support-overlay__queue-indicator";
+    queueIndicator.title = "Queue position";
+    speedLoop.appendChild(queueIndicator);
+
     transport.appendChild(speedLoop);
     body.appendChild(transport);
+
+    updateRepeatButton(repeatBtn);
+    updateQueueIndicator(queueIndicator);
+    updatePrevNextButtons(prevBtn, nextBtn);
     overlay.appendChild(body);
 
     // Audio element (hidden, direct stream only)
@@ -557,9 +703,29 @@
 
     audio.addEventListener("play", updatePlayButton);
     audio.addEventListener("pause", updatePlayButton);
-    audio.addEventListener("ended", function () {
+    audio.addEventListener("ended", async function () {
       updatePlayButton();
       seek.value = 0;
+      if (queueState.repeat === "one") {
+        audio.currentTime = 0;
+        try {
+          await audio.play();
+        } catch (err) {
+          console.warn("AudioSupport: repeat-one play failed", err);
+        }
+        return;
+      }
+      const len = queueState.queue.length;
+      const nextIndex = queueState.currentIndex + 1;
+      if (len > 1 && nextIndex < len) {
+        queueState.currentIndex = nextIndex;
+        await saveQueueNow();
+        navigateToScene(queueState.queue[nextIndex]);
+      } else if (len > 1 && queueState.repeat === "all") {
+        queueState.currentIndex = 0;
+        await saveQueueNow();
+        navigateToScene(queueState.queue[0]);
+      }
     });
 
     audio.addEventListener("loadedmetadata", function () {
@@ -661,6 +827,46 @@
     }
 
     loopBtn.addEventListener("click", toggleLoop);
+
+    function cycleRepeatMode() {
+      const modes = ["off", "all", "one"];
+      queueState.repeat = modes[(modes.indexOf(queueState.repeat) + 1) % modes.length];
+      updateRepeatButton(repeatBtn);
+      saveQueueNow();
+    }
+
+    repeatBtn.addEventListener("click", cycleRepeatMode);
+
+    async function goToPreviousTrack() {
+      const len = queueState.queue.length;
+      if (len <= 1) return;
+      if (queueState.currentIndex > 0) {
+        queueState.currentIndex -= 1;
+      } else if (queueState.repeat === "all") {
+        queueState.currentIndex = len - 1;
+      } else {
+        return;
+      }
+      await saveQueueNow();
+      navigateToScene(queueState.queue[queueState.currentIndex]);
+    }
+
+    async function goToNextTrack() {
+      const len = queueState.queue.length;
+      if (len <= 1) return;
+      if (queueState.currentIndex + 1 < len) {
+        queueState.currentIndex += 1;
+      } else if (queueState.repeat === "all") {
+        queueState.currentIndex = 0;
+      } else {
+        return;
+      }
+      await saveQueueNow();
+      navigateToScene(queueState.queue[queueState.currentIndex]);
+    }
+
+    prevBtn.addEventListener("click", goToPreviousTrack);
+    nextBtn.addEventListener("click", goToNextTrack);
 
     function toggleLyricsPanel() {
       state.lyricsVisible = !state.lyricsVisible;
@@ -813,7 +1019,7 @@
 
     renderLyricsSection();
 
-    return { overlay: overlay, audio: audio, playBtn: playBtn, seek: seek, time: time };
+    return { overlay: overlay, audio: audio, playBtn: playBtn, seek: seek, time: time, prevBtn: prevBtn, nextBtn: nextBtn, queueIndicator: queueIndicator };
   }
 
   function renderCollapsed(panel) {
@@ -860,6 +1066,10 @@
     const built = buildOverlay(scene, audioFile);
     panel.appendChild(built.overlay);
     audioEl = built.audio;
+    // Refresh queue controls after a fresh render, using the queue state that was
+    // loaded/updated during setupPanel.
+    updateQueueIndicator(built.queueIndicator);
+    updatePrevNextButtons(built.prevBtn, built.nextBtn);
     installKeyboardListeners();
   }
 
@@ -943,6 +1153,36 @@
               lyricsSection.style.display = "none";
             }
           }
+        }
+        break;
+      case "n":
+      case "N":
+      case "MediaTrackNext":
+        e.preventDefault();
+        {
+          const nextBtn = overlayRoot.querySelector(".audio-support-overlay__next-button");
+          if (nextBtn && nextBtn.style.display !== "none" && !nextBtn.disabled) {
+            nextBtn.click();
+          }
+        }
+        break;
+      case "p":
+      case "P":
+      case "MediaTrackPrevious":
+        e.preventDefault();
+        {
+          const prevBtn = overlayRoot.querySelector(".audio-support-overlay__prev-button");
+          if (prevBtn && prevBtn.style.display !== "none" && !prevBtn.disabled) {
+            prevBtn.click();
+          }
+        }
+        break;
+      case "r":
+      case "R":
+        e.preventDefault();
+        {
+          const repeatBtn = overlayRoot.querySelector(".audio-support-overlay__repeat-button");
+          if (repeatBtn) repeatBtn.click();
         }
         break;
     }
@@ -1054,6 +1294,17 @@
     }
 
     await loadState();
+    await loadQueueState();
+
+    // If the current scene is part of the persisted queue, keep its index in
+    // sync; otherwise treat it as a standalone scene (hide queue controls).
+    const inQueueIndex = queueState.queue.indexOf(String(sceneId));
+    if (inQueueIndex !== -1) {
+      queueState.currentIndex = inQueueIndex;
+      sceneInQueue = true;
+    } else {
+      sceneInQueue = false;
+    }
 
     if (playerEl.querySelector(".audio-support-overlay")) return;
 
@@ -1102,12 +1353,13 @@
   }
 
   window.addEventListener("pagehide", function () {
-    // Flush any pending volume save before leaving the page.
+    // Flush any pending volume/queue saves before leaving the page.
     if (volumeSaveTimeout) {
       clearTimeout(volumeSaveTimeout);
       volumeSaveTimeout = null;
       state.volume = audioEl ? clamp(audioEl.volume, 0, 1) : state.volume;
     }
     saveNow();
+    saveQueueNow();
   });
 })();

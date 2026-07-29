@@ -254,6 +254,34 @@
   background: rgba(255, 255, 255, 0.25);
 }
 
+.audio-support-overlay__prev-button,
+.audio-support-overlay__next-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.audio-support-overlay__prev-button:hover,
+.audio-support-overlay__next-button:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.audio-support-overlay__prev-button:disabled,
+.audio-support-overlay__next-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .audio-support-overlay__seek {
   flex: 1 1 auto;
   cursor: pointer;
@@ -378,6 +406,50 @@
 
 .audio-support-overlay__loop-button--active:hover {
   background: rgba(110, 231, 255, 0.3);
+}
+
+.audio-support-overlay__repeat-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.audio-support-overlay__repeat-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.audio-support-overlay__repeat-button--off {
+  color: rgba(255, 255, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.audio-support-overlay__repeat-button--all,
+.audio-support-overlay__repeat-button--one {
+  background: rgba(110, 231, 255, 0.22);
+  border-color: rgba(110, 231, 255, 0.55);
+  color: #6ee7ff;
+}
+
+.audio-support-overlay__repeat-button--all:hover,
+.audio-support-overlay__repeat-button--one:hover {
+  background: rgba(110, 231, 255, 0.3);
+}
+
+.audio-support-overlay__queue-indicator {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Lyrics panel */
@@ -590,6 +662,13 @@
   .audio-support-overlay__speed-loop {
     order: 3;
     margin-left: auto;
+  }
+
+  .audio-support-overlay__queue-indicator {
+    order: 4;
+    width: 100%;
+    text-align: center;
+    margin-top: 2px;
   }
 }
 

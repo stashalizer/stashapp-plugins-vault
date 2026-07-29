@@ -33,10 +33,47 @@
   const apolloClient = PluginApi.utils.StashService.getClient();
 
   const CONFIG_KEY = "AudioSupport";
+  const QUEUE_CONFIG_KEY = "AudioSupportQueue";
   const PLUGIN_ROUTE = "/plugins/audiosupport";
   const AUDIO_EXTENSIONS = ["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
   const DEFAULT_TAG_NAME = "Audio";
   const DEFAULT_SHOW_NAV_ENTRY = true;
+
+  let queueSaving = false;
+  let queuePendingSave = false;
+  let latestQueuePatch = null;
+
+  async function saveQueueConfig(patch) {
+    if (queueSaving) {
+      queuePendingSave = true;
+      latestQueuePatch = patch;
+      return;
+    }
+    queueSaving = true;
+    queuePendingSave = false;
+    try {
+      const stored = (await csLib.getConfiguration(QUEUE_CONFIG_KEY)) || {};
+      const merged = {
+        queue: Array.isArray(stored.queue) ? stored.queue : [],
+        currentIndex: typeof stored.currentIndex === "number" ? stored.currentIndex : 0,
+        repeat: ["off", "all", "one"].indexOf(stored.repeat) !== -1 ? stored.repeat : "off",
+      };
+      Object.assign(merged, patch);
+      await csLib.setConfiguration(QUEUE_CONFIG_KEY, merged);
+    } catch (err) {
+      console.error("AudioSupport settings: failed to save queue config", err);
+      throw err;
+    } finally {
+      queueSaving = false;
+      if (queuePendingSave) {
+        queuePendingSave = false;
+        const next = latestQueuePatch;
+        latestQueuePatch = null;
+        saveQueueConfig(next);
+      }
+    }
+  }
+
   const SORT_OPTIONS = [
     { value: "title_asc", label: "Title (A-Z)" },
     { value: "title_desc", label: "Title (Z-A)" },
@@ -410,37 +447,62 @@
   function AudioSceneCard(props) {
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
+    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
+    const onPlay = async function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await saveQueueConfig({ queue: [String(scene.id)], currentIndex: 0 });
+        history.push("/scenes/" + scene.id);
+      } catch (err) {
+        console.error("AudioSupport settings: failed to play scene", err);
+      }
+    };
     return h(
-      Link,
-      {
-        to: "/scenes/" + scene.id,
-        className: "audio-support-settings__scene-card",
-        title: scene.title || "Untitled",
-      },
+      "div",
+      { className: "audio-support-settings__scene-card" },
       h(
-        "div",
-        { className: "audio-support-settings__scene-cover" },
-        scene.paths && scene.paths.screenshot
-          ? h("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" })
-          : h("div", { className: "audio-support-settings__scene-cover--placeholder" })
-      ),
-      h(
-        "div",
-        { className: "audio-support-settings__scene-card-info" },
-        h("div", { className: "audio-support-settings__scene-card-title" }, scene.title || "Untitled"),
+        Link,
+        {
+          to: "/scenes/" + scene.id,
+          className: "audio-support-settings__scene-card-link",
+          title: scene.title || "Untitled",
+        },
         h(
           "div",
-          { className: "audio-support-settings__scene-card-meta" },
-          formatDuration(audioFile && audioFile.duration),
-          " \u00b7 ",
-          (audioFile && audioFile.audio_codec ? audioFile.audio_codec.toUpperCase() : "AUDIO"),
-          audioFile && audioFile.bit_rate
-            ? " \u00b7 " + Math.round(audioFile.bit_rate / 1000) + " kbps"
-            : null
+          { className: "audio-support-settings__scene-cover" },
+          scene.paths && scene.paths.screenshot
+            ? h("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" })
+            : h("div", { className: "audio-support-settings__scene-cover--placeholder" })
         ),
-        scene.created_at
-          ? h("div", { className: "audio-support-settings__scene-card-date" }, "Added " + formatDate(scene.created_at))
-          : null
+        h(
+          "div",
+          { className: "audio-support-settings__scene-card-info" },
+          h("div", { className: "audio-support-settings__scene-card-title" }, scene.title || "Untitled"),
+          h(
+            "div",
+            { className: "audio-support-settings__scene-card-meta" },
+            formatDuration(audioFile && audioFile.duration),
+            " \u00b7 ",
+            (audioFile && audioFile.audio_codec ? audioFile.audio_codec.toUpperCase() : "AUDIO"),
+            audioFile && audioFile.bit_rate
+              ? " \u00b7 " + Math.round(audioFile.bit_rate / 1000) + " kbps"
+              : null
+          ),
+          scene.created_at
+            ? h("div", { className: "audio-support-settings__scene-card-date" }, "Added " + formatDate(scene.created_at))
+            : null
+        )
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__scene-card-play",
+          title: "Play scene",
+          onClick: onPlay,
+        },
+        "\u25b6"
       )
     );
   }
@@ -456,6 +518,7 @@
     const sortBy = props.sortBy;
     const setSortBy = props.setSortBy;
     const tag = props.tag;
+    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
 
     const debouncedSearch = useDebouncedValue(search, 200);
 
@@ -550,10 +613,35 @@
       tag && filteredSorted.length > 0
         ? h(
             "div",
-            { className: "audio-support-settings__scene-grid" },
-            filteredSorted.map(function (scene) {
-              return h(AudioSceneCard, { key: scene.id, scene: scene });
-            })
+            null,
+            h(
+              "div",
+              { className: "audio-support-settings__library-controls" },
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "audio-support-settings__button audio-support-settings__button--primary",
+                  onClick: async function () {
+                    try {
+                      const ids = filteredSorted.map(function (s) { return s.id; });
+                      await saveQueueConfig({ queue: ids, currentIndex: 0 });
+                      history.push("/scenes/" + ids[0]);
+                    } catch (err) {
+                      console.error("AudioSupport settings: failed to play all", err);
+                    }
+                  },
+                },
+                "Play All"
+              )
+            ),
+            h(
+              "div",
+              { className: "audio-support-settings__scene-grid" },
+              filteredSorted.map(function (scene) {
+                return h(AudioSceneCard, { key: scene.id, scene: scene });
+              })
+            )
           )
         : null
     );
@@ -615,6 +703,17 @@
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
     const fileName = getSceneFileName(scene);
+    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
+    async function playChapter(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await saveQueueConfig({ queue: [String(scene.id)], currentIndex: 0 });
+        history.push("/scenes/" + scene.id);
+      } catch (err) {
+        console.error("AudioSupport settings: failed to play chapter", err);
+      }
+    }
     return h(
       "div",
       { className: "audio-support-settings__chapter-row" },
@@ -632,8 +731,12 @@
         h("div", { className: "audio-support-settings__chapter-meta" }, formatDuration(audioFile && audioFile.duration))
       ),
       h(
-        Link,
-        { to: "/scenes/" + scene.id, className: "audio-support-settings__button" },
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__button audio-support-settings__button--primary",
+          onClick: playChapter,
+        },
         "Play"
       )
     );
@@ -641,12 +744,23 @@
 
   function WorkDetailView(props) {
     const work = props.work;
+    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     const sortedScenes = useMemo(function () {
       return work.scenes.slice().sort(naturalCompare);
     }, [work]);
     const ids = useMemo(function () {
       return sortedScenes.map(function (s) { return s.id; });
     }, [sortedScenes]);
+
+    async function playWork() {
+      if (ids.length === 0) return;
+      try {
+        await saveQueueConfig({ queue: ids, currentIndex: 0 });
+        history.push("/scenes/" + ids[0]);
+      } catch (err) {
+        console.error("AudioSupport settings: failed to play work", err);
+      }
+    }
 
     return h(
       "div",
@@ -668,7 +782,7 @@
           {
             type: "button",
             className: "audio-support-settings__button audio-support-settings__button--primary",
-            onClick: function () { console.log("Play work", ids); },
+            onClick: playWork,
           },
           "Play Work"
         )
@@ -678,7 +792,7 @@
         "div",
         { className: "audio-support-settings__chapter-list" },
         sortedScenes.map(function (scene) {
-          return h(ChapterRow, { key: scene.id, scene: scene });
+          return h(ChapterRow, { key: scene.id, scene: scene, onPlayWork: playWork });
         })
       )
     );
@@ -724,9 +838,20 @@
 
   function TagDetailView(props) {
     const group = props.group;
+    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     const ids = useMemo(function () {
       return group.scenes.map(function (s) { return s.id; });
     }, [group]);
+
+    async function playAll() {
+      if (ids.length === 0) return;
+      try {
+        await saveQueueConfig({ queue: ids, currentIndex: 0 });
+        history.push("/scenes/" + ids[0]);
+      } catch (err) {
+        console.error("AudioSupport settings: failed to play all tagged scenes", err);
+      }
+    }
 
     return h(
       "div",
@@ -748,7 +873,7 @@
           {
             type: "button",
             className: "audio-support-settings__button audio-support-settings__button--primary",
-            onClick: function () { console.log("Play all", ids); },
+            onClick: playAll,
           },
           "Play All"
         )

@@ -1,7 +1,8 @@
 # Repository Atlas: stashapp-plugins-vault
 
 ## Project Responsibility
-A Stash plugin source-index repository (based on the official CommunityScripts template) that packages and publishes Stash plugins via GitHub Pages. Currently ships three plugins:
+A Stash plugin source-index repository (based on the official CommunityScripts template) that packages and publishes Stash plugins via GitHub Pages. Currently ships four plugins:
+- **AudioSupport** — audio-as-scene support: a setup wizard for audio ingestion, an HTML5 audio player overlay replacing video.js for audio-only scenes, cover-art extraction/generation, an audio browse/settings page, and a persisted play queue with auto-advance and prev/next track controls.
 - **QuestingAdventurer** — an interactive overlay and settings page that turns scene playback into a quest: the viewer is a "questing adventurer" who must respond to cues in the playing scene by performing the moves attached to their active triggers.
 - **MosaicFilter** — a player overlay that places a movable, resizable rectangle (or ellipse) over any region of a scene to blur or censor it, with optional follow-cursor and reverse-blur modes; a full-page React settings page edits the same global config.
 - **SceneVersions** — a "Related Scenes" tab on the scene page that lets users associate alternate versions of a scene via bidirectional links stored in scene custom fields, with a suggest-from-folder helper.
@@ -21,6 +22,7 @@ Source index URL: `https://<username>.github.io/<repository>/main/index.yml`. St
 | Directory | Responsibility Summary | Detailed Map |
 |-----------|------------------------|--------------|
 | `plugins/` | Container for self-contained Stash plugins; one subdirectory per plugin id. | [View Map](plugins/codemap.md) |
+| `plugins/AudioSupport/` | AudioSupport plugin — audio-as-scene support: setup wizard, HTML5 audio overlay replacing video.js for audio-only scenes, cover-art tools, and an audio browse/settings page. Uses a separate `"AudioSupportQueue"` config key for queue state; supports play queue, auto-advance, repeat mode, and prev/next track controls. | [View Map](plugins/AudioSupport/codemap.md) |
 | `plugins/QuestingAdventurer/` | QuestingAdventurer plugin — player overlay (vanilla JS) + full-page React settings UI sharing one config key; v2 data model with a global moves library and triggers that reference moves by id (`active` lives on the trigger); overlay shows only active triggers with their attached moves; add-controls toggle in the header; persisted to Stash config; one-shot v0 (SceneRules) → v2 migration. | [View Map](plugins/QuestingAdventurer/codemap.md) |
 | `plugins/MosaicFilter/` | MosaicFilter plugin — player overlay (vanilla JS) that blurs a movable/resizable rectangle or ellipse over the scene, plus a full-page React settings page; single global flat config (no per-scene storage) shared by both surfaces; optional follow-cursor and reverse-blur modes; reverse-mode hole cut with `clip-path: path()`; legacy `{ defaults, scenes }` shape migrated on load; shared utility module (`MosaicFilterShared.js`) loaded first per manifest. | [View Map](plugins/MosaicFilter/codemap.md) |
 | `plugins/SceneVersions/` | SceneVersions plugin — a "Related Scenes" tab on the scene page (React) that stores bidirectional links in scene custom_fields; uses Apollo client for reads/writes; includes a suggest-from-folder helper that queries other scenes in the same file folder. No csLib dependency. | [View Map](plugins/SceneVersions/codemap.md) |
