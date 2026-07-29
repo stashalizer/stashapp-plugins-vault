@@ -1516,6 +1516,7 @@
           Button,
           { className: "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center" },
           h("span", { className: "nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" }, "\u266b"),
+          " ",
           h("span", null, "Audio")
         )
       )
