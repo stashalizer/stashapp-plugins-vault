@@ -24,5 +24,4 @@ ui:
   css:
     - AudioSupport.css
     - AudioSupportSettings.css
-  settings: {}
 # requires: CommunityScriptsUILibrary
