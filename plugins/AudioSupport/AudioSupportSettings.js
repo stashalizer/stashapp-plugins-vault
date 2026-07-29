@@ -1,5 +1,5 @@
 /**
- * AudioSupportSettings — full-page settings UI.
+ * AudioSupportSettings — full-page settings / browse UI.
  *
  * Architecture:
  * - Registers a route via PluginApi.patch.before("PluginRoutes", ...) at
@@ -8,10 +8,14 @@
  *   PluginApi.patch.before("SettingsToolsSection", ...). The launcher appears
  *   only under the "Scene Tools" subsection (the second SettingsToolsSection
  *   instance in SettingsToolsPanel) by gating on a module-level call counter.
+ * - Adds a top-navigation entry via PluginApi.patch.before("MainNavBar.MenuItems",
+ *   ...). Visibility is controlled by the plugin config `showNavEntry` toggle
+ *   on the Setup tab.
  * - Reads/writes the config key "AudioSupport" (overlay owns collapsed/opacity/
- *   panelPos; this page owns audioTagName).
+ *   panelPos/playbackRate/loop/volume; this page owns audioTagName and
+ *   showNavEntry).
  * - Uses Apollo client via PluginApi.utils.StashService.getClient() for all data.
- * - Three views: setup wizard, audio browse, and generate default covers.
+ * - Three top-level tabs: Browse (By Work / All Audio / By Tag), Setup, Covers.
  */
 (function () {
   "use strict";
@@ -23,7 +27,7 @@
 
   const React = PluginApi.React;
   const h = React.createElement;
-  const { useState, useEffect, useCallback } = React;
+  const { useState, useEffect, useMemo } = React;
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
   const GQL = PluginApi.GQL;
   const apolloClient = PluginApi.utils.StashService.getClient();
@@ -32,6 +36,7 @@
   const PLUGIN_ROUTE = "/plugins/audiosupport";
   const AUDIO_EXTENSIONS = ["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
   const DEFAULT_TAG_NAME = "Audio";
+  const DEFAULT_SHOW_NAV_ENTRY = true;
   const SORT_OPTIONS = [
     { value: "title_asc", label: "Title (A-Z)" },
     { value: "title_desc", label: "Title (Z-A)" },
@@ -49,13 +54,26 @@
   // latestTriggers/latestMoves pattern in QuestingAdventurerSettings).
   let latestPatch = null;
 
+  // Module-level nav-entry visibility. The MainNavBar.MenuItems patch reads
+  // this on every render; it is updated once config loads and whenever the
+  // user toggles the setting. Because the navbar only re-renders on route
+  // changes, the initial render may briefly show the item even if the stored
+  // value is false, but the default is true so this is rarely visible.
+  let navEntryEnabled = true;
+  let navEntryLoaded = false;
+
+  function updateNavEntryEnabled(enabled) {
+    navEntryEnabled = !!enabled;
+    navEntryLoaded = true;
+  }
+
   // ---------------------------------------------------------------------------
   // Persistence helpers (overlay fields preserved)
   // ---------------------------------------------------------------------------
 
   // Normalize a raw stored config into the canonical shape, preserving the
-  // overlay-owned fields (collapsed/opacity/panelPos) and the settings-owned
-  // field (audioTagName) with safe fallbacks. Shared by loadConfig and saveConfig
+  // overlay-owned fields and the settings-owned fields (audioTagName,
+  // showNavEntry) with safe fallbacks. Shared by loadConfig and saveConfig
   // so the two surfaces agree on the persisted shape.
   function normalizeConfig(stored) {
     const s = stored || {};
@@ -70,6 +88,7 @@
       audioTagName: typeof s.audioTagName === "string" && s.audioTagName.trim()
         ? s.audioTagName.trim()
         : DEFAULT_TAG_NAME,
+      showNavEntry: typeof s.showNavEntry === "boolean" ? s.showNavEntry : DEFAULT_SHOW_NAV_ENTRY,
     };
   }
 
@@ -264,7 +283,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Components
+  // Utility helpers
   // ---------------------------------------------------------------------------
 
   function Loading() {
@@ -307,7 +326,14 @@
       ? files.find(function (f) { return String(f.id) === String(scene.primary_file_id); })
       : null;
     if (primary && primary.video_codec === "") return primary;
-    return files.find(function (f) { return f.video_codec === ""; }) || null;
+    return files.find(function (f) { return f.video_codec === ""; }) || files[0] || null;
+  }
+
+  function getSceneFileName(scene) {
+    const path = scene.files && scene.files[0] && scene.files[0].path;
+    if (!path) return "";
+    const lastSlash = path.lastIndexOf("/");
+    return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
   }
 
   function useDebouncedValue(value, delay) {
@@ -318,6 +344,66 @@
     }, [value, delay]);
     return debounced;
   }
+
+  function naturalCompare(a, b) {
+    const aName = (a.files && a.files[0] && a.files[0].path || a.title || "").toLowerCase();
+    const bName = (b.files && b.files[0] && b.files[0].path || b.title || "").toLowerCase();
+    const aMatch = aName.match(/(\d+)/);
+    const bMatch = bName.match(/(\d+)/);
+    if (aMatch && bMatch) {
+      const aNum = parseInt(aMatch[1], 10);
+      const bNum = parseInt(bMatch[1], 10);
+      if (aNum !== bNum) return aNum - bNum;
+    }
+    return aName < bName ? -1 : aName > bName ? 1 : 0;
+  }
+
+  function groupByWork(scenes) {
+    const groups = {};
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      const path = scene.files && scene.files[0] && scene.files[0].path;
+      if (!path) continue;
+      const lastSlash = path.lastIndexOf("/");
+      const dir = lastSlash > 0 ? path.substring(0, lastSlash) : path;
+      let workName = lastSlash > 0 ? path.substring(lastSlash + 1) : path;
+      const dirLastSlash = dir.lastIndexOf("/");
+      workName = dirLastSlash >= 0 ? dir.substring(dirLastSlash + 1) : dir;
+      if (!groups[dir]) groups[dir] = { name: workName, dir: dir, scenes: [] };
+      groups[dir].scenes.push(scene);
+    }
+    return Object.values(groups).sort(function (a, b) {
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
+  }
+
+  function collectTagGroups(scenes) {
+    const groups = {};
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      const tags = scene.tags || [];
+      for (let j = 0; j < tags.length; j++) {
+        const tag = tags[j];
+        if (!tag || !tag.id) continue;
+        if (!groups[tag.id]) groups[tag.id] = { tag: tag, scenes: [] };
+        groups[tag.id].scenes.push(scene);
+      }
+    }
+    return Object.values(groups).sort(function (a, b) {
+      return a.tag.name.localeCompare(b.tag.name);
+    });
+  }
+
+  function getWorkDuration(work) {
+    return work.scenes.reduce(function (total, scene) {
+      const f = getAudioFile(scene);
+      return total + (f && f.duration ? f.duration : 0);
+    }, 0);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scene cards
+  // ---------------------------------------------------------------------------
 
   function AudioSceneCard(props) {
     const scene = props.scene;
@@ -357,7 +443,11 @@
     );
   }
 
-  function AudioLibraryTab(props) {
+  // ---------------------------------------------------------------------------
+  // Browse sub-views
+  // ---------------------------------------------------------------------------
+
+  function AllAudioView(props) {
     const scenes = props.scenes || [];
     const search = props.search;
     const setSearch = props.setSearch;
@@ -367,7 +457,7 @@
 
     const debouncedSearch = useDebouncedValue(search, 200);
 
-    const filteredSorted = React.useMemo(
+    const filteredSorted = useMemo(
       function () {
         let list = scenes.slice();
         const q = debouncedSearch.trim().toLowerCase();
@@ -399,9 +489,8 @@
     );
 
     return h(
-      "section",
-      { className: "audio-support-settings__section" },
-      h("h2", null, "Audio Library"),
+      "div",
+      { className: "audio-support-settings__browse-panel" },
       !tag
         ? h("p", { className: "audio-support-settings__hint" }, "Create the audio tag on the Setup tab first.")
         : h(
@@ -468,9 +557,352 @@
     );
   }
 
+  function WorkCard(props) {
+    const work = props.work;
+    const totalDuration = getWorkDuration(work);
+    const firstScene = work.scenes[0];
+    return h(
+      "button",
+      {
+        type: "button",
+        className: "audio-support-settings__work-card",
+        onClick: props.onClick,
+      },
+      h(
+        "div",
+        { className: "audio-support-settings__work-cover" },
+        firstScene && firstScene.paths && firstScene.paths.screenshot
+          ? h("img", { src: firstScene.paths.screenshot, alt: "", loading: "lazy" })
+          : h("div", { className: "audio-support-settings__work-cover--placeholder" })
+      ),
+      h(
+        "div",
+        { className: "audio-support-settings__work-info" },
+        h("div", { className: "audio-support-settings__work-title" }, work.name),
+        h(
+          "div",
+          { className: "audio-support-settings__work-meta" },
+          work.scenes.length + " chapter" + (work.scenes.length === 1 ? "" : "s"),
+          " \u00b7 ",
+          formatDuration(totalDuration)
+        )
+      )
+    );
+  }
+
+  function WorkGridView(props) {
+    const works = props.works;
+    if (works.length === 0) {
+      return h(
+        "div",
+        { className: "audio-support-settings__empty" },
+        h("p", null, "No audio works found."),
+        h("p", { className: "audio-support-settings__hint" }, "Scan your library after enabling audio ingestion.")
+      );
+    }
+    return h(
+      "div",
+      { className: "audio-support-settings__work-grid" },
+      works.map(function (work) {
+        return h(WorkCard, { key: work.dir, work: work, onClick: function () { props.onSelect(work); } });
+      })
+    );
+  }
+
+  function ChapterRow(props) {
+    const scene = props.scene;
+    const audioFile = getAudioFile(scene);
+    const fileName = getSceneFileName(scene);
+    return h(
+      "div",
+      { className: "audio-support-settings__chapter-row" },
+      h(
+        "div",
+        { className: "audio-support-settings__chapter-cover" },
+        scene.paths && scene.paths.screenshot
+          ? h("img", { src: scene.paths.screenshot, alt: "", loading: "lazy" })
+          : h("div", { className: "audio-support-settings__chapter-cover--placeholder" })
+      ),
+      h(
+        "div",
+        { className: "audio-support-settings__chapter-info" },
+        h("div", { className: "audio-support-settings__chapter-title" }, scene.title || fileName || "Untitled"),
+        h("div", { className: "audio-support-settings__chapter-meta" }, formatDuration(audioFile && audioFile.duration))
+      ),
+      h(
+        Link,
+        { to: "/scenes/" + scene.id, className: "audio-support-settings__button" },
+        "Play"
+      )
+    );
+  }
+
+  function WorkDetailView(props) {
+    const work = props.work;
+    const sortedScenes = useMemo(function () {
+      return work.scenes.slice().sort(naturalCompare);
+    }, [work]);
+    const ids = useMemo(function () {
+      return sortedScenes.map(function (s) { return s.id; });
+    }, [sortedScenes]);
+
+    return h(
+      "div",
+      { className: "audio-support-settings__browse-panel" },
+      h(
+        "div",
+        { className: "audio-support-settings__detail-header" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "audio-support-settings__button",
+            onClick: props.onBack,
+          },
+          "\u2190 Back to works"
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            className: "audio-support-settings__button audio-support-settings__button--primary",
+            onClick: function () { console.log("Play work", ids); },
+          },
+          "Play Work"
+        )
+      ),
+      h("h3", { className: "audio-support-settings__detail-title" }, work.name),
+      h(
+        "div",
+        { className: "audio-support-settings__chapter-list" },
+        sortedScenes.map(function (scene) {
+          return h(ChapterRow, { key: scene.id, scene: scene });
+        })
+      )
+    );
+  }
+
+  function TagCard(props) {
+    const group = props.group;
+    const count = group.scenes.length;
+    return h(
+      "button",
+      {
+        type: "button",
+        className: "audio-support-settings__tag-card",
+        onClick: props.onClick,
+      },
+      h("div", { className: "audio-support-settings__tag-name" }, group.tag.name),
+      h(
+        "div",
+        { className: "audio-support-settings__tag-count" },
+        count + " scene" + (count === 1 ? "" : "s")
+      )
+    );
+  }
+
+  function TagGridView(props) {
+    const groups = props.groups;
+    if (groups.length === 0) {
+      return h(
+        "div",
+        { className: "audio-support-settings__empty" },
+        h("p", null, "No tags found on audio scenes."),
+        h("p", { className: "audio-support-settings__hint" }, "Tag audio scenes to browse by tag.")
+      );
+    }
+    return h(
+      "div",
+      { className: "audio-support-settings__tag-grid" },
+      groups.map(function (group) {
+        return h(TagCard, { key: group.tag.id, group: group, onClick: function () { props.onSelect(group); } });
+      })
+    );
+  }
+
+  function TagDetailView(props) {
+    const group = props.group;
+    const ids = useMemo(function () {
+      return group.scenes.map(function (s) { return s.id; });
+    }, [group]);
+
+    return h(
+      "div",
+      { className: "audio-support-settings__browse-panel" },
+      h(
+        "div",
+        { className: "audio-support-settings__detail-header" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "audio-support-settings__button",
+            onClick: props.onBack,
+          },
+          "\u2190 Back to tags"
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            className: "audio-support-settings__button audio-support-settings__button--primary",
+            onClick: function () { console.log("Play all", ids); },
+          },
+          "Play All"
+        )
+      ),
+      h("h3", { className: "audio-support-settings__detail-title" }, group.tag.name),
+      h(
+        "div",
+        { className: "audio-support-settings__scene-grid" },
+        group.scenes.map(function (scene) {
+          return h(AudioSceneCard, { key: scene.id, scene: scene });
+        })
+      )
+    );
+  }
+
+  function BrowseSubNav(props) {
+    const views = [
+      { id: "work", label: "By Work" },
+      { id: "all", label: "All Audio" },
+      { id: "tag", label: "By Tag" },
+    ];
+    return h(
+      "div",
+      { className: "audio-support-settings__sub-nav" },
+      views.map(function (view) {
+        return h(
+          "button",
+          {
+            key: view.id,
+            type: "button",
+            className: "audio-support-settings__sub-nav-button " + (props.active === view.id ? "audio-support-settings__sub-nav-button--active" : ""),
+            onClick: function () { props.onChange(view.id); },
+          },
+          view.label
+        );
+      })
+    );
+  }
+
+  function BrowseTab(props) {
+    const [subView, setSubView] = useState("work");
+    const [selectedWork, setSelectedWork] = useState(null);
+    const [selectedTagGroup, setSelectedTagGroup] = useState(null);
+    const [search, setSearch] = useState("");
+    const [sortBy, setSortBy] = useState("title_asc");
+
+    const works = useMemo(function () {
+      return groupByWork(props.scenes);
+    }, [props.scenes]);
+
+    const tagGroups = useMemo(function () {
+      return collectTagGroups(props.scenes);
+    }, [props.scenes]);
+
+    function handleSubViewChange(view) {
+      setSubView(view);
+      setSelectedWork(null);
+      setSelectedTagGroup(null);
+    }
+
+    return h(
+      "section",
+      { className: "audio-support-settings__section" },
+      h("h2", null, "Browse Audio"),
+      h(BrowseSubNav, { active: subView, onChange: handleSubViewChange }),
+      subView === "work" && !selectedWork
+        ? h(WorkGridView, { works: works, onSelect: setSelectedWork })
+        : null,
+      subView === "work" && selectedWork
+        ? h(WorkDetailView, { work: selectedWork, onBack: function () { setSelectedWork(null); } })
+        : null,
+      subView === "all"
+        ? h(AllAudioView, {
+            tag: props.tag,
+            scenes: props.scenes,
+            search: search,
+            setSearch: setSearch,
+            sortBy: sortBy,
+            setSortBy: setSortBy,
+          })
+        : null,
+      subView === "tag" && !selectedTagGroup
+        ? h(TagGridView, { groups: tagGroups, onSelect: setSelectedTagGroup })
+        : null,
+      subView === "tag" && selectedTagGroup
+        ? h(TagDetailView, { group: selectedTagGroup, onBack: function () { setSelectedTagGroup(null); } })
+        : null
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Covers tab
+  // ---------------------------------------------------------------------------
+
+  function GenerateCoversTab(props) {
+    return h(
+      "section",
+      { className: "audio-support-settings__section" },
+      h("h2", null, "Generate Covers"),
+      h(
+        "div",
+        { className: "audio-support-settings__covers-grid" },
+        h(
+          "div",
+          { className: "audio-support-settings__cover-option" },
+          h("h3", null, "Extract embedded covers"),
+          h(
+            "p",
+            { className: "audio-support-settings__hint" },
+            "Reads album art already embedded in MP3/FLAC/M4A files. Skips scenes with no embedded art."
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "audio-support-settings__button audio-support-settings__button--primary",
+              disabled: props.working || !props.tag,
+              onClick: props.onExtractEmbedded,
+            },
+            "Extract embedded covers"
+          )
+        ),
+        h(
+          "div",
+          { className: "audio-support-settings__cover-option" },
+          h("h3", null, "Generate default covers"),
+          h(
+            "p",
+            { className: "audio-support-settings__hint" },
+            "Creates a music-note-on-gradient placeholder for every audio scene that has no cover."
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: "audio-support-settings__button",
+              disabled: props.working || !props.tag,
+              onClick: props.onGenerateDefault,
+            },
+            "Generate default covers"
+          )
+        )
+      ),
+      props.coverProgress
+        ? h("div", { className: "audio-support-settings__progress audio-support-settings__progress--center" }, props.coverProgress)
+        : null
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings page component
+  // ---------------------------------------------------------------------------
+
   function AudioSupportSettingsPage() {
     const [config, setConfig] = useState(null);
-    const [activeTab, setActiveTab] = useState("setup");
+    const [activeTab, setActiveTab] = useState("browse");
     const [generalConfig, setGeneralConfig] = useState(null);
     const [tag, setTag] = useState(null);
     const [audioScenes, setAudioScenes] = useState([]);
@@ -481,8 +913,6 @@
     const [wizardConfirm, setWizardConfirm] = useState(false);
     const [wizardDiff, setWizardDiff] = useState([]);
     const [coverProgress, setCoverProgress] = useState(null);
-    const [search, setSearch] = useState("");
-    const [sortBy, setSortBy] = useState("title_asc");
 
     useEffect(function () {
       let mounted = true;
@@ -491,6 +921,7 @@
           const cfg = await loadConfig();
           if (!mounted) return;
           setConfig(cfg);
+          updateNavEntryEnabled(cfg.showNavEntry);
           const gen = await queryConfiguration();
           if (!mounted) return;
           setGeneralConfig(gen);
@@ -694,61 +1125,6 @@
       setWorking(false);
     }
 
-    function GenerateCoversTab(props) {
-      return h(
-        "section",
-        { className: "audio-support-settings__section" },
-        h("h2", null, "Generate Covers"),
-        h(
-          "div",
-          { className: "audio-support-settings__covers-grid" },
-          h(
-            "div",
-            { className: "audio-support-settings__cover-option" },
-            h("h3", null, "Extract embedded covers"),
-            h(
-              "p",
-              { className: "audio-support-settings__hint" },
-              "Reads album art already embedded in MP3/FLAC/M4A files. Skips scenes with no embedded art."
-            ),
-            h(
-              "button",
-              {
-                type: "button",
-                className: "audio-support-settings__button audio-support-settings__button--primary",
-                disabled: props.working || !props.tag,
-                onClick: props.onExtractEmbedded,
-              },
-              "Extract embedded covers"
-            )
-          ),
-          h(
-            "div",
-            { className: "audio-support-settings__cover-option" },
-            h("h3", null, "Generate default covers"),
-            h(
-              "p",
-              { className: "audio-support-settings__hint" },
-              "Creates a music-note-on-gradient placeholder for every audio scene that has no cover."
-            ),
-            h(
-              "button",
-              {
-                type: "button",
-                className: "audio-support-settings__button",
-                disabled: props.working || !props.tag,
-                onClick: props.onGenerateDefault,
-              },
-              "Generate default covers"
-            )
-          )
-        ),
-        props.coverProgress
-          ? h("div", { className: "audio-support-settings__progress audio-support-settings__progress--center" }, props.coverProgress)
-          : null
-      );
-    }
-
     function tabButton(id, label) {
       return h(
         "button",
@@ -789,10 +1165,14 @@
       h(
         "div",
         { className: "audio-support-settings__tabs" },
+        tabButton("browse", "Browse"),
         tabButton("setup", "Setup"),
-        tabButton("browse", "Audio Library"),
-        tabButton("covers", "Generate Covers")
+        tabButton("covers", "Covers")
       ),
+
+      activeTab === "browse"
+        ? h(BrowseTab, { tag: tag, scenes: audioScenes })
+        : null,
 
       activeTab === "setup"
         ? h(
@@ -910,6 +1290,26 @@
                 : h("span", { className: "audio-support-settings__hint" }, "Tag '" + config.audioTagName + "' does not exist yet.")
             ),
             h("hr", { className: "audio-support-settings__divider" }),
+            h("h3", null, "Interface"),
+            h(
+              "div",
+              { className: "audio-support-settings__wizard-row" },
+              h("label", { htmlFor: "as-show-nav", className: "audio-support-settings__toggle-label" }, "Show Audio in top navigation"),
+              h("input", {
+                id: "as-show-nav",
+                type: "checkbox",
+                className: "audio-support-settings__checkbox",
+                checked: config.showNavEntry,
+                onChange: function (e) {
+                  const next = { ...config, showNavEntry: e.target.checked };
+                  setConfig(next);
+                  saveConfig({ showNavEntry: e.target.checked });
+                  updateNavEntryEnabled(e.target.checked);
+                },
+              })
+            ),
+            h("p", { className: "audio-support-settings__hint" }, "Adds an Audio entry to the main top navigation bar. May require a page refresh to take effect."),
+            h("hr", { className: "audio-support-settings__divider" }),
             h("h3", null, "Generation caveats"),
             h(
               "p",
@@ -918,17 +1318,6 @@
               "For audio-heavy libraries, consider disabling those generate options or skipping audio-tagged scenes."
             )
           )
-        : null,
-
-      activeTab === "browse"
-        ? h(AudioLibraryTab, {
-            tag: tag,
-            scenes: audioScenes,
-            search: search,
-            setSearch: setSearch,
-            sortBy: sortBy,
-            setSortBy: setSortBy,
-          })
         : null,
 
       activeTab === "covers"
@@ -944,7 +1333,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Route + launcher registration
+  // Route + launcher + top-nav registration
   // ---------------------------------------------------------------------------
 
   PluginApi.patch.before("PluginRoutes", function (props) {
@@ -976,5 +1365,36 @@
       ? [...props.children, card]
       : [props.children, card];
     return [Object.assign({}, props, { children: newChildren })];
+  });
+
+  PluginApi.patch.before("MainNavBar.MenuItems", function (props) {
+    // If config has loaded and the user disabled the entry, skip injection.
+    if (navEntryLoaded && !navEntryEnabled) {
+      return [props];
+    }
+    const Bootstrap = PluginApi.libraries.Bootstrap;
+    const ReactRouter = PluginApi.libraries.ReactRouterDOM;
+    if (!Bootstrap || !Bootstrap.Nav || !Bootstrap.Button || !ReactRouter || !ReactRouter.Link) {
+      return [props];
+    }
+    const Nav = Bootstrap.Nav;
+    const Button = Bootstrap.Button;
+    const navItem = h(
+      Nav.Link,
+      { eventKey: PLUGIN_ROUTE, as: "div", key: "audio-nav", className: "col-4 col-sm-3 col-md-2 col-lg-auto" },
+      h(
+        ReactRouter.Link,
+        { to: PLUGIN_ROUTE, className: "audio-support-settings__nav-link" },
+        h(
+          Button,
+          { className: "minimal p-4 p-xl-2 d-flex d-xl-inline-block flex-column justify-content-between align-items-center" },
+          h("span", { className: "nav-menu-icon d-block d-xl-inline mb-2 mb-xl-0" }, "\u266b"),
+          h("span", null, "Audio")
+        )
+      )
+    );
+    const children = Array.isArray(props.children) ? props.children.slice() : [props.children];
+    children.push(navItem);
+    return [Object.assign({}, props, { children: children })];
   });
 })();
