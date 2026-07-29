@@ -137,6 +137,16 @@ This project follows the global Conventional Commits spec at
 The format, type list, subject rules, body guidance, version-bump rule,
 and issue-reference rule are defined there.
 
+### Specialists must not commit or push
+
+Designer, fixer, explorer, librarian, and observer subagents write files
+only; the orchestrator owns all `git add` / `commit` / `push`. For deepwork
+phases, the orchestrator commits a phase only after its planned Oracle gate
+passes. This prevents the skipped-gate remediation passes, version-bump
+drift, and lost-work re-implementations that have recurred when specialists
+committed directly to `main` (see the "Discipline note" in
+`.slim/deepwork/audio-support-v040.md`).
+
 ### Project-specific scopes
 
 Omit the scope for cross-cutting changes. When the change targets one area,
