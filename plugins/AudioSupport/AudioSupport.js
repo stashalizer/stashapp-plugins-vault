@@ -187,7 +187,7 @@
     if (offsetMs !== 0) {
       const offsetSec = offsetMs / 1000;
       for (const entry of entries) {
-        entry.time = Math.max(0, entry.time - offsetSec);
+        entry.time = Math.max(0, entry.time + offsetSec);
       }
       entries.sort(function (a, b) { return a.time - b.time; });
     }
@@ -231,7 +231,8 @@
     saving = true;
     pendingSave = false;
     try {
-      await csLib.setConfiguration(CONFIG_KEY, {
+      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const merged = Object.assign({}, stored, {
         collapsed: state.collapsed,
         opacity: state.opacity,
         panelPos: state.panelPos,
@@ -241,6 +242,7 @@
         volume: state.volume,
         lyricsVisible: state.lyricsVisible,
       });
+      await csLib.setConfiguration(CONFIG_KEY, merged);
     } catch (err) {
       console.error("AudioSupport: failed to save configuration", err);
     } finally {

@@ -70,6 +70,34 @@ mutation SceneUpdate($input: SceneUpdateInput!) {\
     gql.Do(mutation, updateVariables);
 }
 
+// Write audio metadata (codec, bit_rate, duration) to custom_fields.AudioMeta.
+function writeAudioMeta(sceneId, primaryFile) {
+    var meta = {
+        audio_codec: primaryFile.audio_codec,
+        bit_rate: primaryFile.bit_rate,
+        duration: primaryFile.duration
+    };
+    var metaJson = JSON.stringify(meta);
+    var mutation = "\
+mutation SceneUpdate($input: SceneUpdateInput!) {\
+  sceneUpdate(input: $input) {\
+    id\
+  }\
+}";
+    var updateVariables = {
+        input: {
+            id: sceneId,
+            custom_fields: {
+                partial: {
+                    AudioMeta: metaJson
+                }
+            }
+        }
+    };
+    gql.Do(mutation, updateVariables);
+    log.Info("AudioSupport: wrote AudioMeta for scene " + sceneId);
+}
+
 function handleHook() {
     var sceneId = input.Args.hookContext.id;
 
@@ -83,6 +111,8 @@ query FindScene($id: ID!) {\
       video_codec\
       width\
       duration\
+      audio_codec\
+      bit_rate\
     }\
     tags {\
       id\
@@ -108,16 +138,21 @@ query FindScene($id: ID!) {\
 
     // Check if scene already has the Audio tag
     var existingTagIds = collectTagIds(scene);
-    if (existingTagIds.indexOf(audioTagId) !== -1) {
+    var alreadyTagged = existingTagIds.indexOf(audioTagId) !== -1;
+
+    if (!alreadyTagged) {
+        // Add the Audio tag
+        existingTagIds.push(audioTagId);
+        tagScene(sceneId, existingTagIds);
+        log.Info("AudioSupport: tagged scene " + sceneId + " as audio");
+    } else {
         log.Info("AudioSupport: scene " + sceneId + " already has Audio tag");
-        return { Output: "already tagged" };
     }
 
-    // Add the Audio tag
-    existingTagIds.push(audioTagId);
-    tagScene(sceneId, existingTagIds);
-    log.Info("AudioSupport: tagged scene " + sceneId + " as audio");
-    return { Output: "tagged" };
+    // Write audio metadata for all audio scenes (even if already tagged)
+    var primaryFile = scene.files[0];
+    writeAudioMeta(sceneId, primaryFile);
+    return { Output: alreadyTagged ? "already tagged" : "tagged" };
 }
 
 function handleTagAll() {
@@ -137,6 +172,9 @@ query FindScenes($filter: FindFilterType) {\
       files {\
         video_codec\
         width\
+        duration\
+        audio_codec\
+        bit_rate\
       }\
       tags {\
         id\
@@ -173,15 +211,19 @@ query FindScenes($filter: FindFilterType) {\
 
             // Check if already tagged
             var existingTagIds = collectTagIds(scene);
-            if (existingTagIds.indexOf(audioTagId) !== -1) {
-                continue;
+            var alreadyTagged = existingTagIds.indexOf(audioTagId) !== -1;
+
+            if (!alreadyTagged) {
+                // Tag the scene
+                existingTagIds.push(audioTagId);
+                tagScene(sceneId, existingTagIds);
+                taggedCount++;
+                log.Info("AudioSupport: processing scene " + (taggedCount) + " of " + total);
             }
 
-            // Tag the scene
-            existingTagIds.push(audioTagId);
-            tagScene(sceneId, existingTagIds);
-            taggedCount++;
-            log.Info("AudioSupport: processing scene " + (taggedCount) + " of " + total);
+            // Write audio metadata for all audio scenes (even if already tagged)
+            var primaryFile = scene.files[0];
+            writeAudioMeta(sceneId, primaryFile);
         }
 
         // Check if we've processed all pages

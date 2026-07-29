@@ -77,19 +77,21 @@
   // so the two surfaces agree on the persisted shape.
   function normalizeConfig(stored) {
     const s = stored || {};
-    return {
-      collapsed: typeof s.collapsed === "boolean" ? s.collapsed : false,
-      opacity: typeof s.opacity === "number" && !Number.isNaN(s.opacity)
-        ? Math.min(1, Math.max(0, s.opacity))
-        : 0.92,
-      panelPos: s.panelPos && typeof s.panelPos.top === "number" && typeof s.panelPos.right === "number"
-        ? { top: Math.max(0, s.panelPos.top), right: Math.max(0, s.panelPos.right) }
-        : { top: 8, right: 8 },
-      audioTagName: typeof s.audioTagName === "string" && s.audioTagName.trim()
-        ? s.audioTagName.trim()
-        : DEFAULT_TAG_NAME,
-      showNavEntry: typeof s.showNavEntry === "boolean" ? s.showNavEntry : DEFAULT_SHOW_NAV_ENTRY,
-    };
+    const merged = Object.assign({}, s);  // preserve ALL existing keys
+    // overlay-owned fields (validated)
+    merged.collapsed = typeof s.collapsed === "boolean" ? s.collapsed : false;
+    merged.opacity = typeof s.opacity === "number" && !Number.isNaN(s.opacity)
+      ? Math.min(1, Math.max(0, s.opacity))
+      : 0.92;
+    merged.panelPos = s.panelPos && typeof s.panelPos.top === "number" && typeof s.panelPos.right === "number"
+      ? { top: Math.max(0, s.panelPos.top), right: Math.max(0, s.panelPos.right) }
+      : { top: 8, right: 8 };
+    // settings-owned fields (validated)
+    merged.audioTagName = typeof s.audioTagName === "string" && s.audioTagName.trim()
+      ? s.audioTagName.trim()
+      : DEFAULT_TAG_NAME;
+    merged.showNavEntry = typeof s.showNavEntry === "boolean" ? s.showNavEntry : DEFAULT_SHOW_NAV_ENTRY;
+    return merged;
   }
 
   async function saveConfig(patch) {
