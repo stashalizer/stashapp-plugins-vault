@@ -18,9 +18,10 @@
  * - Stash's transcode endpoints (stream.mp4 / stream.webm / mkv) fail for audio-only
  *   files because FileGetCodec forces a video encode. The ONLY working endpoint is
  *   the direct stream, available as scene.paths.stream (fallback /scene/{id}/stream).
- * - Overlay-owned state (collapsed, opacity, panelPos, audioTagName) is persisted to
- *   the same config key "AudioSupport". csLib.getConfiguration/setConfiguration are
- *   async; a save lock coalesces concurrent writes.
+ * - Overlay-owned state (collapsed, opacity, panelPos, audioTagName, playbackRate,
+ *   loop, volume, lyricsVisible) is persisted to the same config key "AudioSupport".
+ *   csLib.getConfiguration/setConfiguration are async; a save lock coalesces
+ *   concurrent writes. Lyrics are stored per-scene in custom_fields.AudioLyrics.
  */
 (function () {
   "use strict";
@@ -68,7 +69,11 @@
     playbackRate: 1.0,
     loop: false,
     volume: 1.0,
+    lyricsVisible: false,
   };
+
+  // In-memory lyrics for the current scene (loaded from scene.custom_fields.AudioLyrics).
+  let lyricsState = { parsed: [], metadata: {}, raw: null };
 
   let saving = false;
   let pendingSave = false;
@@ -85,6 +90,15 @@
 
   // Volume persistence debounce timer.
   let volumeSaveTimeout = null;
+
+  // Current scene id (for saving lyrics back to custom_fields).
+  let currentSceneId = null;
+
+  // Container element for lyrics DOM nodes, used for sync scrolling.
+  let lyricsContainer = null;
+
+  // Name of the scene custom field used for LRC lyrics (matches ui.settings.AudioLyricsField).
+  let lyricsFieldName = "AudioLyrics";
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -121,6 +135,79 @@
     return file && (file.video_codec === "" || file.width === 0 || file.height === 0);
   }
 
+  function parseTimeToSeconds(str) {
+    const match = String(str || "").match(/^(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$/);
+    if (!match) return null;
+    const hours = parseInt(match[1] || "0", 10);
+    const mins = parseInt(match[2], 10);
+    const secs = parseInt(match[3], 10);
+    const ms = parseInt((match[4] || "0").padEnd(3, "0"), 10);
+    return hours * 3600 + mins * 60 + secs + ms / 1000;
+  }
+
+  function parseLrcText(text) {
+    const entries = [];
+    const metadata = {};
+    if (typeof text !== "string" || text.trim() === "") {
+      return { entries: entries, metadata: metadata };
+    }
+    const lines = text.split(/\r?\n/);
+    const timeTagRe = /\[(\d{1,2}:\d{2}(?:\.\d{1,3})?)\]/g;
+    const metaTagRe = /^\[(\w+):([^\]]*)\]$/;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      const metaMatch = line.match(metaTagRe);
+      if (metaMatch) {
+        const key = metaMatch[1].toLowerCase();
+        const value = metaMatch[2].trim();
+        metadata[key] = value;
+        continue;
+      }
+      const timeTags = [];
+      let match;
+      while ((match = timeTagRe.exec(line)) !== null) {
+        timeTags.push(match[1]);
+      }
+      if (timeTags.length === 0) continue;
+      const lyricText = line.replace(timeTagRe, "").trim();
+      for (const tag of timeTags) {
+        const seconds = parseTimeToSeconds(tag);
+        if (seconds !== null) {
+          entries.push({ time: seconds, text: lyricText });
+        }
+      }
+    }
+    entries.sort(function (a, b) { return a.time - b.time; });
+    let offsetMs = 0;
+    if (metadata.offset) {
+      const parsed = parseInt(metadata.offset, 10);
+      if (!Number.isNaN(parsed)) offsetMs = parsed;
+    }
+    if (offsetMs !== 0) {
+      const offsetSec = offsetMs / 1000;
+      for (const entry of entries) {
+        entry.time = Math.max(0, entry.time - offsetSec);
+      }
+      entries.sort(function (a, b) { return a.time - b.time; });
+    }
+    return { entries: entries, metadata: metadata };
+  }
+
+  function findCurrentLyricIndex(time) {
+    const entries = lyricsState.parsed;
+    if (!entries || entries.length === 0) return -1;
+    let idx = 0;
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].time <= time) {
+        idx = i;
+      } else {
+        break;
+      }
+    }
+    return idx;
+  }
+
   function getAudioFile(scene) {
     const files = scene && scene.files;
     if (!Array.isArray(files) || files.length === 0) return null;
@@ -152,6 +239,7 @@
         playbackRate: state.playbackRate,
         loop: state.loop,
         volume: state.volume,
+        lyricsVisible: state.lyricsVisible,
       });
     } catch (err) {
       console.error("AudioSupport: failed to save configuration", err);
@@ -196,6 +284,9 @@
       if (typeof stored.volume === "number" && !Number.isNaN(stored.volume)) {
         state.volume = clamp(stored.volume, 0, 1);
       }
+      if (typeof stored.lyricsVisible === "boolean") {
+        state.lyricsVisible = stored.lyricsVisible;
+      }
     }
   }
 
@@ -218,6 +309,28 @@
     } catch (err) {
       console.error("AudioSupport: failed to fetch scene", err);
       return null;
+    }
+  }
+
+  async function saveSceneLyrics(sceneId, lrcText) {
+    if (!window.PluginApi || !window.PluginApi.GQL || !window.PluginApi.utils || !window.PluginApi.utils.StashService) {
+      return false;
+    }
+    try {
+      const client = window.PluginApi.utils.StashService.getClient();
+      await client.mutate({
+        mutation: window.PluginApi.GQL.SceneUpdateDocument,
+        variables: {
+          input: {
+            id: sceneId,
+            custom_fields: { partial: { AudioLyrics: lrcText } },
+          },
+        },
+      });
+      return true;
+    } catch (err) {
+      console.error("AudioSupport: failed to save lyrics", err);
+      return false;
     }
   }
 
@@ -376,6 +489,14 @@
     volume.setAttribute("aria-label", "Volume");
     transport.appendChild(volume);
 
+    const lyricsBtn = document.createElement("button");
+    lyricsBtn.type = "button";
+    lyricsBtn.className = "audio-support-overlay__lyrics-button" + (state.lyricsVisible ? " audio-support-overlay__lyrics-button--active" : "");
+    lyricsBtn.title = "Toggle lyrics (k)";
+    lyricsBtn.setAttribute("aria-label", "Toggle lyrics");
+    lyricsBtn.textContent = "\u266a Lyrics";
+    transport.appendChild(lyricsBtn);
+
     const speedLoop = document.createElement("div");
     speedLoop.className = "audio-support-overlay__speed-loop";
 
@@ -444,11 +565,29 @@
       time.textContent = formatTime(audio.currentTime || 0) + " / " + formatTime(audio.duration || 0);
     });
 
+    function updateLyricsHighlight(time) {
+      if (!lyricsContainer) return;
+      const idx = findCurrentLyricIndex(time);
+      const lines = lyricsContainer.children;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (i === idx) {
+          if (!line.classList.contains("audio-support-overlay__lyrics-line--current")) {
+            line.classList.add("audio-support-overlay__lyrics-line--current");
+            line.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        } else {
+          line.classList.remove("audio-support-overlay__lyrics-line--current");
+        }
+      }
+    }
+
     audio.addEventListener("timeupdate", function () {
       if (!audio.seeking) {
         seek.value = isFinite(audio.duration) && audio.duration > 0 ? audio.currentTime : 0;
       }
       time.textContent = formatTime(audio.currentTime || 0) + " / " + formatTime(audio.duration || 0);
+      updateLyricsHighlight(audio.currentTime || 0);
     });
 
     let wasPlayingBeforeSeek = false;
@@ -520,6 +659,157 @@
     }
 
     loopBtn.addEventListener("click", toggleLoop);
+
+    function toggleLyricsPanel() {
+      state.lyricsVisible = !state.lyricsVisible;
+      updateLyricsButton();
+      renderLyricsSection();
+      saveNow();
+    }
+
+    function updateLyricsButton() {
+      lyricsBtn.classList.toggle("audio-support-overlay__lyrics-button--active", state.lyricsVisible);
+    }
+
+    lyricsBtn.addEventListener("click", toggleLyricsPanel);
+
+    const lyricsSection = document.createElement("div");
+    lyricsSection.className = "audio-support-overlay__lyrics-section";
+    body.appendChild(lyricsSection);
+
+    function renderLyricsSection() {
+      clearChildren(lyricsSection);
+      if (!state.lyricsVisible) {
+        lyricsSection.style.display = "none";
+        return;
+      }
+      lyricsSection.style.display = "";
+      // Allow keyboard shortcut to re-trigger rendering when the section is empty.
+      lyricsSection.addEventListener("as-render-lyrics", renderLyricsSection, { once: true });
+      const hasLyrics = lyricsState.parsed && lyricsState.parsed.length > 0;
+
+      const header = document.createElement("div");
+      header.className = "audio-support-overlay__lyrics-header";
+      const title = document.createElement("span");
+      title.className = "audio-support-overlay__lyrics-title";
+      title.textContent = lyricsState.metadata.ti || "Lyrics";
+      header.appendChild(title);
+
+      const artist = lyricsState.metadata.ar;
+      if (artist) {
+        const byline = document.createElement("span");
+        byline.className = "audio-support-overlay__lyrics-byline";
+        byline.textContent = artist;
+        header.appendChild(byline);
+      }
+
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.className = "audio-support-overlay__lyrics-load-button";
+      loadBtn.textContent = hasLyrics ? "Edit LRC" : "Load LRC";
+      loadBtn.addEventListener("click", showLyricsEditor);
+      header.appendChild(loadBtn);
+      lyricsSection.appendChild(header);
+
+      if (hasLyrics) {
+        const container = document.createElement("div");
+        container.className = "audio-support-overlay__lyrics-lines";
+        for (const entry of lyricsState.parsed) {
+          const line = document.createElement("div");
+          line.className = "audio-support-overlay__lyrics-line";
+          line.dataset.time = String(entry.time);
+          line.textContent = entry.text || "\u266a";
+          line.addEventListener("click", function () {
+            audio.currentTime = entry.time;
+            if (audio.paused) audio.play().catch(function () {});
+          });
+          container.appendChild(line);
+        }
+        lyricsSection.appendChild(container);
+        lyricsContainer = container;
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "audio-support-overlay__lyrics-empty";
+        const hint = document.createElement("p");
+        hint.textContent = "No lyrics loaded";
+        empty.appendChild(hint);
+        const loadBtn2 = document.createElement("button");
+        loadBtn2.type = "button";
+        loadBtn2.className = "audio-support-overlay__lyrics-load-button";
+        loadBtn2.textContent = "Load LRC";
+        loadBtn2.addEventListener("click", showLyricsEditor);
+        empty.appendChild(loadBtn2);
+        lyricsSection.appendChild(empty);
+        lyricsContainer = null;
+      }
+      updateLyricsHighlight(audio.currentTime || 0);
+    }
+
+    function showLyricsEditor() {
+      clearChildren(lyricsSection);
+      lyricsSection.style.display = "";
+
+      const editor = document.createElement("div");
+      editor.className = "audio-support-overlay__lyrics-editor";
+
+      const title = document.createElement("div");
+      title.className = "audio-support-overlay__lyrics-editor-title";
+      title.textContent = "Load LRC lyrics";
+      editor.appendChild(title);
+
+      const fileWrap = document.createElement("div");
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = ".lrc,.txt";
+      fileInput.className = "audio-support-overlay__lyrics-file";
+      fileInput.addEventListener("change", function () {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function () {
+          textarea.value = String(reader.result || "");
+        };
+        reader.readAsText(file);
+      });
+      fileWrap.appendChild(fileInput);
+      editor.appendChild(fileWrap);
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "audio-support-overlay__lyrics-textarea";
+      textarea.placeholder = "Paste LRC lyrics here...";
+      textarea.value = lyricsState.raw || "";
+      editor.appendChild(textarea);
+
+      const buttons = document.createElement("div");
+      buttons.className = "audio-support-overlay__lyrics-editor-buttons";
+
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "audio-support-overlay__lyrics-save-button";
+      saveBtn.textContent = "Save";
+      saveBtn.addEventListener("click", async function () {
+        const text = textarea.value;
+        const parsed = parseLrcText(text);
+        lyricsState = { parsed: parsed.entries, metadata: parsed.metadata, raw: text };
+        if (currentSceneId) {
+          await saveSceneLyrics(currentSceneId, text);
+        }
+        renderLyricsSection();
+      });
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "audio-support-overlay__lyrics-cancel-button";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", renderLyricsSection);
+
+      buttons.appendChild(saveBtn);
+      buttons.appendChild(cancelBtn);
+      editor.appendChild(buttons);
+      lyricsSection.appendChild(editor);
+    }
+
+    renderLyricsSection();
 
     return { overlay: overlay, audio: audio, playBtn: playBtn, seek: seek, time: time };
   }
@@ -631,6 +921,28 @@
           if (loopBtn) loopBtn.classList.toggle("audio-support-overlay__loop-button--active", state.loop);
         }
         break;
+      case "k":
+      case "K":
+        {
+          state.lyricsVisible = !state.lyricsVisible;
+          saveNow();
+          const lyricsBtn = overlayRoot.querySelector(".audio-support-overlay__lyrics-button");
+          if (lyricsBtn) lyricsBtn.classList.toggle("audio-support-overlay__lyrics-button--active", state.lyricsVisible);
+          const lyricsSection = overlayRoot.querySelector(".audio-support-overlay__lyrics-section");
+          if (lyricsSection) {
+            // Render the section content if toggling on and it is currently empty.
+            if (state.lyricsVisible) {
+              lyricsSection.style.display = "";
+              if (lyricsSection.children.length === 0) {
+                const event = new Event("as-render-lyrics");
+                lyricsSection.dispatchEvent(event);
+              }
+            } else {
+              lyricsSection.style.display = "none";
+            }
+          }
+        }
+        break;
     }
   }
 
@@ -720,6 +1032,7 @@
     overlayRoot = null;
     audioEl = null;
     currentPlayer = null;
+    lyricsContainer = null;
   }
 
   async function setupPanel(playerEl) {
@@ -746,6 +1059,14 @@
     // Cache so the collapsed→expand path can re-render without a fresh query.
     cachedScene = scene;
     cachedAudioFile = audioFile;
+
+    currentSceneId = scene.id;
+    const rawLyrics = scene.custom_fields && typeof scene.custom_fields.AudioLyrics === "string"
+      ? scene.custom_fields.AudioLyrics
+      : null;
+    const parsedLyrics = parseLrcText(rawLyrics || "");
+    lyricsState = { parsed: parsedLyrics.entries, metadata: parsedLyrics.metadata, raw: rawLyrics };
+
     overlayRoot = document.createElement("div");
     overlayRoot.className = "audio-support-overlay";
     playerEl.appendChild(overlayRoot);

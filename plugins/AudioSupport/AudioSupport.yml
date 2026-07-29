@@ -19,9 +19,15 @@ ui:
   requires:
     - CommunityScriptsUILibrary
   javascript:
-    - AudioSupport.js
-    - AudioSupportSettings.js
+  - AudioSupport.js
+  - AudioSupportSettings.js
   css:
     - AudioSupport.css
     - AudioSupportSettings.css
+  settings:
+    AudioLyricsField:
+      displayName: Audio lyrics custom field
+      description: Name of the scene custom field used to store synced LRC lyrics. Default is AudioLyrics.
+      type: STRING
+      default: AudioLyrics
 # requires: CommunityScriptsUILibrary
