@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships three plugins: **QuestingAdventurer**, **MosaicFilter**, and **SceneVersions**.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships four plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, and **AudioSupport**.
 
 ## Repository map
 
@@ -16,7 +16,7 @@ Before working on any task, read `codemap.md` to understand:
 - Directory responsibilities and design patterns
 - Data flow and integration points between modules
 
-For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`, `plugins/MosaicFilter/codemap.md`, `plugins/SceneVersions/codemap.md`).
+For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`, `plugins/MosaicFilter/codemap.md`, `plugins/SceneVersions/codemap.md`, `plugins/AudioSupport/codemap.md`).
 
 ## Language policy
 
@@ -104,6 +104,25 @@ build_site.sh               # zips each plugin + writes index.yml
 - **No settings page, no route injection** — tab injection only.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
 
+## AudioSupport
+
+- **Audio-as-scene hack.** Stash v0.31.1 has no native audio support — the scanner rejects audio extensions, there is no Audio content type, and the `VideoFile` schema is video-shaped (`width: Int!`, `height: Int!`, `video_codec: String!` are non-nullable). The plugin works around this by having the user add audio extensions (mp3, flac, m4a, ogg, opus, wav) to the `VideoExtensions` config via the Setup wizard. Audio files are then ingested as scenes with `VideoFile{Width:0, Height:0, VideoCodec:""}`. GraphQL serves these without error. Designed to migrate to the native Audio type once [PR #6824](https://github.com/stashapp/stash/pull/6824) lands.
+- **Two UIs, two config keys.** Main config key `"AudioSupport"` (csLib): overlay-owned `{ collapsed, opacity, panelPos, playbackRate, loop, volume, lyricsVisible }`; settings-owned `{ audioTagName, showNavEntry }`. Queue state is isolated in a SEPARATE config key `"AudioSupportQueue"`: `{ queue: [sceneId, ...], currentIndex: number, repeat: "off" | "all" | "one" }` — this avoids the cross-surface race wiping queue state when the settings page saves.
+- **Cross-surface race — mitigated, not eliminated.** Overlay and settings share the `"AudioSupport"` key with separate save locks (same pattern as QuestingAdventurer/MosaicFilter). `normalizeConfig` in both surfaces preserves all keys via `Object.assign({}, stored, { validated overrides })` so neither surface wipes the other's fields. The overlay's `saveNow` reads-then-merges. Settings edits still won't live-reflect in an already-open overlay until the next navigation/reload.
+- **Direct stream playback ONLY.** All transcode endpoints fail for audio-only input. The overlay loads `/scene/{id}/stream` (which is `http.ServeFile`, no ffmpeg) into an HTML5 `<audio>` element. Never wire transcode URLs.
+- **`patch.instead("ScenePlayer", ...)`** intercepts the React ScenePlayer at script load. For audio-only scenes (detected via `video_codec === ""` or `width === 0`), it returns a `<div id="AudioSupportMount">` instead of the video.js player — video.js never initializes. Then `csLib.PathElementListener("/scenes/", "#AudioSupportMount", setupPanel)` plus a `stash:location` safety-net re-injects on SPA navigation.
+- **LRC synced lyrics** (overlay): manual upload/paste only — the Goja backend VM has NO file I/O (sandboxed to `input`, `log`, `util.Sleep`, `gql.Do`, `console`; no `os`/`fs`/`readFile`), so the hook cannot auto-read `.lrc` sibling files. Lyrics are stored in `custom_fields.AudioLyrics` as raw LRC text. The parser supports `[mm:ss.xx]` timestamps and `[offset: +N]` (ADD N ms to timestamps, not subtract — fixed in ora-1 remediation). Synced highlight + auto-scroll + click-to-seek. The `lyricsVisible` config flag toggles the panel.
+- **AudioMeta extraction** (hook): `writeAudioMeta()` in `AudioSupportHook.js` writes `{ audio_codec, bit_rate, duration }` as a JSON string to `custom_fields.AudioMeta` (custom_fields is scalar-only — objects must be JSON-stringified). Runs on both `Scene.Create.Post` and `tagAll`.
+- **Backend Goja JS VM is sandboxed and ES5.1 only.** `AudioSupportHook.js` runs in the Stash server, NOT the browser. Only globals: `input`, `log`, `util.Sleep`, `gql.Do`, `console`. No arrow functions, no `const`/`let`, no template literals, no `async`/`await`, no Promises. Do not add browser-only APIs.
+- **Queue + auto-advance + prev/next** (overlay): on `<audio>` `ended`, the overlay navigates to the next scene in the queue via `window.history.pushState` + `window.dispatchEvent(new PopStateEvent("popstate"))` (triggers Stash SPA router without full reload). Repeat modes: off (stop at end), all (loop queue), one (loop current track). Prev/next buttons + queue indicator (`N / M`) in the transport bar. Keyboard shortcuts: `n` (next), `p` (prev), `r` (repeat cycle).
+- **`sceneInQueue` flag**: module-level boolean in `AudioSupport.js`. When the user navigates to a scene that is NOT in the current queue, prev/next buttons and the queue indicator are hidden, but the queue state is preserved so the user can resume by navigating back to a queued scene. Added in ora-2 remediation — do not remove.
+- **Nav entry via `MainNavBar.MenuItems` patch** (settings): `PluginApi.patch.before("MainNavBar.MenuItems", ...)` injects an "Audio" nav link. Toggleable via `showNavEntry` config (default true). The label is `♫ Audio` (music note + space + word — the space was added in 0.6.2 to match native nav items' icon-text spacing). A module-level `navEntryEnabled` flag (updated from config) gates rendering.
+- **Browse page** (settings): three sub-views under the Browse tab — **By Work** (groups by parent directory, natural-sort chapters, "Play Work" queues all chapters), **All Audio** (flat grid with search/sort, "Play All" queues filtered list), **By Tag** (tag cards → scene grid, "Play All" queues tag's scenes). Plus Setup (wizard + nav toggle) and Covers (extract embedded via jsmediatags CDN — MP3/ID3v2, FLAC, M4A supported; OGG/Opus NOT supported; generate default gradient covers via canvas).
+- **Cover art**: `SceneUpdate(cover_image: "data:image/png;base64,...")` stored as a DB blob. Use server-side `is_missing: "cover"` filter for detection (`scenes.cover_blob IS NULL` — `paths.screenshot` is always a non-empty URL so cannot be used client-side).
+- `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer/MosaicFilter: treating a Promise as a plain object causes "data disappears after refresh").
+- **No migrations** (new plugin, no legacy data).
+- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
+
 ## Conventions
 
 - One plugin per directory. No cross-plugin imports.
@@ -126,6 +145,7 @@ use a top-level component name:
 - `QuestingAdventurer` — the QuestingAdventurer plugin
 - `MosaicFilter` — the MosaicFilter plugin
 - `SceneVersions` — the SceneVersions plugin
+- `AudioSupport` — the AudioSupport plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`
@@ -155,6 +175,7 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 - `QuestingAdventurer` — no tracking issue at this time
 - `MosaicFilter` — [issue #1: Mosaic Filter](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed)
 - `SceneVersions` — no tracking issue at this time
+- `AudioSupport` — no tracking issue at this time
 
 ### Codemap sync
 
@@ -200,6 +221,8 @@ documentation concern, separate from the release.
 - `feat(MosaicFilter): add follow-cursor mode for the rectangle`
 - `fix(MosaicFilter): stop writing config per pointermove during follow`
 - `feat(SceneVersions): add suggest-from-folder helper`
+- `feat(AudioSupport): add play queue with auto-advance and prev/next`
+- `fix(AudioSupport): remove invalid settings field from ui config`
 
 ## Cloned Dependency Source
 

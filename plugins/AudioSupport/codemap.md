@@ -14,6 +14,7 @@ Adds audio file support to Stash via the audio-as-scene path: a setup wizard tha
 ## Data model
 - Plugin config key: `"AudioSupport"` (csLib). Overlay-owned: `{ collapsed, opacity, panelPos, playbackRate, loop, volume, lyricsVisible }`; settings-owned: `{ audioTagName, showNavEntry }`.
 - Separate queue config key: `"AudioSupportQueue"` (csLib). State shape: `{ queue: [sceneId, ...], currentIndex: number, repeat: "off" | "all" | "one" }`. Isolates queue state from the cross-surface race on the main config key.
+- `sceneInQueue` is a module-level boolean in `AudioSupport.js`. When the user navigates to a scene that is NOT in the current queue, prev/next buttons and the queue indicator are hidden, but the queue state is preserved so the user can resume by navigating back to a queued scene. Added in ora-2 remediation — do not remove.
 - Scene lyrics are stored in `custom_fields.AudioLyrics` as raw LRC text. The overlay loads, parses, and saves synced LRC text per scene using Apollo; lyrics are not persisted in the plugin config.
 - `panelPos` is now used only for positioning the collapsed chip (`top`/`right`). The expanded overlay fills the mount div via CSS and does not use inline panel positioning.
 - Audio metadata lives on the scene (tags + `custom_fields.AudioMeta`), NOT in plugin config, to ease migration to the native Audio type.
@@ -29,7 +30,7 @@ Adds audio file support to Stash via the audio-as-scene path: a setup wizard tha
 7. `AudioSupportSettings.js` registers:
    - `/plugins/audiosupport` route via `PluginApi.patch.before("PluginRoutes", ...)`.
    - A Scene Tools launcher card via `PluginApi.patch.before("SettingsToolsSection", ...)` (second instance only).
-   - A top-navigation entry via `PluginApi.patch.before("MainNavBar.MenuItems", ...)`. The item is injected at script load; a module-level `navEntryEnabled` flag (default `true`, updated from config) controls whether it is rendered. The toggle lives on the Setup tab.
+   - A top-navigation entry via `PluginApi.patch.before("MainNavBar.MenuItems", ...)`. The item is injected at script load; a module-level `navEntryEnabled` flag (default `true`, updated from config) controls whether it is rendered. The toggle lives on the Setup tab. The nav label is `♫ Audio` (music note + space + word — the space was added in 0.6.2 to match native nav items' icon-text spacing).
 8. Settings page tabs:
    - **Browse** (default): sub-nav with three views:
     - **By Work**: groups audio scenes by parent directory; each work card shows the first scene's cover, work name (directory basename), chapter count, and total duration. Clicking a work opens a chapter list sorted by natural filename order, with a "Play Work" button that writes the work's chapter IDs to `"AudioSupportQueue"` and navigates to the first chapter, plus a back button.

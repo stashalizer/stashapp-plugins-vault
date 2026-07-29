@@ -9,11 +9,12 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 - **[Questing Adventurer](#questing-adventurer)** — turns scene playback into a quest: respond to on-screen cues by performing the moves attached to your active triggers.
 - **[Mosaic Filter](#mosaic-filter)** — a movable, resizable blur rectangle (or ellipse) over any region of a scene, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
 - **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene bidirectionally, with a suggest-from-folder helper.
+- **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
 
 ## Requirements (all plugins)
 
 - [Stash](https://github.com/stashapp/stash) (tested against the v0.31.x line).
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer and MosaicFilter depend on it; their player overlays will not load without it. SceneVersions is standalone and does not require csLib.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions is standalone and does not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
 
 ## Tested environment
@@ -29,10 +30,10 @@ Add this repository as a plugin source in Stash:
    ```
    https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
    ```
-3. Install **Questing Adventurer**, **Mosaic Filter**, and/or **Scene Versions** from the list.
-4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it.
+3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, and/or **Audio Support** from the list.
+4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it (Audio Support's overlay and settings page both require it).
 
-QuestingAdventurer and MosaicFilter each appear in two places: a **player overlay** on every scene page, and a **settings page** under **Settings → Tools → Scene Tools**. SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page).
+QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page).
 
 ---
 
@@ -140,6 +141,48 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 
 ---
 
+## Audio Support
+
+Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash v0.31.x has no native audio type, the plugin works around this by treating audio files as scenes (the Setup wizard adds audio extensions to Stash's video-extension list). A dedicated audio overlay replaces the video player for audio-only scenes, with synced LRC lyrics, a play queue with auto-advance, and a browse page for navigating your audio library.
+
+### Features
+
+- **Audio-as-scene playback.** Audio files are ingested as scenes and played back with a dedicated HTML5 audio overlay (direct stream only — no broken transcodes). The video.js player is replaced entirely for audio-only scenes.
+- **Synced LRC lyrics.** Upload or paste `.lrc` text in the overlay; lyrics scroll in sync with playback, highlight the current line, auto-scroll, and click any line to seek. Lyrics are stored per-scene.
+- **Play queue + auto-advance.** Build a queue from any browse view ("Play Work", "Play All", or a single track). The overlay auto-advances to the next track when the current one ends. Repeat modes: off / all / one. Prev/next buttons + queue indicator in the transport bar. Keyboard shortcuts: `n` (next), `p` (prev), `r` (repeat).
+- **Browse page.** Three views under the Browse tab: **By Work** (groups audio by parent directory, natural-sorted chapters, "Play Work" queues the whole work), **All Audio** (flat grid with search/sort, "Play All" queues the filtered list), **By Tag** (tag cards → scene grid, "Play All" queues the tag's scenes).
+- **Cover art.** Extract embedded cover art from MP3/ID3v2, FLAC, and M4A files, or generate default gradient covers via canvas. Stored as scene cover blobs.
+- **Top-nav entry.** An "Audio" link in the main navigation bar (toggleable on the Setup tab).
+
+### How to use it
+
+**1. Enable audio ingestion** on the settings page at **Settings → Tools → Scene Tools → Audio Support** (or click the **Audio** entry in the top nav):
+
+- The **Setup** tab shows which audio extensions are missing from Stash's `VideoExtensions` config. Click to add them (mp3, flac, m4a, ogg, opus, wav). Then run a scan so Stash ingests your audio files as scenes.
+- Run the **Tag all audio scenes** task once (Settings → Plugins → Audio Support → Tasks) to tag already-ingested audio scenes.
+
+**2. Browse your audio library** on the **Browse** tab:
+
+- **By Work** — audio grouped by parent directory (e.g. an audiobook or album). Click a work card to see its chapters in natural order. **Play Work** queues all chapters and starts playing the first.
+- **All Audio** — every audio scene in a flat grid. Search and sort, then **Play All** to queue the filtered list.
+- **By Tag** — tags on your audio scenes as cards. Click a tag to see its scenes, then **Play All** or play a single track.
+
+**3. Play a track.** The audio overlay replaces the video player:
+
+- Transport: play/pause, seek, volume, playback speed (0.5x–2x), loop, prev/next (when in a queue), repeat mode, queue indicator (`N / M`).
+- **Load LRC** — upload a `.lrc` file or paste LRC text. Lyrics sync to playback; click a line to seek there.
+- Keyboard: Space (play/pause), ←/→ (seek 5s), ↑/↓ (volume), `m` (mute), `l` (loop), `k` (collapse/expand), `n` (next), `p` (prev), `r` (repeat cycle).
+
+### Known limitations
+
+- **Audio files are ingested as scenes**, not as a native audio type. This is a workaround for Stash v0.31.x; the plugin is designed to migrate once native audio support lands (see [stashapp/stash#6824](https://github.com/stashapp/stash/pull/6824)).
+- **LRC lyrics are manual upload/paste only** — the plugin cannot auto-detect `.lrc` files on disk (the backend hook runs in a sandboxed JS VM with no file I/O).
+- **Embedded cover extraction** supports MP3/ID3v2, FLAC, and M4A. OGG and Opus files do not expose embedded art via the library used; use the "generate default cover" option for those.
+- **Direct stream playback only.** All transcode endpoints fail for audio-only input; the overlay uses the direct stream URL exclusively.
+- The overlay and settings page keep separate save locks and don't coordinate. Settings edits won't live-reflect in an already-open overlay until the next navigation/reload. Queue state is stored in a separate config key to avoid being wiped by this race.
+
+---
+
 ## Repository layout
 
 ```
@@ -147,6 +190,7 @@ plugins/                    # one subdirectory per plugin
   QuestingAdventurer/       # manifest + JS/CSS assets
   MosaicFilter/             # manifest + JS/CSS assets
   SceneVersions/            # manifest + JS/CSS assets
+  AudioSupport/             # manifest + JS/CSS assets + backend hook
 build_site.sh               # zips each plugin and generates index.yml
 .github/workflows/          # deploys the source index to GitHub Pages
 ```
@@ -161,7 +205,7 @@ To publish manually from a fork: open **Settings → Pages** and set the source 
 
 ## Feedback
 
-All three plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
+All four plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
 
 - Open a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues), or
 - Reply to the announcement thread on the [stashapp community forum](https://discourse.stashapp.cc/c/plugins/18/none).
