@@ -3,6 +3,38 @@
 Durable reference links for plugin development on this repo. Keep this file
 in sync with the official sources if URLs change.
 
+## How to fetch these during development
+
+Every source below was reachable from this repo's environment when checked on
+2026-11-08. Three channels, in order of preference:
+
+1. **GitHub connector (preferred for source).** Code search across repos and
+   direct file reads return the raw file, with no HTML→markdown loss. Use it
+   whenever the question is "does this patch target / function signature still
+   exist".
+2. **`raw.githubusercontent.com` (fallback).** Plain `curl -sL <url>` works for
+   any file, so the docs stay usable even without the connector. Pipe to a temp
+   file and read it rather than trying to skim it inline.
+3. **Web fetch on `docs.stashapp.cc` (concepts only).** The site is Docusaurus;
+   pages convert to markdown cleanly. Good for *what a plugin is* and *what the
+   UI API offers*, but it lags the source — it is not authoritative on exact
+   component names or current signatures.
+
+Caveats that cost real time:
+
+- **Code search only indexes the default branch.** It is also literal about
+  query terms. Start with the bare symbol (`PatchContainerComponent repo:stashapp/stash`)
+  and narrow with `path:` only if the result set is noisy. A `path:` prefix that
+  is even slightly off — e.g. `path:ui/v2.5/src/components/ScenePlayer` — returns
+  zero hits and looks like the symbol is gone.
+- **Component paths move between Stash minor versions.** The paths recorded in
+  this file are for v2.5. Treat them as lookups to re-verify, never bake them
+  into plugin code or a build step.
+- **Reading source proves a symbol exists, not that an injection lands.**
+  Whether `PluginApi.patch.after(...)` actually renders against the live DOM can
+  only be confirmed by installing the plugin in a real Stash — this repo has no
+  visual regression net (see `AGENTS.md`).
+
 ## Official Stash plugin documentation
 
 - [Plugins overview](https://docs.stashapp.cc/in-app-manual/plugins/) —
@@ -102,7 +134,20 @@ the obvious approaches are fragile. Notes from real bugs:
 - [stashapp/stash](https://github.com/stashapp/stash) — the main
   Stash repo. When the official docs are silent on a patch target or
   component name, the source is authoritative. Useful entry points:
+  - `ui/v2.5/src/patch.tsx` — the patching system itself.
   - `ui/v2.5/src/components/Settings/SettingsToolsPanel.tsx` — the
     `SettingsToolsSection` `PatchContainerComponent` (instantiated
     twice: general "Tools" and "Scene Tools").
-  - `ui/v2.5/src/patch.tsx` — the patching system itself.
+  - **Other `PatchContainerComponent` sites**, from a code search for that
+    symbol (not exhaustive — re-run the search when adding an injection point):
+    - `ui/v2.5/src/components/List/FilterTags.tsx`
+    - `ui/v2.5/src/components/Tags/TagList.tsx`
+    - `ui/v2.5/src/components/Groups/GroupList.tsx`
+    - `ui/v2.5/src/components/Studios/StudioList.tsx`
+    - `ui/v2.5/src/components/Scenes/SceneList.tsx`
+    - `ui/v2.5/src/components/Scenes/SceneMarkerList.tsx`
+  - `graphql/schema/` — the GraphQL schema (types, queries, mutations) as
+    shipped in the repo. Read this before calling a mutation from a plugin, e.g.
+    to confirm the exact shape of `configurePlugin`'s `$input`. A running
+    instance also serves the GraphQL playground (introspection), which reflects
+    the *installed* version rather than `main` — use it when the two disagree.
