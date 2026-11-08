@@ -2,15 +2,12 @@ name: Deploy repository to Github Pages
 
 on:
   push:
+      # Broad on purpose: build_site.sh zips the whole plugin directory, so a new
+      # asset file must deploy even when no .js/.css/.yml changed. Do not narrow
+      # this to source extensions, and do not add paths-ignore — a workflow that
+      # lists both paths and paths-ignore is rejected and fails to start.
       paths:
       - 'plugins/**'
-      # Markdown in a plugin directory is developer documentation and is stripped
-      # from the zip by build_site.sh, so it can never change what users install.
-      # Republishing on a docs-only edit would just mint a new <version>-<hash>
-      # with identical content.
-      paths-ignore:
-      - 'plugins/**/*.md'
-      - 'plugins/*.md'
       branches:
       - main
   # Allows you to run this workflow manually from the Actions tab
