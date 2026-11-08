@@ -384,7 +384,6 @@ plugins/AudioSupport/
   AudioSupport.js               # player overlay: patches ScenePlayer for audio scenes
   AudioSupportSettings.js       # React settings page: setup, metadata, browse
   AudioSupportTask.js           # custom task: generate audio artifacts (cover/waveform)
-  codemap.md
   *.css
 ```
 

@@ -94,8 +94,8 @@ the obvious approaches are fragile. Notes from real bugs:
   `AGENTS.md`). Visual CSS changes ship unreviewed until a user installs
   the plugin in Stash. At minimum, manually install + reload Stash and
   verify the change against a real scene before tagging a release. The
-  per-plugin `codemap.md` is the right place to capture the specific
-  fix history.
+  plugin's section in `AGENTS.md` is the right place to capture the
+  specific fix history and the trap that made it necessary.
 
 ## Stash source code (for reference when the docs are thin)
 

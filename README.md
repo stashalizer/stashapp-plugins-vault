@@ -195,7 +195,7 @@ build_site.sh               # zips each plugin and generates index.yml
 .github/workflows/          # deploys the source index to GitHub Pages
 ```
 
-A full architectural codemap lives in [`codemap.md`](codemap.md); per-folder maps are alongside each plugin directory. These are aimed at contributors and plugin developers, not end users.
+Architecture, per-plugin data models, and the non-obvious implementation traps live in [`AGENTS.md`](AGENTS.md) — that single file is the architectural source of truth for contributors and coding agents. Deeper Stash API notes are in [`docs/`](docs/).
 
 ## Publishing
 

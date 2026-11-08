@@ -2,21 +2,31 @@
 
 A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships four plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, and **AudioSupport**.
 
-## Repository map
+## Architecture
 
-A full codemap is available at `codemap.md` in the project root.
+This is a **source-index repo, not an app**: each `plugins/<PluginId>/` is a
+self-contained Stash plugin (manifest + vanilla-JS overlay + optional React
+settings page), zipped by `build_site.sh` and listed in a published `index.yml`.
+There is no bundler, no dev server, no test suite — Stash loads the raw JS/CSS at
+runtime.
 
-Stash plugin development reference links (official docs + community
-repo + csLib source notes) live in [`docs/references.md`](docs/references.md).
-Consult it before adding a new patch target, wiring up `csLib`, or
-debugging persistence / SPA-injection issues.
+**This file is the single architectural source of truth.** There are no
+per-folder map files. The per-plugin sections below carry the data models,
+injection points, persistence rules, and the traps that cost real fix commits;
+the code carries everything else. Read the section for the plugin you are
+touching before editing it, and update that section in the same commit when
+behavior changes (see *Keeping these notes current*).
 
-Before working on any task, read `codemap.md` to understand:
-- Project architecture and entry points
-- Directory responsibilities and design patterns
-- Data flow and integration points between modules
+Cross-plugin invariants worth stating once:
 
-For deep work on a specific folder, also read that folder's `codemap.md` (`plugins/codemap.md`, `plugins/QuestingAdventurer/codemap.md`, `plugins/MosaicFilter/codemap.md`, `plugins/SceneVersions/codemap.md`, `plugins/AudioSupport/codemap.md`).
+- Plugin id = directory name = yml basename; `build_site.sh` zips the directory.
+- Player overlays are vanilla JS on `window.csLib`; anything that registers a
+  route, settings page, nav entry, or scene-page tab is React on `window.PluginApi`.
+- `csLib.getConfiguration` / `setConfiguration` are **async** — always `await`.
+- No cross-plugin imports; plugins are independent directories.
+- Stash API surface, patch targets, and csLib source notes:
+  [`docs/references.md`](docs/references.md). Consult it before adding a new
+  patch target or debugging persistence / SPA-injection issues.
 
 ## Language policy
 
@@ -29,17 +39,18 @@ plugins/<PluginId>/
   <PluginId>.yml            # manifest: name, description, version, ui.requires/javascript/css
   <PluginId>.js             # player overlay (vanilla JS, uses window.csLib)
   <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
-  codemap.md                # per-plugin architectural map
+  <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
 build_site.sh               # zips each plugin + writes index.yml
 .github/workflows/deploy.yml
+AGENTS.md                   # architecture + conventions (this file)
 ```
 
 ## Build & publish
 
 - **No local toolchain** — no bundler, linter, typecheck, tests, or dev server. Stash loads the raw JS/CSS at runtime; you only need a text editor.
 - **Preview the build locally:** `./build_site.sh _site/main` from the repo root. Requires `zip`, `sha256sum`, `git`, `realpath` on `PATH`. Output: `_site/main/index.yml` + one `<PluginId>.zip` per plugin.
-- **Publish trigger:** `.github/workflows/deploy.yml` runs on push to `main` whose paths filter matches `plugins/**`. Doc/README/codemap-only changes do **not** trigger a publish.
+- **Publish trigger:** `.github/workflows/deploy.yml` runs on push to `main` whose paths filter matches `plugins/**`. Doc / README / `AGENTS.md`-only changes do **not** trigger a publish.
 - **Published URL:** `https://<owner>.github.io/<repo>/main/index.yml` (the path segment is the branch name). Users add this under **Settings > Plugins > Available Plugins > Add Source** in Stash.
 - **Push the current branch, not always `main`.** After committing a plugin change, run `git push` (or `git push -u origin HEAD` if the branch has no upstream yet) and report which branch was pushed. The deploy trigger above only fires from `main`, so if you are inside a `git worktree` lane on a feature branch (`omos/...`, `feat/...`, `fix/...`), the push lands on that branch and will **not** publish — the user must merge to `main` (or open a PR) for the deploy to happen. Never force-push a feature branch without explicit confirmation.
 - `_site/` is generated and gitignored — never commit it.
@@ -54,11 +65,13 @@ build_site.sh               # zips each plugin + writes index.yml
 
 ## QuestingAdventurer
 
-- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds}], collapsed, opacity, panelPos, showAddControls }`.
+- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds}], collapsed, opacity, panelPos: {top,right}, panelSize, showAddControls, showManualControls }`.
 - **v2 data model**: moves are a global library (`moves: [{id,text}]`); triggers reference moves by id via `attachedMoveIds: [string]`. The `active` flag lives on the **trigger**, not the move. A trigger with no attached moves is `active: false` by design.
 - **Penalty / Reward** (overlay header buttons):
   - **Penalty** picks a random **inactive** trigger → activates it AND attaches a random **unattached** move from the library. If every trigger is already active, it picks a random active trigger and just attaches a move. If the library has no unattached moves, the trigger is still activated (no-op for the move part).
   - **Reward** picks a random **active** trigger that still has attached moves → removes a random attached move. If the trigger ends with zero attached moves, it is set `active: false`.
+- **Manual controls** (`showManualControls`, ➕-adjacent toggle): reveals a "Library" section between the active list and the footer — the fine-grained counterpart to the random Penalty/Reward buttons. It has an **Activate Trigger** list (single-click ▶, allowed even with zero attached moves, because manual activation is explicit user intent rather than Penalty's atomic activate+attach) and an **Attach Move to Trigger** list capped at `MAX_MOVE_ATTACHMENTS` (2) per move; attaching to an inactive trigger also activates it, mirroring Penalty.
+- **Screen-reader announcements** go to one shared `aria-live="polite"` div mounted on `document.body` (outside the panel, so it survives `render()` after drag/drop or penalty/reward). Both surfaces append to it.
 - **Overlay shows only active triggers** and their attached moves (resolved from the global library by id). The chip shows `🗺️ Triggers (N)` where N is the number of active triggers.
 - **Dynamic default collapsed**: on first load (no stored `collapsed`), the overlay is expanded if there are active triggers and collapsed otherwise. After the user manually toggles, the stored value is used.
 - **Header controls**: ➕ add-toggle button (`showAddControls: bool` — reveals the Add Trigger / Add Move footer which is hidden by default), opacity slider (hover-reveal), ✕ close.
@@ -74,6 +87,17 @@ build_site.sh               # zips each plugin + writes index.yml
   2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
+- **Files**: `QuestingAdventurer.yml` (manifest) · `QuestingAdventurer.js` (overlay panel) · `QuestingAdventurerSettings.js` (React CRUD: Move Library + Triggers sections) · `QuestingAdventurer.css` · `QuestingAdventurerSettings.css`.
+
+### Overlay CSS / collapse-drag regression checklist
+
+Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, `83c0d39`, `b0e1425`) after an unrelated overlay change silently broke it. Before touching the panel CSS or the collapse/drag/resize code, verify in this order — an earlier trap masks a later one.
+
+1. **min-width / min-height leak across collapse.** The base rule sets `min-width: 240px; min-height: 80px`. The `.questing-adventurer-panel--collapsed` override MUST reset both to `0` (and re-cap `max-width: 360px`) or the "chip" stays a large box. Any new size constraint on the expanded state needs a mirrored reset.
+2. **`container-type` rule ordering.** The base rule sets `container-type: inline-size`, which pins the intrinsic width and defeats `min-width: 0`. The collapsed override must come AFTER the base rule in source order (or raise specificity) and set `width: fit-content` + `container-type: normal` **together**. Don't move it above the base rule.
+3. **Hover-expand pushing the close button.** The opacity slider expands on hover (`width: 0 → 80px`) inside `.questing-adventurer-panel__header-controls`; any flex sibling to its right shifts when it expands. The close button must stay absolutely positioned out of that flow (`position: absolute; top: 50%; right: 0; z-index: 2`). Don't re-inline it.
+4. **Inline width/height across collapse/expand.** `render()` clears inline `width`/`height` when collapsing and restores the persisted `panelSize` when expanding, so a user edge-resize survives. Change one half without the other and a stale resize leaks into the chip or is dropped on re-expand.
+5. **Chip-drag vs panel-drag guard.** The collapsed chip and the expanded header share `pointerdown` delegation; a 5px threshold separates drag from click, and `suppressNextClick` stops the click that follows `pointerup` from also toggling collapse. Click delegation uses `closest('[data-action]')` while the drag guard uses `closest('button')` — keep close as `<button data-action="toggle-collapse">` or both handlers break.
 
 ## MosaicFilter
 
@@ -89,6 +113,9 @@ build_site.sh               # zips each plugin + writes index.yml
 - Same cross-surface race caveat as QuestingAdventurer: overlay and settings maintain separate save locks and do not coordinate; last writer wins the whole config map. Settings edits won't live-reflect in an already-open overlay until next navigation/reload.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed) — historical reference via `Refs #1` / `Fixes #1`.
+- **Shared module load order.** `MosaicFilter.yml` lists `MosaicFilterShared.js` **first** under `ui.javascript` so `window.MosaicFilterShared` exists before the overlay and settings scripts run. It owns `CONFIG_KEY`, `FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `mergeStored`, `sanitizeState`. Both surfaces must call into it instead of re-declaring defaults — a second copy is how the two surfaces drift apart.
+- **All writes funnel through `saveNow()`** (coalesced by the `saving`/`pendingSave` lock); unlike QuestingAdventurer there is no separate `queueSave` wrapper.
+- **Files**: `MosaicFilter.yml` (manifest) · `MosaicFilterShared.js` (shared constants + pure helpers) · `MosaicFilter.js` (overlay) · `MosaicFilterSettings.js` (React settings form) · `MosaicFilter.css` · `MosaicFilterSettings.css`.
 
 ## SceneVersions
 
@@ -102,6 +129,12 @@ build_site.sh               # zips each plugin + writes index.yml
 - **`fetchPolicy: "no-cache"`** on all Apollo queries so stale cache doesn't hide bidirectional writes.
 - **No migrations** (new plugin, no legacy data).
 - **No settings page, no route injection** — tab injection only.
+- **`custom_fields` only stores scalars.** The id list is `JSON.stringify`'d on write and `JSON.parse`'d on read (`encodeIds`/`decodeIds`); passing a bare array is rejected by the backend (`getSQLValueFromCustomFieldInput`). All writes use `custom_fields: { partial: { RelatedScenes: ... } }` so other custom fields are not clobbered. `decodeIds` also tolerates a legacy bare-array value found in cache.
+- **`syncBidirectional` is best-effort by design.** Peer writes run concurrently via `Promise.allSettled`; individual peer failures are logged to `console.error` and don't block the rest. The current scene's own list is written **last and unconditionally**, so a peer failure can never leave the user's own edit unsaved. Self-links are filtered at every step.
+- **`getFolderPath` must keep the platform path separator** (`\` on Windows). The backend builds its LIKE pattern from `folders.path || filepath.Separator || files.basename` and matches the raw value sent, so normalising to `/` made the folder criterion match nothing and the suggestion list was **always empty on Windows** (fixed in 0.3.0). Do not "clean up" the separator.
+- **`INCLUDES` is a loose match.** It is a substring match that also splits the value on whitespace and ORs the terms, so paths in subfolders or containing spaces can produce extra hits. Accepted trade-off; irrelevant entries can be ignored.
+- **Tab-label count badge is live.** `RelatedScenesTabLabel` does its own `readRelatedIds` on mount (so the count shows before the tab is opened) and subscribes to a module-level pub/sub (`onCountChange` / `emitCountChange`, keyed by scene id) that the tab body emits on every edit-state change. The in-tab duplicate header was removed in 0.4.0 — don't re-add it.
+- **Files**: `SceneVersions.yml` (manifest, no `ui.requires`) · `SceneVersions.js` (tab component + label + suggest-from-folder) · `SceneVersions.css`.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
 
 ## AudioSupport
@@ -119,13 +152,20 @@ build_site.sh               # zips each plugin + writes index.yml
 - **Nav entry via `MainNavBar.MenuItems` patch** (settings): `PluginApi.patch.before("MainNavBar.MenuItems", ...)` injects an "Audio" nav link. Toggleable via `showNavEntry` config (default true). The label is `♫ Audio` (music note + space + word — the space was added in 0.6.2 to match native nav items' icon-text spacing). A module-level `navEntryEnabled` flag (updated from config) gates rendering.
 - **Browse page** (settings): three sub-views under the Browse tab — **By Work** (groups by parent directory, natural-sort chapters, "Play Work" queues all chapters), **All Audio** (flat grid with search/sort, "Play All" queues filtered list), **By Tag** (tag cards → scene grid, "Play All" queues tag's scenes). Plus Setup (wizard + nav toggle) and Covers (extract embedded via jsmediatags CDN — MP3/ID3v2, FLAC, M4A supported; OGG/Opus NOT supported; generate default gradient covers via canvas).
 - **Cover art**: `SceneUpdate(cover_image: "data:image/png;base64,...")` stored as a DB blob. Use server-side `is_missing: "cover"` filter for detection (`scenes.cover_blob IS NULL` — `paths.screenshot` is always a non-empty URL so cannot be used client-side).
+- **`panelPos` only positions the collapsed chip** (`top`/`right`). The expanded overlay fills the mount div via CSS (`inset: 0`) and uses no inline positioning — don't add any.
+- **Per-scene data stays on the scene, not in plugin config** (tags, `custom_fields.AudioMeta`, `custom_fields.AudioLyrics`), so migrating to the native Audio type later needs no data move. Config holds only UI/playback preferences.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer/MosaicFilter: treating a Promise as a plain object causes "data disappears after refresh").
+- **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, task `tagAll`) · `AudioSupport.js` (overlay) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
 - **No migrations** (new plugin, no legacy data).
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
 
 ## Conventions
 
 - One plugin per directory. No cross-plugin imports.
+- **One architecture doc per repo — this file.** Do not add `codemap.md`,
+  `ARCHITECTURE.md`, or per-folder architecture notes. A second doc is a second
+  thing to forget to update, and a stale map misleads every later agent more than
+  no map would.
 - Vanilla JS for player overlays (matches CommunityScriptsUI library conventions); reach for React only when you need to register routes via `PluginApi.patch.before`.
 - License: **AGPL-3.0** (`LICENCE`). New plugin code must remain AGPL-3.0 compatible.
 
@@ -159,7 +199,7 @@ use a top-level component name:
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`
-- `codemap` — `codemap.md` and per-folder codemaps
+- `docs` — `AGENTS.md`, `README.md`, `docs/**`
 
 ### Version bumping in this project
 
@@ -187,46 +227,49 @@ in the commit body using the global Issue-references rule (`Refs #N` or
 - `SceneVersions` — no tracking issue at this time
 - `AudioSupport` — no tracking issue at this time
 
-### Codemap sync
+### Keeping these notes current
 
-Codemaps are **living docs**, not generated artifacts — there is no
-auto-regeneration step. When you change code, you MUST hand-update the
-relevant codemap(s) in the same change set so the maps stay accurate for
-the next task (the workflow requires reading `codemap.md` before
-starting work, so a stale map misleads every subsequent agent).
+Architecture notes that silently drift are worse than no notes — they make the
+next agent confidently wrong. So the rule is narrow and mechanical:
 
-**Trigger rules:**
+**When a change touches a plugin's user-visible behavior (data model, control
+flow, persistence, migrations, UI structure) or its file set, update that
+plugin's section in this file in the same commit.** Pure refactors, comment
+edits, and cosmetic CSS that doesn't change behavior need no update.
 
-| Change | Codemap update required |
-|--------|-------------------------|
-| `plugins/<PluginId>/*.js` / `*.css` / `*.yml` user-visible behavior (data model, control flow, UI, persistence, migrations) | Update `plugins/<PluginId>/codemap.md` (Data Model, Data & Control Flow, Files, version number). If the plugin's responsibility summary shifts, also update `plugins/codemap.md` and the top-level `codemap.md` directory table. |
-| Plugin directory structure change (add / rename / delete files or subdirectories) | Update the plugin codemap's Files section and the top-level `codemap.md` directory table. |
-| `build_site.sh`, `.github/workflows/`, `docs/`, README, or other non-plugin files | No codemap update — use `site` / `ci` / `docs` scope. |
+**Detect drift with no tooling and no local state** — works on any clone, any
+machine, nothing to initialize:
 
-**Version numbers in codemaps:** the Files section of each plugin codemap
-records the current `version:` from the yml. When you bump the yml
-version (per the Version-bumping rule above), also update that line in
-the codemap so the two stay in sync.
+```bash
+# Everything under plugins/ that changed since AGENTS.md was last touched.
+# Empty output means the notes are current.
+SINCE=$(git log -1 --format=%H -- AGENTS.md)
+git diff --stat "$SINCE"..HEAD -- plugins/
+```
 
-**Committing:** the codemap sync may be folded into the feature/fix
-commit or split into a separate `chore(codemap): ...` commit. Either is
-acceptable; a separate commit keeps the diff reviewable when the map
-rewrite is large. Examples of both forms appear in the Examples list
-below.
+If that lists `plugins/MosaicFilter/`, read the MosaicFilter section before
+trusting it. It is a *prompt to check*, not proof of staleness — the harder
+failure mode is a quiet behavior change nobody recorded, so treat vagueness in
+the section you're reading as a bug worth fixing on the spot.
 
-**Publish note:** codemap files live outside `plugins/**`, so a
-codemap-only commit does NOT trigger the deploy workflow and does NOT
-publish a new plugin version. Publishing is driven solely by the yml
-`version:` bump on a `plugins/**` change — the codemap sync is a
-documentation concern, separate from the release.
+**Committing:** fold the update into the feature/fix commit. A separate
+`docs(agents): ...` commit is fine when the rewrite is large enough to bury the
+code diff.
+
+**Publish note:** `AGENTS.md` lives outside `plugins/**`, so editing it never
+triggers the deploy workflow and never publishes a plugin version. Publishing is
+driven solely by the yml `version:` bump on a `plugins/**` change.
+
+**Version numbers are deliberately absent from this file** — the yml is the only
+place a version lives, and duplicating it here only created a second thing to
+forget to bump. Read the yml, or run `grep -m1 '^version:' plugins/*/*.yml`.
 
 ### Examples
 
 - `feat(QuestingAdventurer): support drag-to-reorder triggers and moves`
 - `fix(QuestingAdventurer): preserve overlay collapsed state across settings save`
-- `chore(codemap): regenerate after QuestingAdventurer v2 data model`
+- `docs(agents): fold per-plugin maps into AGENTS.md`
 - `build: tighten plugins/** paths filter in deploy workflow`
-- `chore(codemap): regenerate after QuestingAdventurer rename`
 - `revert(QuestingAdventurer): drop the experimental node drag handler`
 - `feat(MosaicFilter): add follow-cursor mode for the rectangle`
 - `fix(MosaicFilter): stop writing config per pointermove during follow`
