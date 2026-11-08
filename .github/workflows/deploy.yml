@@ -4,6 +4,13 @@ on:
   push:
       paths:
       - 'plugins/**'
+      # Markdown in a plugin directory is developer documentation and is stripped
+      # from the zip by build_site.sh, so it can never change what users install.
+      # Republishing on a docs-only edit would just mint a new <version>-<hash>
+      # with identical content.
+      paths-ignore:
+      - 'plugins/**/*.md'
+      - 'plugins/*.md'
       branches:
       - main
   # Allows you to run this workflow manually from the Actions tab
