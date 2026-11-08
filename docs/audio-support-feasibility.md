@@ -9,14 +9,25 @@
 > Evidence base: Stash v0.31.1 source (cloned at `.slim/clonedeps/repos/stashapp__stash/`)
 > cross-validated against external research (GitHub issues, PRs, docs, community
 > plugins). All source citations are `path:line` against that clone.
+>
+> **Baseline note (re-checked 2026-11-08 against [v0.32.0](https://github.com/stashapp/stash/releases/tag/v0.32.0)):**
+> this investigation was performed against v0.31.1 and every `path:line`
+> citation below still refers to that clone. The load-bearing findings were
+> re-verified at the v0.32.0 tag: the GraphQL schema still has no audio content
+> type (no `AudioFile`, no `findAudios`, no audio filter types anywhere in
+> `graphql/schema/`), `VideoFile.width` / `height` / `video_codec` are still
+> non-nullable (`graphql/schema/types/file.graphql`), and
+> [PR #6824](https://github.com/stashapp/stash/pull/6824) is still open. Read
+> "current release (v0.31.1)" below as "the release this analysis was performed
+> against", not as the latest version.
 
 ## TL;DR
 
-1. **Stash v0.31.1 does not support audio files.** The scanner rejects audio
-   extensions; there is no `Audio` content type; the `VideoFile` schema is
-   video-shaped (non-nullable `width`/`height`/`video_codec`); the `generate`
-   task pipeline (sprite, screenshot, preview, phash) assumes a video stream and
-   silently breaks on audio-only input.
+1. **Stash v0.31.1 does not support audio files** (unchanged in v0.32.0). The
+   scanner rejects audio extensions; there is no `Audio` content type; the
+   `VideoFile` schema is video-shaped (non-nullable `width`/`height`/`video_codec`);
+   the `generate` task pipeline (sprite, screenshot, preview, phash) assumes a
+   video stream and silently breaks on audio-only input.
 2. **A plugin is necessary.** Audio support has been the #1 most-requested
    feature since 2019 (issue #11, then #1258), driven by the GoneWildAudio /
    e-stim / audiobook communities. The only existing workaround

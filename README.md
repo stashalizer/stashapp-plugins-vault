@@ -13,13 +13,15 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 
 ## Requirements (all plugins)
 
-- [Stash](https://github.com/stashapp/stash) (tested against the v0.31.x line).
+- [Stash](https://github.com/stashapp/stash) (functionally tested against the v0.31.x line; see [Tested environment](#tested-environment) for the v0.32.0 status).
 - [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions is standalone and does not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
 
 ## Tested environment
 
 Each plugin has been **code-reviewed and functionally tested** before release — overlays, settings pages, persistence, and migrations all verified against real Stash sessions. Testing is done primarily on **Windows** (desktop Stash + Chromium-based browser). Other environments (macOS, Linux, mobile/touch browsers, other Stash versions) are **not yet tested**. If you run into issues on those platforms, please report them in a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues) — it helps expand the tested matrix.
+
+**Stash v0.32.0 (React 18 UI):** compatibility was re-verified against the v0.32.0 source — every patch target the plugins use (`ScenePlayer`, `ScenePage.Tabs` / `ScenePage.TabContent`, `PluginRoutes`, `SettingsToolsSection`, `MainNavBar.MenuItems`), the `SceneIDSelect` props, the `#VideoJsPlayer` mount id, the `custom_fields` / `cover_image` mutation shapes, and the `VideoFile` field nullability the audio workaround depends on are unchanged. A live v0.32.0 install has **not** been through the full functional pass yet, so v0.31.x remains the functionally tested baseline.
 
 ## Install
 
@@ -143,7 +145,7 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 
 ## Audio Support
 
-Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash v0.31.x has no native audio type, the plugin works around this by treating audio files as scenes (the Setup wizard adds audio extensions to Stash's video-extension list). A dedicated audio overlay replaces the video player for audio-only scenes, with synced LRC lyrics, a play queue with auto-advance, and a browse page for navigating your audio library.
+Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash has no native audio type (verified up to v0.32.0 — [PR #6824](https://github.com/stashapp/stash/pull/6824) is still open), the plugin works around this by treating audio files as scenes (the Setup wizard adds audio extensions to Stash's video-extension list). A dedicated audio overlay replaces the video player for audio-only scenes, with synced LRC lyrics, a play queue with auto-advance, and a browse page for navigating your audio library.
 
 ### Features
 
@@ -175,7 +177,7 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash v
 
 ### Known limitations
 
-- **Audio files are ingested as scenes**, not as a native audio type. This is a workaround for Stash v0.31.x; the plugin is designed to migrate once native audio support lands (see [stashapp/stash#6824](https://github.com/stashapp/stash/pull/6824)).
+- **Audio files are ingested as scenes**, not as a native audio type. This is a workaround for Stash up to and including v0.32.0; the plugin is designed to migrate once native audio support lands (see [stashapp/stash#6824](https://github.com/stashapp/stash/pull/6824)).
 - **LRC lyrics are manual upload/paste only** — the plugin cannot auto-detect `.lrc` files on disk (the backend hook runs in a sandboxed JS VM with no file I/O).
 - **Embedded cover extraction** supports MP3/ID3v2, FLAC, and M4A. OGG and Opus files do not expose embedded art via the library used; use the "generate default cover" option for those.
 - **Direct stream playback only.** All transcode endpoints fail for audio-only input; the overlay uses the direct stream URL exclusively.

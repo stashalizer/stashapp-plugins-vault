@@ -24,6 +24,18 @@ Cross-plugin invariants worth stating once:
   route, settings page, nav entry, or scene-page tab is React on `window.PluginApi`.
 - `csLib.getConfiguration` / `setConfiguration` are **async** — always `await`.
 - No cross-plugin imports; plugins are independent directories.
+- **The Stash UI is React 18** (since v0.32.0). Plugins must not touch React
+  internals or `ReactDOM.render` — the latter still works but mounts in React 17
+  compatibility mode. If a plugin ever needs its own React mount point, use
+  `PluginApi.ReactDOMClient.createRoot`. None of the current plugins do; keep it
+  that way. Hooks via `PluginApi.React` and `patch.before` returning elements are
+  the supported surface.
+- **Compatibility baseline:** every patch target and API surface referenced
+  below was re-verified against the `v0.32.0` tag (patch names, `SceneIDSelect`
+  props, `#VideoJsPlayer`, `custom_fields` / `cover_image` mutation shapes,
+  `VideoFile` nullability). The runtime functional pass is still on the v0.31.x
+  line — source-level compatibility is not a substitute for installing the
+  plugin in a live instance (see `docs/references.md`).
 - Stash API surface, patch targets, and csLib source notes:
   [`docs/references.md`](docs/references.md). Consult it before adding a new
   patch target or debugging persistence / SPA-injection issues.
@@ -139,10 +151,11 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 
 ## AudioSupport
 
-- **Audio-as-scene hack.** Stash v0.31.1 has no native audio support — the scanner rejects audio extensions, there is no Audio content type, and the `VideoFile` schema is video-shaped (`width: Int!`, `height: Int!`, `video_codec: String!` are non-nullable). The plugin works around this by having the user add audio extensions (mp3, flac, m4a, ogg, opus, wav) to the `VideoExtensions` config via the Setup wizard. Audio files are then ingested as scenes with `VideoFile{Width:0, Height:0, VideoCodec:""}`. GraphQL serves these without error. Designed to migrate to the native Audio type once [PR #6824](https://github.com/stashapp/stash/pull/6824) lands.
+- **Audio-as-scene hack.** Stash up to and including v0.32.0 has no native audio support — the scanner rejects audio extensions, there is no Audio content type, and the `VideoFile` schema is video-shaped (`width: Int!`, `height: Int!`, `video_codec: String!` are non-nullable; re-checked at the v0.32.0 tag). The plugin works around this by having the user add audio extensions (mp3, flac, m4a, ogg, opus, wav) to the `VideoExtensions` config via the Setup wizard. Audio files are then ingested as scenes with `VideoFile{Width:0, Height:0, VideoCodec:""}`. GraphQL serves these without error. Designed to migrate to the native Audio type once [PR #6824](https://github.com/stashapp/stash/pull/6824) lands — it was still open as of v0.32.0, so re-check it before assuming this section is current. The Setup wizard writes the config with a **partial** `ConfigureGeneral({ videoExtensions })` input, which is why the config fields v0.32.0 removed (`dangerous_allow_public_without_auth`, `security_tripwire_accessed_from_public_internet`) are irrelevant here — keep it partial.
 - **Two UIs, two config keys.** Main config key `"AudioSupport"` (csLib): overlay-owned `{ collapsed, opacity, panelPos, playbackRate, loop, volume, lyricsVisible }`; settings-owned `{ audioTagName, showNavEntry }`. Queue state is isolated in a SEPARATE config key `"AudioSupportQueue"`: `{ queue: [sceneId, ...], currentIndex: number, repeat: "off" | "all" | "one" }` — this avoids the cross-surface race wiping queue state when the settings page saves.
 - **Cross-surface race — mitigated, not eliminated.** Overlay and settings share the `"AudioSupport"` key with separate save locks (same pattern as QuestingAdventurer/MosaicFilter). `normalizeConfig` in both surfaces preserves all keys via `Object.assign({}, stored, { validated overrides })` so neither surface wipes the other's fields. The overlay's `saveNow` reads-then-merges. Settings edits still won't live-reflect in an already-open overlay until the next navigation/reload.
-- **Direct stream playback ONLY.** All transcode endpoints fail for audio-only input. The overlay loads `/scene/{id}/stream` (which is `http.ServeFile`, no ffmpeg) into an HTML5 `<audio>` element. Never wire transcode URLs.
+- **Direct stream playback ONLY.** All transcode endpoints fail for audio-only input. The overlay loads `/scene/{id}/stream` (which is `http.ServeFile`, no ffmpeg) into an HTML5 `<audio>` element. Never wire transcode URLs. Use `scene.paths.stream` and not a hand-built path: the URL builder appends the `?apikey=` query param, which is mandatory once API-key authentication is enabled (v0.32.0 added a credentials step to the initial setup wizard, so authenticated installs are more likely than they used to be).
+- **Dead code trap: `extractCoverFromScene()`** (`AudioSupportSettings.js`) has no call site and builds a bare `/scene/{id}/stream` URL for jsmediatags — that path 401s on an authenticated instance. Do not revive it as-is; pass the scene's `paths.stream` through instead (or delete it in a commit that already bumps the plugin version for other reasons — a dead-code-only removal is not worth a publish).
 - **`patch.instead("ScenePlayer", ...)`** intercepts the React ScenePlayer at script load. For audio-only scenes (detected via `video_codec === ""` or `width === 0`), it returns a `<div id="AudioSupportMount">` instead of the video.js player — video.js never initializes. Then `csLib.PathElementListener("/scenes/", "#AudioSupportMount", setupPanel)` plus a `stash:location` safety-net re-injects on SPA navigation.
 - **LRC synced lyrics** (overlay): manual upload/paste only — the Goja backend VM has NO file I/O (sandboxed to `input`, `log`, `util.Sleep`, `gql.Do`, `console`; no `os`/`fs`/`readFile`), so the hook cannot auto-read `.lrc` sibling files. Lyrics are stored in `custom_fields.AudioLyrics` as raw LRC text. The parser supports `[mm:ss.xx]` timestamps and `[offset: +N]` (ADD N ms to timestamps, not subtract — fixed in ora-1 remediation). Synced highlight + auto-scroll + click-to-seek. The `lyricsVisible` config flag toggles the panel.
 - **AudioMeta extraction** (hook): `writeAudioMeta()` in `AudioSupportHook.js` writes `{ audio_codec, bit_rate, duration }` as a JSON string to `custom_fields.AudioMeta` (custom_fields is scalar-only — objects must be JSON-stringified). Runs on both `Scene.Create.Post` and `tagAll`.
@@ -282,4 +295,4 @@ forget to bump. Read the yml, or run `grep -m1 '^version:' plugins/*/*.yml`.
 Read-only dependency source repositories are available under
 `.slim/clonedeps/repos/` for inspection. Do not edit these clones.
 
-- `.slim/clonedeps/repos/stashapp__stash/` - `stashapp/stash` at `v0.31.1`; Stash server source for the plugin API surface, GraphQL schema, and UI plugin injection points that the vault's plugins integrate against.
+- `.slim/clonedeps/repos/stashapp__stash/` - `stashapp/stash` at `v0.31.1`; Stash server source for the plugin API surface, GraphQL schema, and UI plugin injection points that the vault's plugins integrate against. It was **not** re-fetched for v0.32.0 — the v0.32.0 compatibility check was done against the tag over the GitHub API / `raw.githubusercontent.com` (`ui/v2.5/src/components/...`, `graphql/schema/types/...`). Re-fetch the clone when you need to browse v0.32.0 source locally.

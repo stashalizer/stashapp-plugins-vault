@@ -6,7 +6,9 @@ in sync with the official sources if URLs change.
 ## How to fetch these during development
 
 Every source below was reachable from this repo's environment when checked on
-2026-11-08. Three channels, in order of preference:
+2026-11-08. The patch targets and API shapes this repo depends on were
+re-verified against the **v0.32.0** tag on the same date (see *Ready reckoner*
+below). Three channels, in order of preference:
 
 1. **GitHub connector (preferred for source).** Code search across repos and
    direct file reads return the raw file, with no HTML→markdown loss. Use it
@@ -14,7 +16,9 @@ Every source below was reachable from this repo's environment when checked on
    exist".
 2. **`raw.githubusercontent.com` (fallback).** Plain `curl -sL <url>` works for
    any file, so the docs stay usable even without the connector. Pipe to a temp
-   file and read it rather than trying to skim it inline.
+   file and read it rather than trying to skim it inline. This is the cheapest
+   way to diff two tags:
+   `curl -sL https://raw.githubusercontent.com/stashapp/stash/v0.32.0/<path>`.
 3. **Web fetch on `docs.stashapp.cc` (concepts only).** The site is Docusaurus;
    pages convert to markdown cleanly. Good for *what a plugin is* and *what the
    UI API offers*, but it lags the source — it is not authoritative on exact
@@ -28,12 +32,55 @@ Caveats that cost real time:
   is even slightly off — e.g. `path:ui/v2.5/src/components/ScenePlayer` — returns
   zero hits and looks like the symbol is gone.
 - **Component paths move between Stash minor versions.** The paths recorded in
-  this file are for v2.5. Treat them as lookups to re-verify, never bake them
-  into plugin code or a build step.
+  this file are for v2.5 and were last re-checked against v0.32.0. Treat them as
+  lookups to re-verify, never bake them into plugin code or a build step.
+- **Patchable component names have one authoritative list, and it lives in the
+  source tree:** `ui/v2.5/src/docs/en/Manual/UIPluginApi.md` (shipped with Stash
+  as the in-app plugin UI manual). It enumerates every name accepted by
+  `PluginApi.patch.*` — read it instead of grepping for
+  `PatchContainerComponent`. Note that container names created with
+  `PatchContainerComponent("<Name>")` do **not** all appear in that list (e.g.
+  `SettingsToolsSection` is missing from it), so fall back to code search when a
+  name is not listed.
 - **Reading source proves a symbol exists, not that an injection lands.**
   Whether `PluginApi.patch.after(...)` actually renders against the live DOM can
   only be confirmed by installing the plugin in a real Stash — this repo has no
-  visual regression net (see `AGENTS.md`).
+  visual regression net (see `AGENTS.md`). The same goes for React 18: the
+  component still mounts and the hooks still run, but only a live instance shows
+  whether an injected node survives a concurrent re-render.
+
+## Ready reckoner — what this repo depends on (verified at v0.32.0)
+
+| Dependency | Where it is used | Status at v0.32.0 |
+|---|---|---|
+| `patch.instead("ScenePlayer", (props, ctx, next))` | AudioSupport | Unchanged. `runInstead` still calls `fns[0](props, ctx, next)`; `ScenePlayer` is still `PatchComponent("ScenePlayer", ...)` with the same props (`scene`, `hideScrubberOverride`, …) |
+| `ScenePage.Tabs` / `ScenePage.TabContent` | SceneVersions | Unchanged. Children are still `Nav.Item > Nav.Link eventKey="scene-details-panel"` and `<Tab.Pane>`; `props.scene` is still passed |
+| `SettingsToolsSection` | all three settings pages | Still a `PatchContainerComponent` instantiated **twice** in `SettingsToolsPanel.tsx` — the even-call counter still selects the Scene Tools section |
+| `PluginRoutes`, `MainNavBar.MenuItems` | `PluginRoutes`: all three settings pages; `MainNavBar.MenuItems`: AudioSupport | Both in the patch list |
+| `SceneIDSelect` (`isMulti`, `excludeIds`, `extraCriteria`) | SceneVersions | All three props still accepted (`excludeIds` / `extraCriteria` on `ExtraSceneProps`) |
+| `#VideoJsPlayer` (`VIDEO_PLAYER_ID`) | MosaicFilter, QuestingAdventurer, AudioSupport (fallback) | `"VideoJsPlayer"`, unchanged |
+| `utils.StashService.getClient()`, `libraries.Bootstrap`, `libraries.ReactRouterDOM` | SceneVersions, all settings pages | All exposed; React Router is still v5 |
+| `SceneUpdateInput.cover_image`, `custom_fields.partial` | AudioSupport, SceneVersions | Unchanged (a `production_date` field was added, nothing removed) |
+| `VideoFile.width/height/video_codec` non-nullable | AudioSupport | Still `Int!` / `Int!` / `String!` — the audio-as-scene workaround is still required |
+| `ConfigureGeneral({ videoExtensions })` partial input | AudioSupport setup wizard | Unchanged; unaffected by the config fields v0.32.0 removed |
+
+## React 18 (Stash UI ≥ v0.32.0)
+
+The UI moved from React 17 to React 18. What that means for plugins:
+
+- `PluginApi.React` is React 18. Hooks, `createElement`, `Fragment` — no change.
+- `PluginApi.ReactDOM.render` still exists but is deprecated and mounts in React
+  17 compatibility mode. Use `PluginApi.ReactDOMClient.createRoot(container)`
+  for any new self-managed mount point.
+- No plugin in this repo uses `ReactDOM`, class components, or `findDOMNode` —
+  keep it that way. Patch functions receive plain props and return elements; that
+  surface is unchanged.
+- React 18 batches state updates inside promises and timeouts too. Settings
+  pages that `await` a save and then `setState` are fine, but do not rely on a
+  synchronous re-render between two `setState` calls in the same tick.
+- New extension points added in v0.32.0, unused here: `SavedFilter.Loaded`,
+  `FilterTags.Extras`, plus newly patchable `StudioPage`, `TagPage`, `GroupPage`,
+  `SceneCreate`, `PerformerCreate`, the merge modals, and `SceneScrapeDialog`.
 
 ## Official Stash plugin documentation
 
@@ -48,7 +95,9 @@ Caveats that cost real time:
 - [UI plugin API](https://docs.stashapp.cc/in-app-manual/plugins/uipluginapi/) —
   `window.PluginApi` patching hooks (`PluginRoutes`, `SettingsToolsSection`,
   `ScenePage.Tabs`, etc.), `React` access, `libraries.ReactRouterDOM`,
-  the `Event` bus, and how to register settings page routes.
+  the `Event` bus, and how to register settings page routes. Rendered from the
+  in-repo `UIPluginApi.md`; if the two disagree, the source file wins (linked
+  under *Stash source code* below).
 
 ## Community plugin repository
 
@@ -134,12 +183,29 @@ the obvious approaches are fragile. Notes from real bugs:
 - [stashapp/stash](https://github.com/stashapp/stash) — the main
   Stash repo. When the official docs are silent on a patch target or
   component name, the source is authoritative. Useful entry points:
-  - `ui/v2.5/src/patch.tsx` — the patching system itself.
+  - [`ui/v2.5/src/docs/en/Manual/UIPluginApi.md`](https://raw.githubusercontent.com/stashapp/stash/v0.32.0/ui/v2.5/src/docs/en/Manual/UIPluginApi.md)
+    — **start here for a patch target name.** This is the in-app plugin UI
+    manual shipped with Stash and carries the canonical list of patchable
+    component names, plus the `PluginApi` surface (`React`, `ReactDOM`,
+    `ReactDOMClient`, `libraries`, `hooks`, `utils`). It is more complete and
+    more current than the Docusaurus page. Some container names created with
+    `PatchContainerComponent("<Name>")` are absent from it (e.g.
+    `SettingsToolsSection`) — fall back to a code search for those.
+  - `ui/v2.5/src/patch.tsx` — the patching system itself (`before` / `instead` /
+    `after`, `PatchComponent`, `PatchContainerComponent`, `RegisterComponent`).
+  - `ui/v2.5/src/pluginApi.tsx` — exactly what `window.PluginApi` exposes.
   - `ui/v2.5/src/components/Settings/SettingsToolsPanel.tsx` — the
     `SettingsToolsSection` `PatchContainerComponent` (instantiated
-    twice: general "Tools" and "Scene Tools").
+    twice: general "Tools" and "Scene Tools"; still true at v0.32.0).
+  - `ui/v2.5/src/components/Scenes/SceneDetails/Scene.tsx` — the scene page, where
+    `ScenePage.Tabs` / `ScenePage.TabContent` wrap the `Nav.Item` list and the
+    `Tab.Pane` list (tab injection point for SceneVersions).
+  - `ui/v2.5/src/components/ScenePlayer/ScenePlayer.tsx` and
+    `ScenePlayer/util.ts` — the `ScenePlayer` patch target and
+    `VIDEO_PLAYER_ID = "VideoJsPlayer"` (the overlay mount point).
   - **Other `PatchContainerComponent` sites**, from a code search for that
-    symbol (not exhaustive — re-run the search when adding an injection point):
+    symbol (not exhaustive — re-run the search when adding an injection point,
+    or check `UIPluginApi.md` first):
     - `ui/v2.5/src/components/List/FilterTags.tsx`
     - `ui/v2.5/src/components/Tags/TagList.tsx`
     - `ui/v2.5/src/components/Groups/GroupList.tsx`
