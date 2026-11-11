@@ -649,6 +649,27 @@
   text-align: center;
 }
 
+/* Generate tab */
+.audio-support-settings__generate-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 20px;
+}
+
+.audio-support-settings__generate-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-support-settings__generate-option--disabled {
+  opacity: 0.55;
+}
+
+.audio-support-settings__generate-option--disabled .audio-support-settings__checkbox {
+  cursor: not-allowed;
+}
+
 /* Launcher card */
 .audio-support-settings__launcher {
   text-decoration: none;

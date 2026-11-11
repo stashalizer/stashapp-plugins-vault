@@ -1,6 +1,6 @@
 name: Audio Support
-description: Adds audio file support to Stash via the audio-as-scene path — a setup wizard that enables audio ingestion, a Scene.Create.Post hook that tags audio scenes and extracts metadata, an audio player overlay (direct-stream playback, no broken transcodes), cover-art extraction, and an audio browse view. Designed to migrate to the native Audio type once PR #6824 lands.
-version: 0.6.2
+description: Adds audio file support to Stash via the audio-as-scene path — a setup wizard that enables audio ingestion, a Scene.Create.Post hook that tags audio scenes and extracts metadata, an audio player overlay (direct-stream playback, no broken transcodes), cover-art extraction, an audio browse view, and a generate task that skips audio scenes so preview and sprite generation stops erroring on them. Designed to migrate to the native Audio type once PR #6824 lands.
+version: 0.7.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 interface: js
 exec:
@@ -15,6 +15,18 @@ tasks:
     description: Scans all existing scenes and tags audio-only ones with the Audio tag. Run this once after installing to tag previously-ingested audio scenes.
     defaultArgs:
       mode: tagAll
+  - name: Generate (skip audio scenes)
+    description: Queues Stash's generate tasks (sprites, previews, phashes, markers, covers) for every scene that does not carry the audio tag. Use this instead of the built-in Generate task on libraries with audio-only scenes. Transcodes are never queued because Stash writes a blank video for audio-only files.
+    defaultArgs:
+      mode: generateVideo
+      tagName: Audio
+      sprites: true
+      previews: true
+      phashes: true
+      markers: true
+      covers: false
+      overwrite: false
+      batchSize: 250
 ui:
   requires:
     - CommunityScriptsUILibrary

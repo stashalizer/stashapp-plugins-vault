@@ -31,13 +31,37 @@
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
   const GQL = PluginApi.GQL;
   const apolloClient = PluginApi.utils.StashService.getClient();
+  const Apollo = PluginApi.libraries.Apollo;
 
   const CONFIG_KEY = "AudioSupport";
   const QUEUE_CONFIG_KEY = "AudioSupportQueue";
   const PLUGIN_ROUTE = "/plugins/audiosupport";
+  // Plugin id = directory name = yml basename; runPluginTask needs it verbatim.
+  const PLUGIN_ID = "AudioSupport";
   const AUDIO_EXTENSIONS = ["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
   const DEFAULT_TAG_NAME = "Audio";
   const DEFAULT_SHOW_NAV_ENTRY = true;
+
+  // The generate tab hands the work to the Goja task in AudioSupportHook.js
+  // (mode "generateVideo") instead of collecting scene ids in the browser: the
+  // task is the single implementation, and it also stays usable from
+  // Settings > Tasks for headless installs.
+  const RUN_PLUGIN_TASK_MUTATION = Apollo && Apollo.gql
+    ? Apollo.gql`
+        mutation AudioSupportRunTask($plugin_id: ID!, $description: String, $args_map: Map) {
+          runPluginTask(plugin_id: $plugin_id, description: $description, args_map: $args_map)
+        }
+      `
+    : null;
+
+  const DEFAULT_GENERATE_OPTIONS = {
+    sprites: true,
+    previews: true,
+    phashes: true,
+    markers: true,
+    covers: false,
+    overwrite: false,
+  };
 
   let queueSaving = false;
   let queuePendingSave = false;
@@ -234,6 +258,28 @@
       fetchPolicy: "no-cache",
     });
     return (result && result.data && result.data.findScenes && result.data.findScenes.scenes) || [];
+  }
+
+  // Count scenes matching a filter without pulling the rows. `per_page: 1`
+  // keeps the payload small; `count` is always the total match count.
+  async function countScenes(sceneFilter) {
+    const variables = { filter: { per_page: 1 } };
+    if (sceneFilter) {
+      variables.scene_filter = sceneFilter;
+    }
+    const result = await apolloClient.query({
+      query: GQL.FindScenesDocument,
+      variables: variables,
+      fetchPolicy: "no-cache",
+    });
+    const findScenes = result && result.data ? result.data.findScenes : null;
+    return findScenes && typeof findScenes.count === "number" ? findScenes.count : 0;
+  }
+
+  async function loadSceneCounts(tagId) {
+    const total = await countScenes(null);
+    const audio = await countScenes({ tags: { value: [tagId], modifier: "INCLUDES" } });
+    return { total: total, audio: audio, video: Math.max(total - audio, 0) };
   }
 
   async function updateSceneCover(sceneId, base64Png) {
@@ -1024,6 +1070,126 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Generate tab
+  // ---------------------------------------------------------------------------
+
+  // Mirrors Stash's GenerateDialog defaults (sprites/previews/phashes/markers
+  // on, covers off) minus transcodes, which this tab never offers.
+  const GENERATE_OPTION_ROWS = [
+    { key: "previews", label: "Previews" },
+    { key: "sprites", label: "Sprites" },
+    { key: "phashes", label: "Phashes" },
+    { key: "markers", label: "Marker screenshots and previews" },
+    { key: "covers", label: "Covers" },
+  ];
+
+  function GenerateScenesTab(props) {
+    const options = props.options;
+
+    return h(
+      "section",
+      { className: "audio-support-settings__section" },
+      h("h2", null, "Generate (skip audio scenes)"),
+      h(
+        "p",
+        { className: "audio-support-settings__hint" },
+        "Stash's built-in generate task (Settings > Tasks > Generate) walks every scene. ",
+        "Audio files are stored as scenes with an empty video stream, so preview, sprite, phash and cover generation ",
+        "fails for them and logs errors. This tab queues the same generate options for the scenes that do NOT carry the ",
+        "audio tag, so audio scenes are never touched."
+      ),
+      props.tag
+        ? h(
+            "p",
+            { className: "audio-support-settings__hint" },
+            props.counts
+              ? "Will queue " + props.counts.video + " video scene(s) and skip " + props.counts.audio + " audio scene(s) tagged '" + props.tag.name + "'."
+              : "Counting scenes\u2026"
+          )
+        : h(
+            "p",
+            { className: "audio-support-settings__hint" },
+            "The audio tag '" + props.tagName + "' does not exist yet. Create it on the Setup tab and run " +
+              "the 'Tag all audio scenes' task first, otherwise untagged audio scenes are still queued."
+          ),
+      h(
+        "div",
+        { className: "audio-support-settings__generate-options" },
+        GENERATE_OPTION_ROWS.map(function (row) {
+          const id = "as-generate-" + row.key;
+          return h(
+            "div",
+            { key: row.key, className: "audio-support-settings__generate-option" },
+            h("input", {
+              id: id,
+              type: "checkbox",
+              className: "audio-support-settings__checkbox",
+              checked: !!options[row.key],
+              onChange: function (e) { props.onToggle(row.key, e.target.checked); },
+            }),
+            h("label", { htmlFor: id, className: "audio-support-settings__toggle-label" }, row.label)
+          );
+        }),
+        h(
+          "div",
+          { className: "audio-support-settings__generate-option audio-support-settings__generate-option--disabled" },
+          h("input", {
+            id: "as-generate-transcodes",
+            type: "checkbox",
+            className: "audio-support-settings__checkbox",
+            disabled: true,
+            checked: false,
+            readOnly: true,
+          }),
+          h("label", { htmlFor: "as-generate-transcodes", className: "audio-support-settings__toggle-label" }, "Transcode"),
+          h("span", { className: "audio-support-settings__hint" }, "not offered")
+        )
+      ),
+      h(
+        "p",
+        { className: "audio-support-settings__hint" },
+        "Transcode is deliberately unavailable: Stash's transcode task treats an audio-only file as a video and writes a ",
+        "blank video, wasting disk and time. There is no useful transcode target for audio."
+      ),
+      h(
+        "div",
+        { className: "audio-support-settings__wizard-row" },
+        h(
+          "label",
+          { className: "audio-support-settings__toggle-label" },
+          h("input", {
+            id: "as-generate-overwrite",
+            type: "checkbox",
+            className: "audio-support-settings__checkbox",
+            checked: !!options.overwrite,
+            onChange: function (e) { props.onToggle("overwrite", e.target.checked); },
+          }),
+          " Overwrite existing generated media"
+        )
+      ),
+      h(
+        "div",
+        { className: "audio-support-settings__wizard-action" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "audio-support-settings__button audio-support-settings__button--primary",
+            disabled: props.working || !props.tag || !props.canRun,
+            onClick: props.onRun,
+          },
+          "Queue generate for video scenes"
+        ),
+        h(
+          "span",
+          { className: "audio-support-settings__hint" },
+          "Runs as a Stash job \u2014 track progress under Settings > Tasks."
+        )
+      )
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Settings page component
   // ---------------------------------------------------------------------------
 
@@ -1040,6 +1206,8 @@
     const [wizardConfirm, setWizardConfirm] = useState(false);
     const [wizardDiff, setWizardDiff] = useState([]);
     const [coverProgress, setCoverProgress] = useState(null);
+    const [generateOptions, setGenerateOptions] = useState(DEFAULT_GENERATE_OPTIONS);
+    const [sceneCounts, setSceneCounts] = useState(null);
 
     useEffect(function () {
       let mounted = true;
@@ -1059,6 +1227,9 @@
             const scenes = await findAudioScenes(existingTag.id);
             if (!mounted) return;
             setAudioScenes(scenes);
+            const counts = await loadSceneCounts(existingTag.id);
+            if (!mounted) return;
+            setSceneCounts(counts);
           }
           setLoading(false);
         } catch (err) {
@@ -1080,6 +1251,18 @@
     });
     const ingestionEnabled = missingExtensions.length === 0;
 
+    async function refreshTagState(existingTag) {
+      setTag(existingTag);
+      if (!existingTag) {
+        setAudioScenes([]);
+        setSceneCounts(null);
+        return;
+      }
+      const scenes = await findAudioScenes(existingTag.id);
+      setAudioScenes(scenes);
+      setSceneCounts(await loadSceneCounts(existingTag.id));
+    }
+
     async function saveTagName(name) {
       const trimmed = (name || DEFAULT_TAG_NAME).trim();
       if (!trimmed) return;
@@ -1088,12 +1271,7 @@
       try {
         await saveConfig({ audioTagName: trimmed });
         setMessage("Saved audio tag name.");
-        const existingTag = await findTagByName(trimmed);
-        setTag(existingTag);
-        if (existingTag) {
-          const scenes = await findAudioScenes(existingTag.id);
-          setAudioScenes(scenes);
-        }
+        await refreshTagState(await findTagByName(trimmed));
       } catch (err) {
         setError("Failed to save tag name: " + String((err && err.message) || err));
       }
@@ -1106,14 +1284,11 @@
         const name = config.audioTagName || DEFAULT_TAG_NAME;
         const existing = await findTagByName(name);
         if (existing) {
-          setTag(existing);
-          const scenes = await findAudioScenes(existing.id);
-          setAudioScenes(scenes);
+          await refreshTagState(existing);
           setMessage("Tag '" + name + "' already exists.");
         } else {
           const created = await createTag(name);
-          setTag(created);
-          setAudioScenes([]);
+          await refreshTagState(created);
           setMessage("Created tag '" + name + "'.");
         }
       } catch (err) {
@@ -1182,6 +1357,58 @@
       } catch (err) {
         setCoverProgress(null);
         setError("Failed to generate covers: " + String((err && err.message) || err));
+      } finally {
+        setWorking(false);
+      }
+    }
+
+    function toggleGenerateOption(key, value) {
+      setGenerateOptions({ ...generateOptions, [key]: value });
+    }
+
+    // Queues the Goja task (mode "generateVideo") rather than collecting ids
+    // here: one implementation, and it also works from Settings > Tasks.
+    async function handleRunGenerate() {
+      if (!tag) {
+        setError("Create the audio tag first (Setup tab).");
+        return;
+      }
+      if (!RUN_PLUGIN_TASK_MUTATION) {
+        setError(
+          "This Stash version does not expose Apollo's gql tag to plugins, so the task cannot be queued from here. " +
+            "Run the 'Generate (skip audio scenes)' plugin task from Settings > Tasks instead."
+        );
+        return;
+      }
+      setWorking(true);
+      setError(null);
+      try {
+        const result = await apolloClient.mutate({
+          mutation: RUN_PLUGIN_TASK_MUTATION,
+          variables: {
+            plugin_id: PLUGIN_ID,
+            description: "Audio Support: generate (skip audio scenes)",
+            args_map: {
+              mode: "generateVideo",
+              tagName: config.audioTagName || DEFAULT_TAG_NAME,
+              sprites: generateOptions.sprites,
+              previews: generateOptions.previews,
+              phashes: generateOptions.phashes,
+              markers: generateOptions.markers,
+              covers: generateOptions.covers,
+              overwrite: generateOptions.overwrite,
+              batchSize: 250,
+            },
+          },
+        });
+        const jobId = result && result.data ? result.data.runPluginTask : null;
+        setMessage(
+          "Queued generate for video scenes" +
+            (jobId ? " (job " + jobId + ")" : "") +
+            ". Progress is shown under Settings > Tasks."
+        );
+      } catch (err) {
+        setError("Failed to queue generate: " + String((err && err.message) || err));
       } finally {
         setWorking(false);
       }
@@ -1294,11 +1521,30 @@
         { className: "audio-support-settings__tabs" },
         tabButton("browse", "Browse"),
         tabButton("setup", "Setup"),
+        tabButton("generate", "Generate"),
         tabButton("covers", "Covers")
       ),
 
       activeTab === "browse"
         ? h(BrowseTab, { tag: tag, scenes: audioScenes })
+        : null,
+
+      activeTab === "generate"
+        ? h(GenerateScenesTab, {
+            tag: tag,
+            tagName: config.audioTagName,
+            counts: sceneCounts,
+            options: generateOptions,
+            onToggle: toggleGenerateOption,
+            onRun: handleRunGenerate,
+            working: working,
+            canRun:
+              generateOptions.sprites ||
+              generateOptions.previews ||
+              generateOptions.phashes ||
+              generateOptions.markers ||
+              generateOptions.covers,
+          })
         : null,
 
       activeTab === "setup"
@@ -1441,8 +1687,8 @@
             h(
               "p",
               { className: "audio-support-settings__hint" },
-              "Stash's generate tasks (sprite, preview, phash) silently produce no output for audio-only scenes. ",
-              "For audio-heavy libraries, consider disabling those generate options or skipping audio-tagged scenes."
+              "Stash's generate tasks (sprite, preview, phash) silently produce no output for audio-only scenes, ",
+              "and log errors while trying. Use the Generate tab to queue the same work for the non-audio scenes only."
             )
           )
         : null,
