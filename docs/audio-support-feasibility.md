@@ -251,9 +251,11 @@ The realistic plugin surface:
    player (waveform/cover/metadata) instead of the broken video player.
 4. **Tag management:** already works natively; plugin can add an
    audio-focused browse/manage route.
-5. **Generate mitigation:** the plugin cannot prevent generate from running,
-   but generate failures on audio scenes are silent (no output produced, no
-   crash). The plugin can offer its own "generate audio cover/waveform" task.
+5. **Generate mitigation:** the plugin cannot prevent the built-in task from
+   running, and its failures on audio scenes are silent (no output produced, no
+   crash) apart from log noise. Shipped in v0.7.0: a replacement task that
+   queues `metadataGenerate` for the non-audio-tagged scenes only, with
+   transcodes excluded — see §5.2.
 
 ### 4.3 The audio-as-scene hack — full consequence chain
 1. User adds `mp3` (etc.) to `VideoExtensions` (manually or via plugin setup).
@@ -314,15 +316,25 @@ handles everything *after* the scan.
   produce no output for audio-only. These are silent failures (logged, no
   crash in v0.31.1). The plugin cannot suppress them per-scene (no per-scene
   generate exclusion exists), but the wasted work is bounded and harmless.
-- **Transcode:** produces a blank video; not useful for audio.
-- **Plugin alternative:** the plugin should ship its own lightweight
-  "generate audio artifacts" task (cover art extraction from ID3, waveform
-  image, duration/codec metadata) rather than relying on the broken native
-  generate pipeline.
-- **Recommendation to users:** disable sprite/preview/phash generation for
-  audio-tagged scenes (or globally if the library is mostly audio) to avoid
-  wasted work; the plugin can document this and optionally detect/grey-out
-  generate options for audio scenes.
+- **The built-in task cannot be filtered.** `GenerateDialog.tsx` passes either
+  the selected scene ids or `undefined` (everything); `task_generate.go` walks
+  whatever it is given and skips nothing. There is no generate hook. So the
+  plugin's move is to **replace the entry point**, not intercept it.
+- **Implemented mitigation (v0.7.0):** the `Generate (skip audio scenes)` task
+  (`mode: "generateVideo"` in `AudioSupportHook.js`) collects scene ids with
+  `scene_filter.tags = { value: [audioTagId], modifier: "EXCLUDES" }` and calls
+  `metadataGenerate` in batches of 250 with the requested subtasks. The
+  Generate tab on the settings page queues the same task via `runPluginTask`.
+  Filtering is tag-based by design: untagged audio scenes are still queued, so
+  `tagAll` must run first (the task refuses to run when the tag is missing
+  rather than falling back to "all scenes").
+- **Transcode:** produces a blank video; not useful for audio, and it burns
+  disk. The task never sends `transcodes: true` and drops the flag with a
+  warning if a caller sets it. Fixing the built-in task would require upstream
+  Stash to skip files with an empty `video_codec`.
+- **Recommendation to users:** use the Generate tab (or the plugin task)
+  instead of Settings > Tasks > Generate; the plugin documents this on the
+  Setup and Generate tabs.
 
 ---
 

@@ -63,6 +63,10 @@ Caveats that cost real time:
 | `SceneUpdateInput.cover_image`, `custom_fields.partial` | AudioSupport, SceneVersions | Unchanged (a `production_date` field was added, nothing removed) |
 | `VideoFile.width/height/video_codec` non-nullable | AudioSupport | Still `Int!` / `Int!` / `String!` — the audio-as-scene workaround is still required |
 | `ConfigureGeneral({ videoExtensions })` partial input | AudioSupport setup wizard | Unchanged; unaffected by the config fields v0.32.0 removed |
+| `metadataGenerate(input: GenerateMetadataInput!)` | AudioSupport generate task | `sceneIDs: [ID!]` + `covers/sprites/previews/phashes/markers/transcodes` booleans. A nil `previewOptions` falls back to the stored config, so passing only `previews: true` respects the user's preview settings |
+| `scene_filter.tags` (`HierarchicalMultiCriterionInput`) | AudioSupport generate task | `{ value: [tagId], modifier: "EXCLUDES" }` excludes scenes carrying that tag; still the way to scope a task to non-audio scenes |
+| `runPluginTask(plugin_id, task_name, description, args_map)` | AudioSupport generate tab | `task_name` is optional; without it only `args_map` is sent. With it, `buildPluginInput` applies `defaultArgs` **only for keys the caller omitted**, so `args_map` always wins |
+| `log.Progress(0..1)` in the Goja VM | AudioSupport generate task | Exposed alongside `Trace/Debug/Info/Warn/Error`; drives the job progress bar |
 
 ## React 18 (Stash UI ≥ v0.32.0)
 

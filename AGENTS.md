@@ -168,9 +168,11 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 - **`panelPos` only positions the collapsed chip** (`top`/`right`). The expanded overlay fills the mount div via CSS (`inset: 0`) and uses no inline positioning — don't add any.
 - **Per-scene data stays on the scene, not in plugin config** (tags, `custom_fields.AudioMeta`, `custom_fields.AudioLyrics`), so migrating to the native Audio type later needs no data move. Config holds only UI/playback preferences.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer/MosaicFilter: treating a Promise as a plain object causes "data disappears after refresh").
-- **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, task `tagAll`) · `AudioSupport.js` (overlay) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
+- **Generate task replaces the built-in one for audio libraries** (`mode: "generateVideo"`, issue #2). Stash's Generate job accepts either explicit `sceneIDs` or everything — `GenerateDialog.tsx` has no tag filter, and `internal/manager/task_generate.go` skips no files — so a plugin cannot prevent it from walking audio scenes; audio-only files have no video stream and the preview/sprite/phash/cover subtasks error out. `handleGenerateVideo` therefore *replaces* the entry point instead of intercepting it: it collects scene ids with `scene_filter.tags = { value: [audioTagId], modifier: "EXCLUDES" }` (paged 500, `findScenes.count` for progress), then calls `metadataGenerate` in batches of 250 with `log.Progress` reporting collection (0–50%) and queueing (50–100%). Filtering is by the audio tag, **not** by probing files: untagged audio scenes are still queued, hence the "run Tag all audio scenes first" requirement in the UI. A missing tag aborts — never fall back to "all scenes", that reintroduces the bug. **Transcodes are hard-coded false** and a truthy `transcodes` arg is dropped with a warning: Stash's transcode task treats an audio-only file as a video and writes a blank file. Args: `tagName`, `sprites`, `previews`, `phashes`, `markers`, `covers`, `overwrite`, `batchSize`, `dryRun` (all coerced by `asBool`/`asInt`, so `runPluginTask`'s string-typed args also work). The yml task hard-codes `tagName: Audio` because the Goja VM has no access to the plugin config — a renamed tag has to go through the Generate tab (which passes `audioTagName`) or be passed explicitly.
+- **Two entry points, one implementation.** The Generate tab calls `runPluginTask` (Apollo `gql` from `PluginApi.libraries.Apollo`, mutation queued via `args_map`, **no** `task_name` so nothing but the passed args applies) and shows the job id; the yml task exposes the same Goja path under Settings > Tasks for headless use. Do not re-implement the id collection in the browser.
+- **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, tasks `tagAll` + `generateVideo`) · `AudioSupport.js` (overlay) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/generate/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
 - **No migrations** (new plugin, no legacy data).
-- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
+- Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
 
 ## Conventions
 
@@ -181,6 +183,25 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
   no map would.
 - Vanilla JS for player overlays (matches CommunityScriptsUI library conventions); reach for React only when you need to register routes via `PluginApi.patch.before`.
 - License: **AGPL-3.0** (`LICENCE`). New plugin code must remain AGPL-3.0 compatible.
+
+## Issue labels & triage
+
+`.github/labels.json` is the label source of truth. `scripts/sync_labels.py` creates or updates the labels on
+GitHub (`GITHUB_TOKEN=... ./scripts/sync_labels.py`, needs `issues: write`; add `--dry-run` to preview, `--repo`
+to override the origin remote). The issue forms in `.github/ISSUE_TEMPLATE/` apply `kind/bug` / `kind/feature`
+and require the Stash version plus logs — the two things a bug report cannot be triaged without.
+
+Every open issue carries exactly one `kind/*`, one scope label (`plugin:<Id>` or `area:build-publish`), and one
+`priority:*`. `status/*` labels are added and removed as the issue moves.
+
+- `priority:P0` — plugin unusable for everyone; drop other work.
+- `priority:P1` — wrong or broken for a common setup; next release.
+- `priority:P2` — worth doing, nobody is blocked.
+- `priority:P3` — backlog, usually waiting for a reason to touch that file anyway.
+
+`status/blocked-upstream` is a recurring case in this repo: native audio types, generate skipping audio files,
+and React internals are only fixable in Stash itself. `status/needs-verification` stays on until the change has
+been exercised in a live Stash instance — the compatibility notes above are source-level, not runtime evidence.
 
 ## Git commits
 
