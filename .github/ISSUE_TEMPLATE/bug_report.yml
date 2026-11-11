@@ -1,0 +1,67 @@
+name: Bug report
+description: Something behaves differently from what the README or the UI claims.
+title: "[Bug] "
+labels: ["kind/bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Plugins run inside Stash with no build step, so the two things that
+        decide whether a report is actionable are **version** and **logs**.
+        Both are required below.
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Plugin
+      options:
+        - AudioSupport
+        - MosaicFilter
+        - QuestingAdventurer
+        - SceneVersions
+        - Build / index.yml (not a plugin)
+    validations:
+      required: true
+  - type: input
+    id: stash-version
+    attributes:
+      label: Stash version
+      description: Settings > About, e.g. v0.32.0
+    validations:
+      required: true
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What you see, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Stash logs from around the failure (Settings > Logs), plus the browser
+        console for UI problems. Long logs are fine — trim the noise, keep the
+        lines with errors.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before filing
+      options:
+        - label: CommunityScriptsUILibrary is installed and up to date (required by every plugin here)
+          required: true
+        - label: I checked the README section for the plugin named above
+          required: true

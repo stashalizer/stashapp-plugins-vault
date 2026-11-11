@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a capability, or a different way of doing something.
+title: "[Feature] "
+labels: ["kind/feature"]
+body:
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Plugin
+      options:
+        - AudioSupport
+        - MosaicFilter
+        - QuestingAdventurer
+        - SceneVersions
+        - Build / index.yml (not a plugin)
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is awkward or impossible today. Be concrete about the workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What the plugin should do instead, including where it would live (overlay, settings page, plugin task, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other plugins, Stash settings, or manual workarounds you have tried.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints worth knowing
+      description: |
+        Anything that limits the implementation from your side: Stash version,
+        API-key auth, library size, audio-only scenes, mobile, accessibility
+        needs, and so on.

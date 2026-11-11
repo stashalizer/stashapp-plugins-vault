@@ -1,0 +1,87 @@
+[
+  {
+    "name": "kind/bug",
+    "color": "d73a4a",
+    "description": "Something behaves differently from what the docs claim"
+  },
+  {
+    "name": "kind/feature",
+    "color": "0075ca",
+    "description": "New capability or a deliberate behaviour change"
+  },
+  {
+    "name": "kind/docs",
+    "color": "8b949e",
+    "description": "Documentation, README, or AGENTS.md only"
+  },
+  {
+    "name": "kind/chore",
+    "color": "c5def5",
+    "description": "Build script, CI, or repository maintenance"
+  },
+  {
+    "name": "plugin:AudioSupport",
+    "color": "5319e7",
+    "description": "AudioSupport plugin"
+  },
+  {
+    "name": "plugin:MosaicFilter",
+    "color": "5319e7",
+    "description": "MosaicFilter plugin"
+  },
+  {
+    "name": "plugin:QuestingAdventurer",
+    "color": "5319e7",
+    "description": "QuestingAdventurer plugin"
+  },
+  {
+    "name": "plugin:SceneVersions",
+    "color": "5319e7",
+    "description": "SceneVersions plugin"
+  },
+  {
+    "name": "area:build-publish",
+    "color": "fbca04",
+    "description": "build_site.sh, index.yml, or the GitHub Pages deploy workflow"
+  },
+  {
+    "name": "priority:P0",
+    "color": "b60205",
+    "description": "Plugin unusable for everyone; fix before anything else"
+  },
+  {
+    "name": "priority:P1",
+    "color": "d93f0b",
+    "description": "Broken or misleading for a common setup; next release"
+  },
+  {
+    "name": "priority:P2",
+    "color": "fbca04",
+    "description": "Worth doing, no user is blocked"
+  },
+  {
+    "name": "priority:P3",
+    "color": "0e8a16",
+    "description": "Backlog: nice to have, or waiting for a reason to touch the file"
+  },
+  {
+    "name": "status/needs-info",
+    "color": "d4c5f9",
+    "description": "Waiting on the reporter for logs, version, or scope"
+  },
+  {
+    "name": "status/blocked-upstream",
+    "color": "e99695",
+    "description": "Needs a change in Stash itself before it can be fixed here"
+  },
+  {
+    "name": "status/needs-verification",
+    "color": "fef2c0",
+    "description": "Written but not yet exercised in a live Stash instance"
+  },
+  {
+    "name": "status/publish-pending",
+    "color": "c2e0c6",
+    "description": "Merged but not published: the change still has to reach main under plugins/**"
+  }
+]
