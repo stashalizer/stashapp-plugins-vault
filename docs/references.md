@@ -68,6 +68,30 @@ Caveats that cost real time:
 | `runPluginTask(plugin_id, task_name, description, args_map)` | AudioSupport generate tab | `task_name` is optional; without it only `args_map` is sent. With it, `buildPluginInput` applies `defaultArgs` **only for keys the caller omitted**, so `args_map` always wins |
 | `log.Progress(0..1)` in the Goja VM | AudioSupport generate task | Exposed alongside `Trace/Debug/Info/Warn/Error`; drives the job progress bar |
 
+## Environment traps (verified 2026-11-12)
+
+**ffmpeg 9 removed `-vsync`, and Stash still passes it.** Verified on a v0.32.0
+install whose Stash directory carried ffmpeg 9.0.2: `task_generate_preview.go`
+appends `-vsync 2` whenever the source framerate looks like VFR (including every
+audio-only file, where the framerate is `0.000000`), and 9.0.2 answers
+`Unrecognized option 'vsync' / Error splitting the argument list`, so preview
+generation fails with exit 69. A 2026 master build that still accepts the
+deprecated flag works. Upstream `develop` still passes `-vsync`, so this is not
+fixed by upgrading Stash; pin an ffmpeg that accepts it (`ffmpegPath` in the
+Stash config) or wait for Stash to move to `-fps_mode`. The AudioSupport generate
+task cannot route around this: Stash builds the ffmpeg command, the plugin only
+chooses which scenes are queued.
+
+**Reading Stash's own log buffer over GraphQL.** `{ logs { time level message } }`
+returns the most recent entries (about 30: level, timestamp, full ffmpeg stderr
+and the wrapper line naming the input path). It is the fastest way to attribute a
+generation failure to a specific file without asking the user for a log export —
+the UI log view truncates the same entries. A corrupt input shows up as thousands
+of `Invalid NAL unit size` lines from `h264`, all belonging to the handful of
+shells decoding the same file; decoding the file directly (`ffmpeg -v error -i
+<file> -f null -`) and counting those lines separates a broken file from a
+broken command, and stream-copy remuxing will not repair it.
+
 ## React 18 (Stash UI ≥ v0.32.0)
 
 The UI moved from React 17 to React 18. What that means for plugins:

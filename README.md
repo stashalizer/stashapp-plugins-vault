@@ -191,6 +191,7 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 - **Direct stream playback only.** All transcode endpoints fail for audio-only input; the overlay uses the direct stream URL exclusively.
 - **The built-in Generate task still touches audio scenes.** Stash's generate job takes either explicit scene ids or everything — there is no tag filter and no plugin hook — so the plugin cannot stop it. Use the Generate tab (or the plugin task) instead.
 - **Transcode is never offered** for the plugin's generate path: Stash's transcode task treats an audio-only file as a video and writes a blank file. If you need transcodes, run them from Stash on a selection that excludes audio scenes.
+- **ffmpeg 9 breaks preview generation for VFR sources.** Stash appends `-vsync 2` whenever the framerate looks variable, and ffmpeg 9 removed that flag, so the command fails with `Unrecognized option 'vsync'` before it reads the file. Point Stash's `ffmpegPath` at a build that still accepts `-vsync`, or wait for the upstream fix. A genuinely corrupt file fails differently (`Invalid NAL unit size`), and no plugin setting can skip it.
 - The overlay and settings page keep separate save locks and don't coordinate. Settings edits won't live-reflect in an already-open overlay until the next navigation/reload. Queue state is stored in a separate config key to avoid being wiped by this race.
 
 ---
