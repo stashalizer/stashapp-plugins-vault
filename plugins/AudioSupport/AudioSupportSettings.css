@@ -706,3 +706,353 @@
   color: inherit;
   display: block;
 }
+
+/* ---------------------------------------------------------------------------
+   Folder detail: inline playback + inline tag editing
+   --------------------------------------------------------------------------- */
+
+.audio-support-settings__chapter-row--active {
+  border-color: rgba(110, 160, 220, 0.6);
+  background: rgba(70, 130, 220, 0.16);
+}
+
+a.audio-support-settings__chapter-title {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.audio-support-settings__chapter-title:hover {
+  text-decoration: underline;
+}
+
+.audio-support-settings__chapter-play {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(70, 130, 220, 0.85);
+  background: rgba(70, 130, 220, 0.85);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.audio-support-settings__chapter-play:hover {
+  background: rgba(90, 155, 245, 1);
+  transform: scale(1.05);
+}
+
+.audio-support-settings__chapter-playing {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(110, 160, 220, 0.6);
+  color: #a8ccff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: audio-support-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes audio-support-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Tag chips */
+.audio-support-settings__track-tags {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.audio-support-settings__tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 220px;
+  padding: 1px 6px;
+  border: 1px solid rgba(110, 160, 220, 0.45);
+  border-radius: 999px;
+  background: rgba(70, 130, 220, 0.16);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.audio-support-settings__tag-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-support-settings__tag-chip-remove {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.audio-support-settings__tag-chip:hover .audio-support-settings__tag-chip-remove,
+.audio-support-settings__tag-chip-remove:focus {
+  opacity: 1;
+}
+
+.audio-support-settings__tag-chip-remove:hover {
+  color: #ff9b9b;
+}
+
+/* Touch devices have no hover, so the remove affordance must always be visible. */
+@media (hover: none) {
+  .audio-support-settings__tag-chip-remove {
+    opacity: 1;
+  }
+}
+
+.audio-support-settings__tag-add-button {
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 0 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.audio-support-settings__tag-add-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* Tag popover. Opens downwards in a row, upwards inside the player bar (which
+   sits at the bottom of the viewport). */
+.audio-support-settings__tag-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 260px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #1b1b21;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-support-settings__track-tags--up .audio-support-settings__tag-popover {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.audio-support-settings__tag-search {
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.audio-support-settings__tag-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.audio-support-settings__tag-result {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.audio-support-settings__tag-result:hover:not([disabled]) {
+  background: rgba(110, 160, 220, 0.25);
+}
+
+.audio-support-settings__tag-result[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.audio-support-settings__tag-popover-status {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 2px 4px;
+}
+
+.audio-support-settings__tag-create {
+  border: 1px solid rgba(110, 160, 220, 0.5);
+  border-radius: 4px;
+  background: rgba(70, 130, 220, 0.2);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.audio-support-settings__tag-create:hover:not([disabled]) {
+  background: rgba(70, 130, 220, 0.35);
+}
+
+/* Inline player */
+.audio-support-settings__player {
+  position: sticky;
+  bottom: 12px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(24, 26, 32, 0.97);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+.audio-support-settings__player audio {
+  display: none;
+}
+
+.audio-support-settings__player-button {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.audio-support-settings__player-button:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.audio-support-settings__player-button[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.audio-support-settings__player-button--play {
+  background: rgba(70, 130, 220, 0.9);
+  border-color: rgba(70, 130, 220, 0.9);
+}
+
+.audio-support-settings__player-button--play:hover:not([disabled]) {
+  background: rgba(90, 155, 245, 1);
+}
+
+.audio-support-settings__player-info {
+  flex: 0 1 auto;
+  min-width: 140px;
+  max-width: 40%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.audio-support-settings__player-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* No overflow container here: the tag popover is absolutely positioned inside
+   .track-tags and would be clipped by one. */
+.audio-support-settings__player-tags .audio-support-settings__track-tags {
+  margin-top: 0;
+}
+
+.audio-support-settings__player-seek {
+  flex: 1 1 200px;
+  max-width: 360px;
+  min-width: 90px;
+  margin-left: auto;
+  accent-color: rgba(70, 130, 220, 0.9);
+}
+
+.audio-support-settings__player-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.audio-support-settings__player-count {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.audio-support-settings__player-error {
+  font-size: 11px;
+  color: #ff9b9b;
+  white-space: nowrap;
+}
+
+.audio-support-settings__player-link,
+.audio-support-settings__player-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.audio-support-settings__player-link:hover,
+.audio-support-settings__player-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 640px) {
+  .audio-support-settings__player {
+    flex-wrap: wrap;
+  }
+
+  .audio-support-settings__player-seek {
+    order: 20;
+    flex-basis: 100%;
+  }
+}

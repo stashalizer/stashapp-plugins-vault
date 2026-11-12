@@ -16,6 +16,10 @@
  *   showNavEntry).
  * - Uses Apollo client via PluginApi.utils.StashService.getClient() for all data.
  * - Three top-level tabs: Browse (By Folder / All Audio / By Tag), Setup, Covers.
+ * - The By Folder detail view plays a track in place (sticky bar, direct stream
+ *   URL — no transcode endpoints) and edits the scene's tags inline, so
+ *   listening and tagging never leave the browse view. /scenes/:id stays one
+ *   click away through each row's title for the full scene page.
  */
 (function () {
   "use strict";
@@ -27,7 +31,7 @@
 
   const React = PluginApi.React;
   const h = React.createElement;
-  const { useState, useEffect, useMemo } = React;
+  const { useState, useEffect, useMemo, useCallback, useRef } = React;
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
   const GQL = PluginApi.GQL;
   const apolloClient = PluginApi.utils.StashService.getClient();
@@ -296,6 +300,37 @@
         },
       },
     });
+  }
+
+  // Tag search for the inline tag editor. `tag_filter.name` with INCLUDES is
+  // used instead of `FindFilterType.q` because it is the one name search the
+  // schema has always supported (the repo's findTagByName already relies on the
+  // EQUALS form of it).
+  async function searchTags(query) {
+    const variables = {
+      filter: { per_page: 20, sort: "name", direction: "ASC" },
+    };
+    const trimmed = (query || "").trim();
+    if (trimmed) {
+      variables.tag_filter = { name: { value: trimmed, modifier: "INCLUDES" } };
+    }
+    const result = await apolloClient.query({
+      query: GQL.FindTagsDocument,
+      variables: variables,
+      fetchPolicy: "no-cache",
+    });
+    return (result && result.data && result.data.findTags && result.data.findTags.tags) || [];
+  }
+
+  // Tag edits are scene edits: `tag_ids` REPLACES the whole list, so every call
+  // must carry the complete set. Returns the updated scene (the mutation selects
+  // SceneData, so `tags` comes back with id + name).
+  async function updateSceneTags(sceneId, tagIds) {
+    const result = await apolloClient.mutate({
+      mutation: GQL.SceneUpdateDocument,
+      variables: { input: { id: sceneId, tag_ids: tagIds } },
+    });
+    return result && result.data ? result.data.sceneUpdate : null;
   }
 
   // ---------------------------------------------------------------------------
@@ -803,24 +838,434 @@
     );
   }
 
-  function ChapterRow(props) {
+  // ---------------------------------------------------------------------------
+  // Inline tag editing
+  // ---------------------------------------------------------------------------
+
+  function TagChip(props) {
+    const tag = props.tag;
+    return h(
+      "span",
+      { className: "audio-support-settings__tag-chip" },
+      h("span", { className: "audio-support-settings__tag-chip-name" }, tag.name),
+      props.onRemove
+        ? h(
+            "button",
+            {
+              type: "button",
+              className: "audio-support-settings__tag-chip-remove",
+              title: "Remove tag '" + tag.name + "'",
+              "aria-label": "Remove tag " + tag.name,
+              disabled: props.disabled,
+              onClick: props.onRemove,
+            },
+            "\u00d7"
+          )
+        : null
+    );
+  }
+
+  // Chips + a "+ Tag" popover. Removing writes the scene immediately (no
+  // confirm step, matching the scene edit page); adding also creates the tag
+  // when the typed name does not exist yet, because typing a genre or a
+  // narrator from scratch is the common case.
+  function TrackTagEditor(props) {
+    const scene = props.scene;
+    const tags = Array.isArray(scene.tags) ? scene.tags : [];
+    const [open, setOpen] = useState(false);
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState([]);
+    const [searching, setSearching] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const debouncedQuery = useDebouncedValue(query, 200);
+    const wrapRef = useRef(null);
+    const inputRef = useRef(null);
+
+    useEffect(
+      function () {
+        if (!open) return undefined;
+        let cancelled = false;
+        setSearching(true);
+        searchTags(debouncedQuery)
+          .then(function (found) {
+            if (cancelled) return;
+            setResults(found);
+            setError(null);
+          })
+          .catch(function (err) {
+            if (cancelled) return;
+            console.error("AudioSupport settings: tag search failed", err);
+            setResults([]);
+            setError("Tag search failed");
+          })
+          .then(function () {
+            if (!cancelled) setSearching(false);
+          });
+        return function () {
+          cancelled = true;
+        };
+      },
+      [open, debouncedQuery]
+    );
+
+    // Click-outside / Escape close. pointerdown (not click) so the panel is gone
+    // before another row's handler runs.
+    useEffect(
+      function () {
+        if (!open) return undefined;
+        function onPointerDown(e) {
+          if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+        }
+        function onKeyDown(e) {
+          if (e.key === "Escape") setOpen(false);
+        }
+        document.addEventListener("pointerdown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return function () {
+          document.removeEventListener("pointerdown", onPointerDown);
+          document.removeEventListener("keydown", onKeyDown);
+        };
+      },
+      [open]
+    );
+
+    useEffect(
+      function () {
+        if (open && inputRef.current) inputRef.current.focus();
+      },
+      [open]
+    );
+
+    async function commit(nextTags) {
+      setBusy(true);
+      setError(null);
+      try {
+        const updated = await updateSceneTags(
+          scene.id,
+          nextTags.map(function (t) { return String(t.id); })
+        );
+        const finalTags = updated && Array.isArray(updated.tags) ? updated.tags : nextTags;
+        if (props.onTagsChange) props.onTagsChange(scene.id, finalTags);
+      } catch (err) {
+        console.error("AudioSupport settings: failed to update scene tags", err);
+        setError("Could not update tags");
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function addTag(tag) {
+      if (!tag || busy) return;
+      const exists = tags.some(function (t) { return String(t.id) === String(tag.id); });
+      if (exists) return;
+      setQuery("");
+      // Keep the popover open: tagging a track usually means several tags.
+      commit(tags.concat([{ id: tag.id, name: tag.name }]));
+    }
+
+    async function createAndAdd(name) {
+      if (busy) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const created = await createTag(name);
+        if (!created || !created.id) throw new Error("tagCreate returned no tag");
+        setQuery("");
+        await commit(tags.concat([{ id: created.id, name: created.name }]));
+      } catch (err) {
+        console.error("AudioSupport settings: failed to create tag", err);
+        setError("Could not create tag");
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    const attachedIds = tags.map(function (t) { return String(t.id); });
+    const trimmed = query.trim();
+    const lower = trimmed.toLowerCase();
+    const available = results.filter(function (t) {
+      return attachedIds.indexOf(String(t.id)) === -1;
+    });
+    const hasExact = tags
+      .concat(results)
+      .some(function (t) { return String(t.name || "").toLowerCase() === lower; });
+
+    return h(
+      "div",
+      {
+        className: "audio-support-settings__track-tags" + (props.up ? " audio-support-settings__track-tags--up" : ""),
+        ref: wrapRef,
+      },
+      tags.map(function (tag) {
+        return h(TagChip, {
+          key: tag.id,
+          tag: tag,
+          disabled: busy,
+          onRemove: function () {
+            if (busy) return;
+            commit(tags.filter(function (t) { return String(t.id) !== String(tag.id); }));
+          },
+        });
+      }),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__tag-add-button",
+          title: "Add or remove tags",
+          "aria-expanded": open,
+          onClick: function () { setOpen(!open); },
+        },
+        "+ Tag"
+      ),
+      open
+        ? h(
+            "div",
+            { className: "audio-support-settings__tag-popover" },
+            h("input", {
+              ref: inputRef,
+              type: "text",
+              className: "audio-support-settings__input audio-support-settings__tag-search",
+              placeholder: "Search tags\u2026",
+              value: query,
+              onChange: function (e) { setQuery(e.target.value); },
+              onKeyDown: function (e) {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                if (available.length > 0) {
+                  addTag(available[0]);
+                } else if (trimmed && !hasExact) {
+                  createAndAdd(trimmed);
+                }
+              },
+            }),
+            error ? h("div", { className: "audio-support-settings__tag-popover-status" }, error) : null,
+            h(
+              "div",
+              { className: "audio-support-settings__tag-results" },
+              available.map(function (tag) {
+                return h(
+                  "button",
+                  {
+                    key: tag.id,
+                    type: "button",
+                    className: "audio-support-settings__tag-result",
+                    disabled: busy,
+                    onClick: function () { addTag(tag); },
+                  },
+                  tag.name
+                );
+              }),
+              searching && results.length === 0
+                ? h("div", { className: "audio-support-settings__tag-popover-status" }, "Searching\u2026")
+                : null,
+              !searching && !error && available.length === 0
+                ? h(
+                    "div",
+                    { className: "audio-support-settings__tag-popover-status" },
+                    trimmed ? "No matching tag." : "No tags yet."
+                  )
+                : null
+            ),
+            trimmed && !hasExact
+              ? h(
+                  "button",
+                  {
+                    type: "button",
+                    className: "audio-support-settings__tag-create",
+                    disabled: busy,
+                    onClick: function () { createAndAdd(trimmed); },
+                  },
+                  'Create tag "' + trimmed + '"'
+                )
+              : null
+          )
+        : null
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inline player
+  // ---------------------------------------------------------------------------
+
+  // Sticky player for the folder view: choosing a track plays it here instead of
+  // navigating to /scenes/:id. The source is scene.paths.stream (never a
+  // transcode endpoint — FileGetCodec forces a video encode for audio-only
+  // files) and it already carries the ?apikey= param authenticated installs
+  // need.
+  function InlinePlayer(props) {
+    const scene = props.scene;
+    const audioRef = useRef(null);
+    const [playing, setPlaying] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [error, setError] = useState(null);
+    const streamUrl = scene.paths && scene.paths.stream ? scene.paths.stream : "";
+
+    // Start the newly selected track. The selection came from a click, so the
+    // autoplay policy is satisfied; the effect runs after <audio> got its new
+    // src, which is why it is not part of the click handler.
+    useEffect(
+      function () {
+        setCurrentTime(0);
+        setDuration(0);
+        setError(null);
+        const audio = audioRef.current;
+        if (!audio) return;
+        const promise = audio.play();
+        if (promise && typeof promise.catch === "function") {
+          promise.catch(function (err) {
+            if (err && err.name === "AbortError") return;
+            console.error("AudioSupport settings: inline play failed", err);
+            setError("Playback failed");
+          });
+        }
+      },
+      [scene.id]
+    );
+
+    function togglePlay() {
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (audio.paused) {
+        const promise = audio.play();
+        if (promise && typeof promise.catch === "function") {
+          promise.catch(function () { setError("Playback failed"); });
+        }
+      } else {
+        audio.pause();
+      }
+    }
+
+    function handleSeek(e) {
+      const audio = audioRef.current;
+      const value = parseFloat(e.target.value);
+      if (!audio || Number.isNaN(value)) return;
+      audio.currentTime = value;
+      setCurrentTime(value);
+    }
+
+    return h(
+      "div",
+      { className: "audio-support-settings__player" },
+      h("audio", {
+        ref: audioRef,
+        src: streamUrl,
+        preload: "metadata",
+        onPlay: function () { setPlaying(true); setError(null); },
+        onPause: function () { setPlaying(false); },
+        onEnded: props.onEnded,
+        onTimeUpdate: function (e) { setCurrentTime(e.target.currentTime || 0); },
+        onLoadedMetadata: function (e) {
+          if (isFinite(e.target.duration)) setDuration(e.target.duration);
+        },
+        onError: function () { setPlaying(false); setError("Cannot load audio"); },
+      }),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__player-button audio-support-settings__player-button--play",
+          title: playing ? "Pause" : "Play",
+          "aria-label": playing ? "Pause" : "Play",
+          onClick: togglePlay,
+        },
+        playing ? "\u275a\u275a" : "\u25b6"
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__player-button",
+          title: "Previous track",
+          "aria-label": "Previous track",
+          disabled: !props.canPrev,
+          onClick: props.onPrev,
+        },
+        "\u23ee"
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__player-button",
+          title: "Next track",
+          "aria-label": "Next track",
+          disabled: !props.canNext,
+          onClick: props.onNext,
+        },
+        "\u23ed"
+      ),
+      h(
+        "div",
+        { className: "audio-support-settings__player-info" },
+        h(
+          "div",
+          { className: "audio-support-settings__player-title", title: getSceneDisplayName(scene) },
+          getSceneDisplayName(scene)
+        ),
+        h(
+          "div",
+          { className: "audio-support-settings__player-tags" },
+          h(TrackTagEditor, { scene: scene, onTagsChange: props.onTagsChange, up: true })
+        )
+      ),
+      h(
+        "input",
+        {
+          type: "range",
+          className: "audio-support-settings__player-seek",
+          min: 0,
+          max: duration > 0 ? duration : 1,
+          step: "0.1",
+          value: duration > 0 ? Math.min(currentTime, duration) : 0,
+          disabled: duration <= 0,
+          "aria-label": "Seek",
+          onChange: handleSeek,
+        }
+      ),
+      h(
+        "span",
+        { className: "audio-support-settings__player-time" },
+        formatDuration(currentTime) + " / " + formatDuration(duration)
+      ),
+      h(
+        "span",
+        { className: "audio-support-settings__player-count" },
+        props.index + 1 + " / " + props.total
+      ),
+      error ? h("span", { className: "audio-support-settings__player-error" }, error) : null,
+      h(
+        Link,
+        { to: "/scenes/" + scene.id, className: "audio-support-settings__player-link", title: "Open scene page" },
+        "\u2197"
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          className: "audio-support-settings__player-close",
+          title: "Close player",
+          "aria-label": "Close player",
+          onClick: props.onClose,
+        },
+        "\u00d7"
+      )
+    );
+  }
+
+  function TrackRow(props) {
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
     const displayName = getSceneDisplayName(scene);
-    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
-    async function playChapter(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      try {
-        await saveQueueConfig({ queue: [String(scene.id)], currentIndex: 0 });
-        history.push("/scenes/" + scene.id);
-      } catch (err) {
-        console.error("AudioSupport settings: failed to play chapter", err);
-      }
-    }
     return h(
       "div",
-      { className: "audio-support-settings__chapter-row" },
+      {
+        className:
+          "audio-support-settings__chapter-row" +
+          (props.isActive ? " audio-support-settings__chapter-row--active" : ""),
+      },
       h(
         "div",
         { className: "audio-support-settings__chapter-cover" },
@@ -831,40 +1276,106 @@
       h(
         "div",
         { className: "audio-support-settings__chapter-info" },
-        h("div", { className: "audio-support-settings__chapter-title" }, displayName),
-        h("div", { className: "audio-support-settings__chapter-meta" }, formatDuration(audioFile && audioFile.duration))
+        // The title stays a link so the full scene page (details, lyrics,
+        // cover) is still one click away.
+        h(
+          Link,
+          { to: "/scenes/" + scene.id, className: "audio-support-settings__chapter-title", title: "Open scene page" },
+          displayName
+        ),
+        h(
+          "div",
+          { className: "audio-support-settings__chapter-meta" },
+          formatDuration(audioFile && audioFile.duration),
+          audioFile && audioFile.audio_codec ? " \u00b7 " + audioFile.audio_codec.toUpperCase() : null
+        ),
+        h(TrackTagEditor, { scene: scene, onTagsChange: props.onTagsChange })
       ),
-      h(
-        "button",
-        {
-          type: "button",
-          className: "audio-support-settings__button audio-support-settings__button--primary",
-          onClick: playChapter,
-        },
-        "Play"
-      )
+      props.isActive
+        ? h(
+            "span",
+            { className: "audio-support-settings__chapter-playing", title: "Now playing", "aria-label": "Now playing" },
+            "\u266a"
+          )
+        : h(
+            "button",
+            {
+              type: "button",
+              className: "audio-support-settings__chapter-play",
+              title: "Play here",
+              "aria-label": "Play " + displayName,
+              onClick: props.onPlay,
+            },
+            "\u25b6"
+          )
     );
   }
 
   function FolderDetailView(props) {
     const folder = props.folder;
-    const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     const sortedScenes = useMemo(function () {
       return folder.scenes.slice().sort(naturalCompare);
     }, [folder]);
-    const ids = useMemo(function () {
-      return sortedScenes.map(function (s) { return s.id; });
-    }, [sortedScenes]);
 
-    async function playFolder() {
-      if (ids.length === 0) return;
-      try {
-        await saveQueueConfig({ queue: ids, currentIndex: 0 });
-        history.push("/scenes/" + ids[0]);
-      } catch (err) {
-        console.error("AudioSupport settings: failed to play folder", err);
+    // Tag edits land on the scene, not on this snapshot of it. The override map
+    // keeps the row and the player in sync immediately, and the same set is
+    // handed to the page so the By Tag view does not fall back to the stale list.
+    const [tagOverrides, setTagOverrides] = useState({});
+
+    const scenes = useMemo(
+      function () {
+        return sortedScenes.map(function (scene) {
+          const override = tagOverrides[String(scene.id)];
+          return override ? Object.assign({}, scene, { tags: override }) : scene;
+        });
+      },
+      [sortedScenes, tagOverrides]
+    );
+
+    const ids = useMemo(function () {
+      return scenes.map(function (s) { return String(s.id); });
+    }, [scenes]);
+
+    const [playerIndex, setPlayerIndex] = useState(-1);
+
+    // Keep the persisted queue in step with what the folder view is playing, so
+    // opening a scene page afterwards resumes the same folder.
+    const persistQueue = useCallback(
+      function (index) {
+        saveQueueConfig({ queue: ids, currentIndex: index }).catch(function (err) {
+          console.error("AudioSupport settings: failed to update queue", err);
+        });
+      },
+      [ids]
+    );
+
+    const playIndex = useCallback(
+      function (index) {
+        if (index < 0 || index >= scenes.length) return;
+        setPlayerIndex(index);
+        persistQueue(index);
+      },
+      [scenes.length, persistQueue]
+    );
+
+    function handleTagsChange(sceneId, tags) {
+      setTagOverrides(function (prev) {
+        const next = Object.assign({}, prev);
+        next[String(sceneId)] = tags;
+        return next;
+      });
+      if (props.onTagsChange) props.onTagsChange(sceneId, tags);
+    }
+
+    function handleEnded() {
+      if (playerIndex + 1 < scenes.length) {
+        playIndex(playerIndex + 1);
+      } else {
+        setPlayerIndex(-1);
       }
     }
+
+    const activeScene = playerIndex >= 0 && playerIndex < scenes.length ? scenes[playerIndex] : null;
 
     return h(
       "div",
@@ -886,9 +1397,10 @@
           {
             type: "button",
             className: "audio-support-settings__button audio-support-settings__button--primary",
-            onClick: playFolder,
+            disabled: scenes.length === 0,
+            onClick: function () { playIndex(0); },
           },
-          "Play Folder"
+          playerIndex >= 0 ? "Restart folder" : "Play Folder"
         )
       ),
       h("h3", { className: "audio-support-settings__detail-title" }, folder.name),
@@ -898,10 +1410,30 @@
       h(
         "div",
         { className: "audio-support-settings__chapter-list" },
-        sortedScenes.map(function (scene) {
-          return h(ChapterRow, { key: scene.id, scene: scene });
+        scenes.map(function (scene, index) {
+          return h(TrackRow, {
+            key: scene.id,
+            scene: scene,
+            isActive: index === playerIndex,
+            onPlay: function () { playIndex(index); },
+            onTagsChange: handleTagsChange,
+          });
         })
-      )
+      ),
+      activeScene
+        ? h(InlinePlayer, {
+            scene: activeScene,
+            index: playerIndex,
+            total: scenes.length,
+            canPrev: playerIndex > 0,
+            canNext: playerIndex + 1 < scenes.length,
+            onPrev: function () { playIndex(playerIndex - 1); },
+            onNext: function () { playIndex(playerIndex + 1); },
+            onEnded: handleEnded,
+            onClose: function () { setPlayerIndex(-1); },
+            onTagsChange: handleTagsChange,
+          })
+        : null
     );
   }
 
@@ -1050,7 +1582,14 @@
         ? h(FolderGridView, { folders: folders, onSelect: setSelectedFolder })
         : null,
       subView === "folder" && selectedFolder
-        ? h(FolderDetailView, { folder: selectedFolder, onBack: function () { setSelectedFolder(null); } })
+        ? h(FolderDetailView, {
+            // Key by folder so switching folders remounts the view: its tag
+            // overrides and the player belong to one folder only.
+            key: selectedFolder.dir,
+            folder: selectedFolder,
+            onTagsChange: props.onTagsChange,
+            onBack: function () { setSelectedFolder(null); },
+          })
         : null,
       subView === "all"
         ? h(AllAudioView, {
@@ -1430,6 +1969,16 @@
       setGenerateOptions({ ...generateOptions, [key]: value });
     }
 
+    // The folder view edits tags on the scene itself. Mirror the result into the
+    // page's scene list so the By Tag sub-view (built from it) stays truthful.
+    function handleSceneTagsChange(sceneId, tags) {
+      setAudioScenes(function (prev) {
+        return prev.map(function (scene) {
+          return String(scene.id) === String(sceneId) ? Object.assign({}, scene, { tags: tags }) : scene;
+        });
+      });
+    }
+
     // Queues the Goja task (mode "generateVideo") rather than collecting ids
     // here: one implementation, and it also works from Settings > Tasks.
     async function handleRunGenerate() {
@@ -1589,7 +2138,7 @@
       ),
 
       activeTab === "browse"
-        ? h(BrowseTab, { tag: tag, scenes: audioScenes })
+        ? h(BrowseTab, { tag: tag, scenes: audioScenes, onTagsChange: handleSceneTagsChange })
         : null,
 
       activeTab === "generate"
