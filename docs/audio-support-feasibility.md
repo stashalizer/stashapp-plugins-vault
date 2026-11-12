@@ -320,14 +320,19 @@ handles everything *after* the scan.
   the selected scene ids or `undefined` (everything); `task_generate.go` walks
   whatever it is given and skips nothing. There is no generate hook. So the
   plugin's move is to **replace the entry point**, not intercept it.
-- **Implemented mitigation (v0.7.0):** the `Generate (skip audio scenes)` task
-  (`mode: "generateVideo"` in `AudioSupportHook.js`) collects scene ids with
+- **Implemented mitigation (v0.7.0, hardened in v0.7.1):** the
+  `Generate (skip audio scenes)` task (`mode: "generateVideo"` in
+  `AudioSupportHook.js`) collects scene ids with
   `scene_filter.tags = { value: [audioTagId], modifier: "EXCLUDES" }` and calls
   `metadataGenerate` in batches of 250 with the requested subtasks. The
   Generate tab on the settings page queues the same task via `runPluginTask`.
-  Filtering is tag-based by design: untagged audio scenes are still queued, so
-  `tagAll` must run first (the task refuses to run when the tag is missing
-  rather than falling back to "all scenes").
+  Tag filtering alone proved insufficient in practice: `Scene.Create.Post` can
+  fire while the scan is still attaching the file, so a scene created in the
+  same second as a generate run arrives untagged and errored out (scene 7427,
+  2026-11-12). v0.7.1 therefore probes `files { video_codec width }` on each
+  page and skips audio-only scenes regardless of tags, tagging them inline so
+  the tag stays the fast path. A missing tag still aborts rather than falling
+  back to "all scenes".
 - **Transcode:** produces a blank video; not useful for audio, and it burns
   disk. The task never sends `transcodes: true` and drops the flag with a
   warning if a caller sets it. Fixing the built-in task would require upstream

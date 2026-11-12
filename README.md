@@ -179,8 +179,9 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 **4. Generate previews and sprites safely** on the **Generate** tab:
 
 - Stash's own **Settings → Tasks → Generate** walks every scene, audio included. Audio-only files have no video stream, so the preview/sprite/phash/cover subtasks fail for them and fill the log with errors.
-- The Generate tab queues the same options for the scenes that do **not** carry the audio tag. Pick the subtasks you want and click **Queue generate for video scenes**; it runs as a Stash job, so progress shows up under **Settings → Tasks**.
-- Run **Tag all audio scenes** first if the library predates the plugin — untagged audio scenes cannot be filtered out. The same work is available as the **Generate (skip audio scenes)** plugin task under **Settings → Plugins**.
+- The Generate tab queues the same options for the video scenes only. Pick the subtasks you want and click **Queue generate for video scenes**; it runs as a Stash job, so progress shows up under **Settings → Tasks**.
+- Audio scenes are excluded two ways: the audio tag filters most of them out server-side, and a per-file probe catches any scene the tag misses (for example one scanned while generate was already running). Anything the probe finds untagged is tagged on the way through, so the tag stays the fast path.
+- **Tag all audio scenes** is still worth running once on a library that predates the plugin — it is faster than letting each generate run probe for gaps. The same work is available as the **Generate (skip audio scenes)** plugin task under **Settings → Plugins**.
 
 ### Known limitations
 
@@ -188,7 +189,7 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 - **LRC lyrics are manual upload/paste only** — the plugin cannot auto-detect `.lrc` files on disk (the backend hook runs in a sandboxed JS VM with no file I/O).
 - **Embedded cover extraction** supports MP3/ID3v2, FLAC, and M4A. OGG and Opus files do not expose embedded art via the library used; use the "generate default cover" option for those.
 - **Direct stream playback only.** All transcode endpoints fail for audio-only input; the overlay uses the direct stream URL exclusively.
-- **The built-in Generate task still touches audio scenes.** Stash's generate job takes either explicit scene ids or everything — there is no tag filter and no plugin hook — so the plugin cannot stop it. Use the Generate tab (or the plugin task) instead. Untagged audio scenes are not filtered out either; tag them first.
+- **The built-in Generate task still touches audio scenes.** Stash's generate job takes either explicit scene ids or everything — there is no tag filter and no plugin hook — so the plugin cannot stop it. Use the Generate tab (or the plugin task) instead.
 - **Transcode is never offered** for the plugin's generate path: Stash's transcode task treats an audio-only file as a video and writes a blank file. If you need transcodes, run them from Stash on a selection that excludes audio scenes.
 - The overlay and settings page keep separate save locks and don't coordinate. Settings edits won't live-reflect in an already-open overlay until the next navigation/reload. Queue state is stored in a separate config key to avoid being wiped by this race.
 

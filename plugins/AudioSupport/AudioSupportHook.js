@@ -309,10 +309,19 @@ query {\
 // cannot stop it. The workaround is to queue the same generate options for the
 // video scenes only, which is what this task does.
 //
-// Audio scenes are identified by the audio tag (the tag handleHook and
-// handleTagAll apply), not by probing files. The filter is server-side, so the
-// id collection stays a single paged query. Scenes that were never tagged are
-// still queued: run "Tag all audio scenes" first on an existing library.
+// Audio scenes are identified two ways, because neither is sufficient alone:
+//
+// - The server-side tag filter narrows the paged query and is what keeps a
+//   5500-scene library down to a few pages.
+// - A per-file probe catches scenes the tag misses. Scene.Create.Post fires
+//   while the scan is still attaching the file, so a scene created in the same
+//   second as a generate run can reach this task untagged; probe results are
+//   authoritative, tags are a cache.
+//
+// Probe-detected audio scenes are tagged on the way through (the task already
+// knows they are audio) so the next run excludes them server-side. Scenes that
+// were never tagged and are never probed are still queued, which is why the
+// task also reports what it healed.
 //
 // Transcodes are never requested. An audio-only file has no video stream, so
 // Stash's transcode task "succeeds" and writes a blank video, wasting disk and
@@ -321,6 +330,9 @@ query {\
 var DEFAULT_GENERATE_BATCH_SIZE = 250;
 var GENERATE_SCENE_PAGE_SIZE = 500;
 var GENERATE_COLLECT_PROGRESS = 0.5;
+// Healing is a side effect, not the job. Past this many untagged audio scenes,
+// "Tag all audio scenes" is the right tool and this task only excludes them.
+var GENERATE_MAX_AUTO_TAG = 500;
 
 var GENERATE_SCENES_QUERY = "\
 query AudioSupportGenerateScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {\
@@ -328,6 +340,13 @@ query AudioSupportGenerateScenes($filter: FindFilterType, $scene_filter: SceneFi
     count\
     scenes {\
       id\
+      tags {\
+        id\
+      }\
+      files {\
+        video_codec\
+        width\
+      }\
     }\
   }\
 }";
@@ -370,9 +389,13 @@ function asInt(value, fallback) {
     return parsed;
 }
 
-// Paginate findScenes with the audio tag excluded and collect the scene ids.
+// Paginate findScenes with the audio tag excluded and collect the scene ids,
+// dropping anything the file probe says is audio-only. Returns the ids plus the
+// audio scenes that were missing the tag, so the caller can heal them.
 function collectVideoSceneIds(tagId) {
     var ids = [];
+    var untagged = [];
+    var taggedSkipped = 0;
     var page = 1;
     var total = 0;
     var more = true;
@@ -402,7 +425,21 @@ function collectVideoSceneIds(tagId) {
         }
 
         for (var i = 0; i < scenes.length; i++) {
-            ids.push(scenes[i].id);
+            var scene = scenes[i];
+
+            // Already tagged: the server-side filter should have removed these,
+            // but a stale page can still surface them.
+            if (hasTag(scene, tagId)) {
+                taggedSkipped++;
+                continue;
+            }
+
+            if (isAudioScene(scene)) {
+                untagged.push({ id: scene.id, tagIds: collectTagIds(scene) });
+                continue;
+            }
+
+            ids.push(scene.id);
         }
 
         if (total > 0) {
@@ -416,8 +453,45 @@ function collectVideoSceneIds(tagId) {
         }
     }
 
-    log.Info("AudioSupport: collected " + ids.length + " video scene(s)");
-    return ids;
+    log.Info("AudioSupport: collected " + ids.length + " video scene(s), skipped " + (taggedSkipped + untagged.length) + " audio scene(s)");
+    return { ids: ids, untagged: untagged, taggedSkipped: taggedSkipped };
+}
+
+// True when the scene already carries the given tag id.
+function hasTag(scene, tagId) {
+    if (scene.tags === undefined || scene.tags === null) {
+        return false;
+    }
+    for (var i = 0; i < scene.tags.length; i++) {
+        if (scene.tags[i].id === tagId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Add the audio tag to scenes the probe identified but the tag misses.
+function tagUntaggedAudio(entries, tagId) {
+    var limit = entries.length;
+    if (limit > GENERATE_MAX_AUTO_TAG) {
+        limit = GENERATE_MAX_AUTO_TAG;
+    }
+
+    var tagged = 0;
+    for (var i = 0; i < limit; i++) {
+        var ids = entries[i].tagIds.slice();
+        ids.push(tagId);
+        tagScene(entries[i].id, ids);
+        tagged++;
+    }
+
+    if (tagged > 0) {
+        log.Info("AudioSupport: tagged " + tagged + " audio scene(s) that were missing the tag");
+    }
+    if (entries.length > limit) {
+        log.Warn("AudioSupport: " + (entries.length - limit) + " more audio scene(s) need tagging - run 'Tag all audio scenes'");
+    }
+    return tagged;
 }
 
 // Queue generate for the given scene ids in batches, one metadataGenerate
@@ -483,19 +557,33 @@ function handleGenerateVideo() {
         return { Error: "audio tag '" + tagName + "' does not exist - run 'Tag all audio scenes' first" };
     }
 
-    var ids = collectVideoSceneIds(tagId);
-    if (ids.length === 0) {
+    var collected = collectVideoSceneIds(tagId);
+    var skipped = collected.taggedSkipped + collected.untagged.length;
+
+    if (collected.ids.length === 0) {
+        // Nothing to generate, but the tag gaps we found are still worth fixing.
+        if (!dryRun && collected.untagged.length > 0) {
+            tagUntaggedAudio(collected.untagged, tagId);
+        }
         log.Info("AudioSupport: no video scenes to generate");
-        return { Output: "no video scenes to generate" };
+        return { Output: "no video scenes to generate (skipped " + skipped + " audio scene(s))" };
     }
 
     if (dryRun) {
-        log.Info("AudioSupport: dry run - would queue " + ids.length + " scene(s)");
-        return { Output: "dry run: would queue " + ids.length + " scene(s)" };
+        log.Info("AudioSupport: dry run - would queue " + collected.ids.length + " scene(s)");
+        return {
+            Output: "dry run: would queue " + collected.ids.length + " scene(s), skip " + skipped + " audio scene(s)"
+        };
     }
 
-    var result = queueGenerate(ids, options, batchSize);
-    var summary = "queued " + result.queued + " scene(s) in " + result.batches + " batch(es)";
+    // Heal before queueing: the probe already proved these are audio, so
+    // tagging them is free and shrinks the next run's work.
+    if (collected.untagged.length > 0) {
+        tagUntaggedAudio(collected.untagged, tagId);
+    }
+
+    var result = queueGenerate(collected.ids, options, batchSize);
+    var summary = "queued " + result.queued + " scene(s) in " + result.batches + " batch(es), skipped " + skipped + " audio scene(s)";
     log.Info("AudioSupport: " + summary);
     return { Output: summary };
 }

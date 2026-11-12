@@ -1095,22 +1095,24 @@
         { className: "audio-support-settings__hint" },
         "Stash's built-in generate task (Settings > Tasks > Generate) walks every scene. ",
         "Audio files are stored as scenes with an empty video stream, so preview, sprite, phash and cover generation ",
-        "fails for them and logs errors. This tab queues the same generate options for the scenes that do NOT carry the ",
-        "audio tag, so audio scenes are never touched."
+        "fails for them and logs errors. This tab queues the same generate options for the video scenes only: audio ",
+        "scenes are skipped by tag, and a per-file probe catches any that the tag misses (typically a scene scanned ",
+        "in the same second as a generate run). Probed scenes get the audio tag on the way through."
       ),
       props.tag
         ? h(
             "p",
             { className: "audio-support-settings__hint" },
             props.counts
-              ? "Will queue " + props.counts.video + " video scene(s) and skip " + props.counts.audio + " audio scene(s) tagged '" + props.tag.name + "'."
+              ? "Will queue up to " + props.counts.video + " scene(s); " + props.counts.audio + " scene(s) already carry '" + props.tag.name + "' and more may be caught by the probe."
               : "Counting scenes\u2026"
           )
         : h(
             "p",
             { className: "audio-support-settings__hint" },
-            "The audio tag '" + props.tagName + "' does not exist yet. Create it on the Setup tab and run " +
-              "the 'Tag all audio scenes' task first, otherwise untagged audio scenes are still queued."
+            "The audio tag '" + props.tagName + "' does not exist yet, and the task needs it as the place to put the " +
+              "scenes it probes. Create it on the Setup tab, then either run 'Tag all audio scenes' or just use this " +
+              "tab \u2014 probing tags what it finds."
           ),
       h(
         "div",
