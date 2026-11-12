@@ -103,8 +103,8 @@
   }
 
   const SORT_OPTIONS = [
-    { value: "title_asc", label: "Title (A-Z)" },
-    { value: "title_desc", label: "Title (Z-A)" },
+    { value: "title_asc", label: "Name (A-Z)" },
+    { value: "title_desc", label: "Name (Z-A)" },
     { value: "created_desc", label: "Date added (newest)" },
     { value: "created_asc", label: "Date added (oldest)" },
     { value: "duration_desc", label: "Duration (longest)" },
@@ -418,11 +418,37 @@
     return files.find(function (f) { return f.video_codec === ""; }) || files[0] || null;
   }
 
-  function getSceneFileName(scene) {
-    const path = scene.files && scene.files[0] && scene.files[0].path;
-    if (!path) return "";
-    const lastSlash = path.lastIndexOf("/");
-    return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
+  // Browse views label a scene by its file name, because that is the only
+  // identifier audio files reliably have: Stash leaves `title` empty for
+  // scanned files (which used to render as "Untitled"), and titles that do
+  // exist are sometimes the full path (imported/scraped libraries). Both
+  // sources are reduced to a bare base name with the extension stripped, so
+  // every card shows a short, distinguishable label.
+  const FILE_EXTENSION_PATTERN = /^[A-Za-z0-9]{1,5}$/;
+
+  // Base name of a path or title. Handles Windows separators too, because a
+  // title written by another tool may contain backslashes.
+  function getBaseName(value) {
+    if (!value) return "";
+    const parts = String(value).replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1] || "";
+  }
+
+  // Drop the extension only when the tail actually looks like one, so titles
+  // such as "Op. 27 No. 2" or "01. Intro" survive intact.
+  function stripFileExtension(name) {
+    if (!name) return "";
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return name;
+    if (!FILE_EXTENSION_PATTERN.test(name.substring(dot + 1))) return name;
+    return name.substring(0, dot);
+  }
+
+  function getSceneDisplayName(scene) {
+    const filePath = scene && scene.files && scene.files[0] && scene.files[0].path;
+    const fromFile = stripFileExtension(getBaseName(filePath));
+    if (fromFile) return fromFile;
+    return stripFileExtension(getBaseName(scene && scene.title)) || "Untitled";
   }
 
   function useDebouncedValue(value, delay) {
@@ -497,6 +523,7 @@
   function AudioSceneCard(props) {
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
+    const displayName = props.name || getSceneDisplayName(scene);
     const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     const onPlay = async function (e) {
       e.preventDefault();
@@ -516,7 +543,7 @@
         {
           to: "/scenes/" + scene.id,
           className: "audio-support-settings__scene-card-link",
-          title: scene.title || "Untitled",
+          title: displayName,
         },
         h(
           "div",
@@ -528,7 +555,7 @@
         h(
           "div",
           { className: "audio-support-settings__scene-card-info" },
-          h("div", { className: "audio-support-settings__scene-card-title" }, scene.title || "Untitled"),
+          h("div", { className: "audio-support-settings__scene-card-title" }, displayName),
           h(
             "div",
             { className: "audio-support-settings__scene-card-meta" },
@@ -574,31 +601,35 @@
 
     const filteredSorted = useMemo(
       function () {
-        let list = scenes.slice();
         const q = debouncedSearch.trim().toLowerCase();
+        // Decorate once: the display name drives the visible label, the search
+        // and the "Name" sort options, so compute it a single time per scene.
+        let items = scenes.map(function (scene) {
+          return { scene: scene, name: getSceneDisplayName(scene) };
+        });
         if (q) {
-          list = list.filter(function (s) {
-            return (s.title || "").toLowerCase().indexOf(q) !== -1;
+          items = items.filter(function (item) {
+            return item.name.toLowerCase().indexOf(q) !== -1;
           });
         }
-        list.sort(function (a, b) {
+        items.sort(function (a, b) {
           switch (sortBy) {
             case "title_desc":
-              return (b.title || "").localeCompare(a.title || "");
+              return b.name.localeCompare(a.name);
             case "created_desc":
-              return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+              return new Date(b.scene.created_at || 0) - new Date(a.scene.created_at || 0);
             case "created_asc":
-              return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+              return new Date(a.scene.created_at || 0) - new Date(b.scene.created_at || 0);
             case "duration_desc":
-              return (getAudioFile(b).duration || 0) - (getAudioFile(a).duration || 0);
+              return (getAudioFile(b.scene).duration || 0) - (getAudioFile(a.scene).duration || 0);
             case "duration_asc":
-              return (getAudioFile(a).duration || 0) - (getAudioFile(b).duration || 0);
+              return (getAudioFile(a.scene).duration || 0) - (getAudioFile(b.scene).duration || 0);
             case "title_asc":
             default:
-              return (a.title || "").localeCompare(b.title || "");
+              return a.name.localeCompare(b.name);
           }
         });
-        return list;
+        return items;
       },
       [scenes, debouncedSearch, sortBy]
     );
@@ -617,7 +648,7 @@
               h("input", {
                 type: "text",
                 className: "audio-support-settings__input",
-                placeholder: "Search by title...",
+                placeholder: "Search by file name...",
                 value: search,
                 onChange: function (e) { setSearch(e.target.value); },
               })
@@ -674,7 +705,7 @@
                   className: "audio-support-settings__button audio-support-settings__button--primary",
                   onClick: async function () {
                     try {
-                      const ids = filteredSorted.map(function (s) { return s.id; });
+                      const ids = filteredSorted.map(function (item) { return item.scene.id; });
                       await saveQueueConfig({ queue: ids, currentIndex: 0 });
                       history.push("/scenes/" + ids[0]);
                     } catch (err) {
@@ -688,8 +719,8 @@
             h(
               "div",
               { className: "audio-support-settings__scene-grid" },
-              filteredSorted.map(function (scene) {
-                return h(AudioSceneCard, { key: scene.id, scene: scene });
+              filteredSorted.map(function (item) {
+                return h(AudioSceneCard, { key: item.scene.id, scene: item.scene, name: item.name });
               })
             )
           )
@@ -752,7 +783,7 @@
   function ChapterRow(props) {
     const scene = props.scene;
     const audioFile = getAudioFile(scene);
-    const fileName = getSceneFileName(scene);
+    const displayName = getSceneDisplayName(scene);
     const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     async function playChapter(e) {
       e.preventDefault();
@@ -777,7 +808,7 @@
       h(
         "div",
         { className: "audio-support-settings__chapter-info" },
-        h("div", { className: "audio-support-settings__chapter-title" }, scene.title || fileName || "Untitled"),
+        h("div", { className: "audio-support-settings__chapter-title" }, displayName),
         h("div", { className: "audio-support-settings__chapter-meta" }, formatDuration(audioFile && audioFile.duration))
       ),
       h(

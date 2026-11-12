@@ -332,6 +332,35 @@
     return null;
   }
 
+  // Header label for the current track: the file name without its extension.
+  // Stash leaves a scanned scene's title empty, and titles written by an import
+  // are sometimes the full path, so neither can be shown as-is. Mirrors
+  // getSceneDisplayName in AudioSupportSettings.js — keep the two in sync.
+  var FILE_EXTENSION_PATTERN = /^[A-Za-z0-9]{1,5}$/;
+
+  function getBaseName(value) {
+    if (!value) return "";
+    var parts = String(value).replace(/\\/g, "/").split("/");
+    return parts[parts.length - 1] || "";
+  }
+
+  // Only strip when the tail looks like an extension, so a title such as
+  // "Op. 27 No. 2" keeps its dots.
+  function stripFileExtension(name) {
+    if (!name) return "";
+    var dot = name.lastIndexOf(".");
+    if (dot <= 0) return name;
+    if (!FILE_EXTENSION_PATTERN.test(name.substring(dot + 1))) return name;
+    return name.substring(0, dot);
+  }
+
+  function getSceneDisplayName(scene) {
+    var file = scene && scene.files && scene.files[0];
+    var fromFile = stripFileExtension(getBaseName(file && file.path));
+    if (fromFile) return fromFile;
+    return stripFileExtension(getBaseName(scene && scene.title)) || "Audio";
+  }
+
   // ---------------------------------------------------------------------------
   // Persistence
   // ---------------------------------------------------------------------------
@@ -469,7 +498,7 @@
 
     const title = document.createElement("span");
     title.className = "audio-support-overlay__title";
-    title.textContent = scene.title || "Audio";
+    title.textContent = getSceneDisplayName(scene);
     header.appendChild(title);
 
     const controls = document.createElement("span");
