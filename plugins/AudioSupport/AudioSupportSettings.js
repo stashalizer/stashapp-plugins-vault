@@ -15,7 +15,7 @@
  *   panelPos/playbackRate/loop/volume; this page owns audioTagName and
  *   showNavEntry).
  * - Uses Apollo client via PluginApi.utils.StashService.getClient() for all data.
- * - Three top-level tabs: Browse (By Work / All Audio / By Tag), Setup, Covers.
+ * - Three top-level tabs: Browse (By Folder / All Audio / By Tag), Setup, Covers.
  */
 (function () {
   "use strict";
@@ -426,12 +426,24 @@
   // every card shows a short, distinguishable label.
   const FILE_EXTENSION_PATTERN = /^[A-Za-z0-9]{1,5}$/;
 
-  // Base name of a path or title. Handles Windows separators too, because a
-  // title written by another tool may contain backslashes.
+  // Split a path into its parent folder and its last segment. Backslashes are
+  // normalized first: a Windows path (or a title written by another tool) has no
+  // "/" at all, and a bare lastIndexOf("/") would then return -1 and hand back
+  // the whole path as the "file name".
+  function splitPath(target) {
+    if (!target) return { dir: "", name: "" };
+    const normalized = String(target).replace(/\\/g, "/");
+    const lastSlash = normalized.lastIndexOf("/");
+    if (lastSlash < 0) return { dir: "", name: normalized };
+    return {
+      dir: normalized.substring(0, lastSlash),
+      name: normalized.substring(lastSlash + 1),
+    };
+  }
+
+  // Base name of a path or title.
   function getBaseName(value) {
-    if (!value) return "";
-    const parts = String(value).replace(/\\/g, "/").split("/");
-    return parts[parts.length - 1] || "";
+    return splitPath(value).name;
   }
 
   // Drop the extension only when the tail actually looks like one, so titles
@@ -473,22 +485,28 @@
     return aName < bName ? -1 : aName > bName ? 1 : 0;
   }
 
-  function groupByWork(scenes) {
+  // Audio has no album/work entity in Stash: a track is a scene, and the only
+  // grouping the library actually has is the folder it sits in. Group by the
+  // immediate parent folder and label the card with that folder's name — the
+  // full folder path stays in `dir` for the key and the hover tooltip.
+  function groupByFolder(scenes) {
     const groups = {};
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       const path = scene.files && scene.files[0] && scene.files[0].path;
       if (!path) continue;
-      const lastSlash = path.lastIndexOf("/");
-      const dir = lastSlash > 0 ? path.substring(0, lastSlash) : path;
-      let workName = lastSlash > 0 ? path.substring(lastSlash + 1) : path;
-      const dirLastSlash = dir.lastIndexOf("/");
-      workName = dirLastSlash >= 0 ? dir.substring(dirLastSlash + 1) : dir;
-      if (!groups[dir]) groups[dir] = { name: workName, dir: dir, scenes: [] };
+      const dir = splitPath(path).dir;
+      if (!groups[dir]) {
+        groups[dir] = {
+          name: splitPath(dir).name || "No folder",
+          dir: dir,
+          scenes: [],
+        };
+      }
       groups[dir].scenes.push(scene);
     }
     return Object.values(groups).sort(function (a, b) {
-      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      return a.name.localeCompare(b.name) || a.dir.localeCompare(b.dir);
     });
   }
 
@@ -509,8 +527,8 @@
     });
   }
 
-  function getWorkDuration(work) {
-    return work.scenes.reduce(function (total, scene) {
+  function getFolderDuration(folder) {
+    return folder.scenes.reduce(function (total, scene) {
       const f = getAudioFile(scene);
       return total + (f && f.duration ? f.duration : 0);
     }, 0);
@@ -728,15 +746,20 @@
     );
   }
 
-  function WorkCard(props) {
-    const work = props.work;
-    const totalDuration = getWorkDuration(work);
-    const firstScene = work.scenes[0];
+  // NOTE: the `...__work-*` CSS class names are styling hooks only — they kept
+  // their historical prefix when the UI was reworded from "work" to "folder".
+  function FolderCard(props) {
+    const folder = props.folder;
+    const totalDuration = getFolderDuration(folder);
+    const firstScene = folder.scenes[0];
     return h(
       "button",
       {
         type: "button",
         className: "audio-support-settings__work-card",
+        // Hover shows the folder path: sibling folders can share a name
+        // (CD1, Disc 1, ...), and the card itself only has room for the name.
+        title: folder.dir,
         onClick: props.onClick,
       },
       h(
@@ -749,11 +772,11 @@
       h(
         "div",
         { className: "audio-support-settings__work-info" },
-        h("div", { className: "audio-support-settings__work-title" }, work.name),
+        h("div", { className: "audio-support-settings__work-title" }, folder.name),
         h(
           "div",
           { className: "audio-support-settings__work-meta" },
-          work.scenes.length + " chapter" + (work.scenes.length === 1 ? "" : "s"),
+          folder.scenes.length + " file" + (folder.scenes.length === 1 ? "" : "s"),
           " \u00b7 ",
           formatDuration(totalDuration)
         )
@@ -761,21 +784,21 @@
     );
   }
 
-  function WorkGridView(props) {
-    const works = props.works;
-    if (works.length === 0) {
+  function FolderGridView(props) {
+    const folders = props.folders;
+    if (folders.length === 0) {
       return h(
         "div",
         { className: "audio-support-settings__empty" },
-        h("p", null, "No audio works found."),
+        h("p", null, "No audio folders found."),
         h("p", { className: "audio-support-settings__hint" }, "Scan your library after enabling audio ingestion.")
       );
     }
     return h(
       "div",
       { className: "audio-support-settings__work-grid" },
-      works.map(function (work) {
-        return h(WorkCard, { key: work.dir, work: work, onClick: function () { props.onSelect(work); } });
+      folders.map(function (folder) {
+        return h(FolderCard, { key: folder.dir, folder: folder, onClick: function () { props.onSelect(folder); } });
       })
     );
   }
@@ -823,23 +846,23 @@
     );
   }
 
-  function WorkDetailView(props) {
-    const work = props.work;
+  function FolderDetailView(props) {
+    const folder = props.folder;
     const history = PluginApi.libraries.ReactRouterDOM.useHistory();
     const sortedScenes = useMemo(function () {
-      return work.scenes.slice().sort(naturalCompare);
-    }, [work]);
+      return folder.scenes.slice().sort(naturalCompare);
+    }, [folder]);
     const ids = useMemo(function () {
       return sortedScenes.map(function (s) { return s.id; });
     }, [sortedScenes]);
 
-    async function playWork() {
+    async function playFolder() {
       if (ids.length === 0) return;
       try {
         await saveQueueConfig({ queue: ids, currentIndex: 0 });
         history.push("/scenes/" + ids[0]);
       } catch (err) {
-        console.error("AudioSupport settings: failed to play work", err);
+        console.error("AudioSupport settings: failed to play folder", err);
       }
     }
 
@@ -856,24 +879,27 @@
             className: "audio-support-settings__button",
             onClick: props.onBack,
           },
-          "\u2190 Back to works"
+          "\u2190 Back to folders"
         ),
         h(
           "button",
           {
             type: "button",
             className: "audio-support-settings__button audio-support-settings__button--primary",
-            onClick: playWork,
+            onClick: playFolder,
           },
-          "Play Work"
+          "Play Folder"
         )
       ),
-      h("h3", { className: "audio-support-settings__detail-title" }, work.name),
+      h("h3", { className: "audio-support-settings__detail-title" }, folder.name),
+      // The folder path is the only way to tell same-named folders apart, and
+      // this header has the room for it.
+      h("p", { className: "audio-support-settings__hint" }, folder.dir),
       h(
         "div",
         { className: "audio-support-settings__chapter-list" },
         sortedScenes.map(function (scene) {
-          return h(ChapterRow, { key: scene.id, scene: scene, onPlayWork: playWork });
+          return h(ChapterRow, { key: scene.id, scene: scene });
         })
       )
     );
@@ -972,7 +998,7 @@
 
   function BrowseSubNav(props) {
     const views = [
-      { id: "work", label: "By Work" },
+      { id: "folder", label: "By Folder" },
       { id: "all", label: "All Audio" },
       { id: "tag", label: "By Tag" },
     ];
@@ -995,14 +1021,14 @@
   }
 
   function BrowseTab(props) {
-    const [subView, setSubView] = useState("work");
-    const [selectedWork, setSelectedWork] = useState(null);
+    const [subView, setSubView] = useState("folder");
+    const [selectedFolder, setSelectedFolder] = useState(null);
     const [selectedTagGroup, setSelectedTagGroup] = useState(null);
     const [search, setSearch] = useState("");
     const [sortBy, setSortBy] = useState("title_asc");
 
-    const works = useMemo(function () {
-      return groupByWork(props.scenes);
+    const folders = useMemo(function () {
+      return groupByFolder(props.scenes);
     }, [props.scenes]);
 
     const tagGroups = useMemo(function () {
@@ -1011,7 +1037,7 @@
 
     function handleSubViewChange(view) {
       setSubView(view);
-      setSelectedWork(null);
+      setSelectedFolder(null);
       setSelectedTagGroup(null);
     }
 
@@ -1020,11 +1046,11 @@
       { className: "audio-support-settings__section" },
       h("h2", null, "Browse Audio"),
       h(BrowseSubNav, { active: subView, onChange: handleSubViewChange }),
-      subView === "work" && !selectedWork
-        ? h(WorkGridView, { works: works, onSelect: setSelectedWork })
+      subView === "folder" && !selectedFolder
+        ? h(FolderGridView, { folders: folders, onSelect: setSelectedFolder })
         : null,
-      subView === "work" && selectedWork
-        ? h(WorkDetailView, { work: selectedWork, onBack: function () { setSelectedWork(null); } })
+      subView === "folder" && selectedFolder
+        ? h(FolderDetailView, { folder: selectedFolder, onBack: function () { setSelectedFolder(null); } })
         : null,
       subView === "all"
         ? h(AllAudioView, {
