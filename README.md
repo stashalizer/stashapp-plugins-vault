@@ -179,7 +179,7 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 **4. Generate previews and sprites safely** on the **Generate** tab:
 
 - Stash's own **Settings → Tasks → Generate** walks every scene, audio included. Audio-only files have no video stream, so the preview/sprite/phash/cover subtasks fail for them and fill the log with errors.
-- The Generate tab queues the same options for the video scenes only. Pick the subtasks you want and click **Queue generate for video scenes**; it runs as a Stash job, so progress shows up under **Settings → Tasks**.
+- The Generate tab queues for the video scenes only. **Previews** are the only subtask enabled by default; sprites, phashes, markers and covers are opt-in. Click **Queue generate for video scenes** and it lands in **Settings → Tasks** as **one** generate job, because the plugin passes every scene id in a single `metadataGenerate` call — batching would show up as several tasks running back to back.
 - Audio scenes are excluded two ways: the audio tag filters most of them out server-side, and a per-file probe catches any scene the tag misses (for example one scanned while generate was already running). Anything the probe finds untagged is tagged on the way through, so the tag stays the fast path.
 - **Tag all audio scenes** is still worth running once on a library that predates the plugin — it is faster than letting each generate run probe for gaps. The same work is available as the **Generate (skip audio scenes)** plugin task under **Settings → Plugins**.
 

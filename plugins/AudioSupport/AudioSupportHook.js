@@ -309,6 +309,12 @@ query {\
 // cannot stop it. The workaround is to queue the same generate options for the
 // video scenes only, which is what this task does.
 //
+// The whole selection goes into a single metadataGenerate call: the resolver
+// creates one job per call, so splitting the ids into batches (as an earlier
+// version did) showed up as several generate tasks running back to back in
+// Settings > Tasks. Previews are the only subtask enabled by default, because
+// previews are the one that failed on audio scenes; the rest stay opt-in.
+//
 // Audio scenes are identified two ways, because neither is sufficient alone:
 //
 // - The server-side tag filter narrows the paged query and is what keeps a
@@ -327,7 +333,6 @@ query {\
 // Stash's transcode task "succeeds" and writes a blank video, wasting disk and
 // time; there is no useful transcode target for audio.
 
-var DEFAULT_GENERATE_BATCH_SIZE = 250;
 var GENERATE_SCENE_PAGE_SIZE = 500;
 var GENERATE_COLLECT_PROGRESS = 0.5;
 // Healing is a side effect, not the job. Past this many untagged audio scenes,
@@ -376,17 +381,6 @@ function asBool(value, fallback) {
         }
     }
     return fallback;
-}
-
-function asInt(value, fallback) {
-    if (value === undefined || value === null) {
-        return fallback;
-    }
-    var parsed = parseInt(value, 10);
-    if (isNaN(parsed)) {
-        return fallback;
-    }
-    return parsed;
 }
 
 // Paginate findScenes with the audio tag excluded and collect the scene ids,
@@ -494,60 +488,52 @@ function tagUntaggedAudio(entries, tagId) {
     return tagged;
 }
 
-// Queue generate for the given scene ids in batches, one metadataGenerate
-// mutation per batch so a large library does not produce a single huge input.
-function queueGenerate(ids, options, batchSize) {
-    var queued = 0;
-    var batches = 0;
+// One metadataGenerate call for every scene id. Stash turns each call into a
+// single job, so batching the ids would show up as N generate tasks running
+// one after another in the queue. The id list is the only selection channel
+// the API offers (GenerateMetadataInput has no tag criterion), and a few
+// thousand ids is a small mutation payload.
+function queueGenerate(ids, options) {
+    gql.Do(GENERATE_MUTATION, {
+        input: {
+            sceneIDs: ids,
+            sprites: options.sprites,
+            previews: options.previews,
+            phashes: options.phashes,
+            markers: options.markers,
+            covers: options.covers,
+            overwrite: options.overwrite,
+            transcodes: false
+        }
+    });
 
-    for (var start = 0; start < ids.length; start += batchSize) {
-        var chunk = ids.slice(start, start + batchSize);
-
-        gql.Do(GENERATE_MUTATION, {
-            input: {
-                sceneIDs: chunk,
-                sprites: options.sprites,
-                previews: options.previews,
-                phashes: options.phashes,
-                markers: options.markers,
-                covers: options.covers,
-                overwrite: options.overwrite,
-                transcodes: false
-            }
-        });
-
-        queued += chunk.length;
-        batches++;
-        log.Progress(GENERATE_COLLECT_PROGRESS + (1 - GENERATE_COLLECT_PROGRESS) * (queued / ids.length));
-        log.Info("AudioSupport: queued generate for " + queued + " / " + ids.length + " scene(s)");
-    }
-
-    return { queued: queued, batches: batches };
+    log.Progress(1);
+    log.Info("AudioSupport: queued generate for " + ids.length + " scene(s)");
+    return ids.length;
 }
 
 function handleGenerateVideo() {
     var args = input.Args || {};
 
+    // Previews only by default: previews are what the built-in task choked on
+    // for audio scenes, and the other subtasks are expensive on a large
+    // library. Any of them can still be requested explicitly.
     var options = {
-        sprites: asBool(args.sprites, true),
+        sprites: asBool(args.sprites, false),
         previews: asBool(args.previews, true),
-        phashes: asBool(args.phashes, true),
-        markers: asBool(args.markers, true),
+        phashes: asBool(args.phashes, false),
+        markers: asBool(args.markers, false),
         covers: asBool(args.covers, false),
         overwrite: asBool(args.overwrite, false)
     };
     var dryRun = asBool(args.dryRun, false);
-    var batchSize = asInt(args.batchSize, DEFAULT_GENERATE_BATCH_SIZE);
-    if (batchSize < 1) {
-        batchSize = DEFAULT_GENERATE_BATCH_SIZE;
-    }
 
     if (asBool(args.transcodes, false)) {
         log.Warn("AudioSupport: ignoring transcodes - Stash would write a blank video for audio-only scenes");
     }
 
     if (!options.sprites && !options.previews && !options.phashes && !options.markers && !options.covers) {
-        return { Error: "no generate option selected (sprites, previews, phashes, markers or covers)" };
+        return { Error: "no generate option selected (previews, sprites, phashes, markers or covers)" };
     }
 
     var tagName = (typeof args.tagName === "string" && args.tagName.length > 0) ? args.tagName : TAG_NAME;
@@ -582,8 +568,8 @@ function handleGenerateVideo() {
         tagUntaggedAudio(collected.untagged, tagId);
     }
 
-    var result = queueGenerate(collected.ids, options, batchSize);
-    var summary = "queued " + result.queued + " scene(s) in " + result.batches + " batch(es), skipped " + skipped + " audio scene(s)";
+    var queued = queueGenerate(collected.ids, options);
+    var summary = "queued generate for " + queued + " scene(s) in one job, skipped " + skipped + " audio scene(s)";
     log.Info("AudioSupport: " + summary);
     return { Output: summary };
 }

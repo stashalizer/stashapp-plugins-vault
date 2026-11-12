@@ -54,11 +54,15 @@
       `
     : null;
 
+  // Previews only, unlike Stash's GenerateDialog (which turns sprites,
+  // previews, phashes and markers on). Previews are the subtask that failed on
+  // audio scenes and the reason this tab exists; everything else is opt-in
+  // because it is expensive on a large library. Transcodes are never offered.
   const DEFAULT_GENERATE_OPTIONS = {
-    sprites: true,
+    sprites: false,
     previews: true,
-    phashes: true,
-    markers: true,
+    phashes: false,
+    markers: false,
     covers: false,
     overwrite: false,
   };
@@ -1073,8 +1077,9 @@
   // Generate tab
   // ---------------------------------------------------------------------------
 
-  // Mirrors Stash's GenerateDialog defaults (sprites/previews/phashes/markers
-  // on, covers off) minus transcodes, which this tab never offers.
+  // Previews are on by default; the rest are opt-in, unlike Stash's
+  // GenerateDialog, which enables sprites/phashes/markers as well. Transcodes
+  // are not offered at all.
   const GENERATE_OPTION_ROWS = [
     { key: "previews", label: "Previews" },
     { key: "sprites", label: "Sprites" },
@@ -1104,7 +1109,7 @@
             "p",
             { className: "audio-support-settings__hint" },
             props.counts
-              ? "Will queue up to " + props.counts.video + " scene(s); " + props.counts.audio + " scene(s) already carry '" + props.tag.name + "' and more may be caught by the probe."
+              ? "Will queue up to " + props.counts.video + " scene(s) as a single generate job; " + props.counts.audio + " scene(s) already carry '" + props.tag.name + "' and more may be caught by the probe."
               : "Counting scenes\u2026"
           )
         : h(
@@ -1185,7 +1190,7 @@
         h(
           "span",
           { className: "audio-support-settings__hint" },
-          "Runs as a Stash job \u2014 track progress under Settings > Tasks."
+          "Runs as a single Stash job \u2014 track progress under Settings > Tasks."
         )
       )
     );
@@ -1399,7 +1404,6 @@
               markers: generateOptions.markers,
               covers: generateOptions.covers,
               overwrite: generateOptions.overwrite,
-              batchSize: 250,
             },
           },
         });
