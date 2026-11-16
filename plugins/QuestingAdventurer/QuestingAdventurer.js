@@ -1527,6 +1527,9 @@
 
     if (state.collapsed) {
       renderCollapsedChip(panel);
+      // Collapsed panels have no resizable edges — this also strips any
+      // handles that survived from the expanded state.
+      syncResizeHandles(panel);
       return;
     }
 
@@ -1563,6 +1566,12 @@
     // renderFooter must come after renderActiveList so syncButtons() can
     // query the add-move-into buttons that renderTrigger creates.
     renderFooter(panel);
+    // Re-create the decorative edge strips LAST so they stay on top of the
+    // freshly rendered content and are never removed by clearChildren() on
+    // the next pass without being put back. Rebuilding them here is the fix
+    // for "the panel can't be resized by dragging" — see the Edge resize
+    // block below.
+    syncResizeHandles(panel);
   }
 
   function renderTrigger(list, trigger) {
@@ -2150,16 +2159,22 @@
 
   function startPanelDrag(e) {
     // Don't start a panel drag when the user is pressing a button inside the
-    // header (penalty, reward, opacity icon, close). The native CSS resize
-    // handle (bottom-right corner) also gets pointerdown but we ignore it
-    // by allowing the drag event to be consumed by the browser's resize
-    // interaction — the resize handle is not inside the header so it won't
-    // match this early return.
+    // header (penalty, reward, opacity icon, close).
     if (e.target.closest("button") || e.target.closest("input")) return;
     if (e.button !== undefined && e.button !== 0) return;
-    e.preventDefault();
     const panel = document.querySelector(".questing-adventurer-panel");
     if (!panel) return;
+    // An edge press belongs to the resize gesture (see onPanelPointerDown),
+    // not to the move drag — otherwise both handlers would grab the same
+    // pointer and the panel would jump around while it resizes. The collapsed
+    // chip has no resizable edges, so it keeps its full drag area.
+    if (
+      !panel.classList.contains("questing-adventurer-panel--collapsed") &&
+      resizeEdgeAt(panel, e.clientX, e.clientY)
+    ) {
+      return;
+    }
+    e.preventDefault();
     const rect = panel.getBoundingClientRect();
     const startTop = state.panelPos.top;
     const startRight = state.panelPos.right;
@@ -2221,11 +2236,97 @@
     document.addEventListener("pointercancel", onEnd);
   }
 
-  // Edge resize: handle pointer-drag on the four edge handles (top, right,
-  // bottom, left). The panel is positioned with `top` and `right` (anchored
-  // to the top-right corner of the video player), so each edge update has
-  // to keep the OPPOSITE edge fixed in place by adjusting the appropriate
-  // pair of properties.
+  // ---------------------------------------------------------------------------
+  // Edge resize: geometry, not DOM
+  //
+  // Resizing is driven by a hit-test against the panel's own bounding box
+  // rather than by pointerdown listeners on the four ".…__resize-handle"
+  // strips, for two reasons:
+  //
+  //  1. The strips are children of the panel, and render() rebuilds the
+  //     panel's child list from scratch on every state change. Bindings made
+  //     once in setupPanel() were therefore destroyed by the first render,
+  //     which is what made the panel impossible to resize by dragging. The
+  //     strips are now re-created after each render (syncResizeHandles) but
+  //     stay purely decorative, so any future re-render cannot kill resizing.
+  //  2. The panel is a scroll container (overflow-y: auto). An absolutely
+  //     positioned strip scrolls out of position once the content overflows,
+  //     so a strip-anchored gesture would silently stop working at exactly
+  //     the moment the user has shrunk the panel enough to need it. A
+  //     bounding-box hit-test always matches what the user sees.
+  // ---------------------------------------------------------------------------
+
+  // How close to an edge (in px) a press has to be to count as an edge grab.
+  // The panel's padding is 8px vertical / 12px horizontal, so this band stays
+  // inside the padding and never overlaps a button or an input.
+  const RESIZE_EDGE_PX = 6;
+  const RESIZE_EDGES = ["top", "right", "bottom", "left"];
+
+  // Returns "top" | "right" | "bottom" | "left" when the point is inside the
+  // panel's border box and within RESIZE_EDGE_PX of one of its edges,
+  // otherwise null. The nearest edge wins, which also resolves corners: a
+  // press 2px from the top and 5px from the left edge resizes from the top.
+  function resizeEdgeAt(panel, clientX, clientY) {
+    const r = panel.getBoundingClientRect();
+    const distances = {
+      top: clientY - r.top,
+      right: r.right - clientX,
+      bottom: r.bottom - clientY,
+      left: clientX - r.left,
+    };
+    let edge = null;
+    let nearest = Infinity;
+    RESIZE_EDGES.forEach(function (name) {
+      const d = distances[name];
+      // Negative means the point is outside the panel — a press there can't
+      // reach this handler anyway, but guards keep the helper honest.
+      if (d < 0 || d > RESIZE_EDGE_PX) return;
+      if (d < nearest) {
+        nearest = d;
+        edge = name;
+      }
+    });
+    return edge;
+  }
+
+  // (Re)create the four decorative edge strips. Called at the end of every
+  // render pass, because render() clears the panel's children. Collapsed
+  // panels have no resizable edges, so no strips are added there.
+  function syncResizeHandles(panel) {
+    const stale = panel.querySelectorAll(".questing-adventurer-panel__resize-handle");
+    for (let i = 0; i < stale.length; i += 1) {
+      if (stale[i].parentNode) stale[i].parentNode.removeChild(stale[i]);
+    }
+    if (panel.classList.contains("questing-adventurer-panel--collapsed")) return;
+    RESIZE_EDGES.forEach(function (edge) {
+      const handle = document.createElement("div");
+      handle.className =
+        "questing-adventurer-panel__resize-handle " +
+        "questing-adventurer-panel__resize-handle--" +
+        edge;
+      handle.setAttribute("aria-hidden", "true");
+      panel.appendChild(handle);
+    });
+  }
+
+  // Panel-level pointerdown: decides between "nothing", "edge resize" and
+  // (via the header/chip handlers that run before this one) "move". Only the
+  // primary button resizes, and interactive controls keep their own press.
+  function onPanelPointerDown(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    const panel = e.currentTarget;
+    if (!panel || panel.classList.contains("questing-adventurer-panel--collapsed")) return;
+    if (e.target.closest("button, input, select, textarea, a")) return;
+    const edge = resizeEdgeAt(panel, e.clientX, e.clientY);
+    if (!edge) return;
+    startEdgeResize(e, panel, edge);
+  }
+
+  // Edge resize: handle pointer-drag on the four edges (top, right, bottom,
+  // left). The panel is positioned with `top` and `right` (anchored to the
+  // top-right corner of the video player), so each edge update has to keep
+  // the OPPOSITE edge fixed in place by adjusting the appropriate pair of
+  // properties.
   //   top:    newTop += dy;   newHeight -= dy   (keep bottom in place)
   //   right:  newRight -= dx; newWidth -= dx    (keep left in place)
   //   bottom: newHeight += dy                   (keep top in place)
@@ -2338,41 +2439,16 @@
     // goes fullscreen, the panel goes with it.
     playerEl.appendChild(panel);
 
-    // Edge resize handles. 4 thin transparent strips along each edge of
-    // the panel. Each one starts a pointer-drag that resizes the panel on
-    // its edge. The corner regions (where two edges meet) are handled by
-    // whichever edge handle is closest to the click point — a minor UX
-    // simplification vs. eight separate corner handles.
-    ["top", "right", "bottom", "left"].forEach(function (edge) {
-      const handle = document.createElement("div");
-      handle.className =
-        "questing-adventurer-panel__resize-handle " +
-        "questing-adventurer-panel__resize-handle--" +
-        edge;
-      handle.addEventListener("pointerdown", function (e) {
-        startEdgeResize(e, panel, edge);
-      });
-      panel.appendChild(handle);
-    });
-    // Persist any size change from the user's edge-resize drag. The four
-    // edge handles (top/right/bottom/left) are custom (not the native CSS
-    // resize handle), so the browser's native "resize" event won't fire
-    // for them — startEdgeResize() already calls queueSave() on pointerup.
-    // This listener is kept as a defense-in-depth net: if anything else
-    // ever resizes the panel (e.g. a future programmatic resize), this
-    // still persists the new size.
-    let resizeSaveTimer = null;
-    panel.addEventListener("resize", function () {
-      if (resizeSaveTimer) clearTimeout(resizeSaveTimer);
-      resizeSaveTimer = setTimeout(function () {
-        const w = panel.offsetWidth;
-        const h = panel.offsetHeight;
-        if (w >= 200 && w <= 1200) {
-          state.panelSize = { width: w, height: h >= 100 ? h : undefined };
-          queueSave();
-        }
-      }, 300);
-    });
+    // Edge resize. ONE pointerdown listener on the panel decides whether the
+    // press started on an edge (see onPanelPointerDown -> resizeEdgeAt). The
+    // four invisible strips are a cursor affordance only and are re-created
+    // by render()/syncResizeHandles() on every pass — do NOT bind resize
+    // gestures to them here, they are wiped by the next render().
+    //
+    // The panel never listens for a "resize" event: that event only fires on
+    // window and on natively-resizable form controls, never on a <div>, so
+    // the size is persisted directly by startEdgeResize() on pointerup.
+    panel.addEventListener("pointerdown", onPanelPointerDown);
     render();
     attachTimelinePrompts();
   }

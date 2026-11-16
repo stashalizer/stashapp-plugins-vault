@@ -597,10 +597,14 @@
 }
 
 /* Manual resize: the panel can be resized by dragging any of its four
-   edges (top/right/bottom/left). The edge handles are rendered as 4px-tall
-   strips along each edge by the JS (see .questing-adventurer-panel__resize-handle
-   rules below); the native CSS resize handle is no longer used. min/max sizes
-   keep the panel from being collapsed to nothing or expanded off-screen. */
+   edges (top/right/bottom/left). The gesture itself is detected by a
+   bounding-box hit-test in the JS (onPanelPointerDown -> resizeEdgeAt), NOT by
+   pointerdown listeners on the strips below — render() rebuilds the panel's
+   children on every state change, so any listener bound to a strip would be
+   destroyed by the first render. The strips are re-created after each render
+   by syncResizeHandles() and exist only for the resize cursor and the hover
+   highlight. The native CSS resize handle is not used. min/max sizes keep the
+   panel from being collapsed to nothing or expanded off-screen. */
 .questing-adventurer-panel {
   overflow: auto;
   min-width: 240px;
@@ -610,12 +614,16 @@
 }
 
 /* Edge resize handles — 4px-wide transparent strips along each edge of the
-   panel. The cursor is set per-edge (ns-resize for top/bottom, ew-resize for
-   left/right). The actual drag logic lives in startEdgeResize() in the JS,
-   which updates panel.style.top/right/width/height on every pointermove. */
+   panel. Decorative only: the cursor is set per-edge (ns-resize for
+   top/bottom, ew-resize for left/right) and the hover highlight marks the
+   grabbable band. The drag logic lives in startEdgeResize() in the JS, which
+   updates panel.style.top/right/width/height on every pointermove.
+   touch-action: none keeps a touch drag on the edge from turning into a
+   scroll on the panel. */
 .questing-adventurer-panel__resize-handle {
   position: absolute;
   z-index: 1;
+  touch-action: none;
   /* No background — the strip is invisible until the user hovers. The cursor
      alone signals the edge is grabbable. */
 }
