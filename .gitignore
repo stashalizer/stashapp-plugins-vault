@@ -4,6 +4,15 @@
 .slim/deepwork/
 .cortexkit/
 
+# WorkBuddy agent workspace: local session state, memory notes, automation
+# history and skill scaffolding. Machine-specific and never part of the
+# published plugin source, so it must not be committed or pushed.
+.workbuddy/
+
+# Local scratch output from agent tooling (logs, temp previews)
+*.log
+*.tmp
+
 # OS / editor artifacts
 .DS_Store
 Thumbs.db
