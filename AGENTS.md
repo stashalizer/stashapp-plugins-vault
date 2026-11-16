@@ -24,6 +24,15 @@ Cross-plugin invariants worth stating once:
   route, settings page, nav entry, or scene-page tab is React on `window.PluginApi`.
 - `csLib.getConfiguration` / `setConfiguration` are **async** — always `await`.
 - No cross-plugin imports; plugins are independent directories.
+- **Optional Suite Data storage.** QuestingAdventurer, MosaicFilter and
+  AudioSupport keep a `*Storage.js` helper loaded before their UI scripts.
+  When the `SuiteData` plugin answers `runPluginOperation`, data is written to
+  `<config>/plugin-data/<PluginId>/<key>.json` with revision checks; otherwise
+  the helper falls back to the old `csLib` config. SceneVersions has no plugin
+  config key and does not need this migration.
+- **Player overlays are vanilla JS on `window.csLib`; settings pages and tab
+  injections are React on `window.PluginApi`.** Do not add a bundler or a
+  second runtime just for a storage helper.
 - **The Stash UI is React 18** (since v0.32.0). Plugins must not touch React
   internals or `ReactDOM.render` — the latter still works but mounts in React 17
   compatibility mode. If a plugin ever needs its own React mount point, use
@@ -35,7 +44,9 @@ Cross-plugin invariants worth stating once:
   props, `#VideoJsPlayer`, `custom_fields` / `cover_image` mutation shapes,
   `VideoFile` nullability). The runtime functional pass is still on the v0.31.x
   line — source-level compatibility is not a substitute for installing the
-  plugin in a live instance (see `docs/references.md`).
+  plugin in a live instance (see `docs/references.md`). The November 2026
+  feature pass is source-validated only; run a live pass before calling a
+  release functionally tested.
 - Stash API surface, patch targets, and csLib source notes:
   [`docs/references.md`](docs/references.md). Consult it before adding a new
   patch target or debugging persistence / SPA-injection issues.
@@ -50,6 +61,7 @@ All code comments, commit messages, documentation, and user-facing text in this 
 plugins/<PluginId>/
   <PluginId>.yml            # manifest: name, description, version, ui.requires/javascript/css
   <PluginId>.js             # player overlay (vanilla JS, uses window.csLib)
+  <PluginId>Storage.js       # optional Suite Data + csLib fallback helper
   <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
@@ -66,6 +78,10 @@ AGENTS.md                   # architecture + conventions (this file)
 - **Published URL:** `https://<owner>.github.io/<repo>/main/index.yml` (the path segment is the branch name). Users add this under **Settings > Plugins > Available Plugins > Add Source** in Stash.
 - **Push the current branch, not always `main`.** After committing a plugin change, run `git push` (or `git push -u origin HEAD` if the branch has no upstream yet) and report which branch was pushed. The deploy trigger above only fires from `main`, so if you are inside a `git worktree` lane on a feature branch (`omos/...`, `feat/...`, `fix/...`), the push lands on that branch and will **not** publish — the user must merge to `main` (or open a PR) for the deploy to happen. Never force-push a feature branch without explicit confirmation.
 - `_site/` is generated and gitignored — never commit it.
+- **Fallback mirror is optional.** `.github/workflows/mirror.yml` copies the
+  primary `_site/main` into a mirror repository when `MIRROR_PUSH_URL` and
+  `MIRROR_BRANCH` are configured. Stash does not fail over automatically; users
+  add the fallback source manually.
 
 ## Plugin manifest gotchas
 
@@ -77,7 +93,32 @@ AGENTS.md                   # architecture + conventions (this file)
 
 ## QuestingAdventurer
 
-- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds}], collapsed, opacity, panelPos: {top,right}, panelSize, showAddControls, showManualControls }`.
+- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds,sceneTagIds,markerTagIds}], collapsed, opacity, panelPos: {top,right}, panelSize, showAddControls, showManualControls, hardware }`.
+- **Storage.** `QuestingAdventurerStorage.js` owns config reads/writes and the
+  separate `log` / `deal` keys. Suite Data is preferred; csLib is the fallback.
+  `config` holds moves, triggers and UI preferences; `log` holds sessions;
+  `deal` holds the one-time partner code.
+- **Quest Log.** A session is created on the first activation and stores
+  `events` plus counts. The overlay adds an explicit Done button per attached
+  move; Reward is a detach event and must not be recorded as completion.
+  Streaks count local calendar days with at least one completed move. History
+  is capped at 200 sessions / 500 events per session.
+- **Scene-aware triggers.** `sceneTagIds` restricts a trigger to scenes with a
+  matching tag (empty = every scene). `markerTagIds` matches scene-marker tags;
+  the overlay loads scene tags and markers and shows a prompt when playback
+  reaches a matching marker. Prompts fire once per session and require Accept.
+- **Partner deal.** The settings page creates an 8-character, 10-minute,
+  single-use code and a `?deal=` link. The partner must be signed in to the same
+  Stash instance. The draw only activates an inactive trigger; it does not edit
+  the move library.
+- **Hardware bridge.** `hardware` config is opt-in and disabled by default.
+  A completed move opens a short-lived local WebSocket to Intiface and sends one
+  ScalarCmd, then StopDeviceCmd. No hardware data is persisted. Treat this as
+  experimental; browser mixed-content rules can block `ws://localhost` from an
+  HTTPS Stash origin.
+- **Settings migrations.** Both surfaces preserve `sceneTagIds`,
+  `markerTagIds`, and `hardware` when saving; new triggers initialize the tag
+  pools to empty arrays.
 - **v2 data model**: moves are a global library (`moves: [{id,text}]`); triggers reference moves by id via `attachedMoveIds: [string]`. The `active` flag lives on the **trigger**, not the move. A trigger with no attached moves is `active: false` by design.
 - **Penalty / Reward** (overlay header buttons):
   - **Penalty** picks a random **inactive** trigger → activates it AND attaches a random **unattached** move from the library. If every trigger is already active, it picks a random active trigger and just attaches a move. If the library has no unattached moves, the trigger is still activated (no-op for the move part).
@@ -99,7 +140,7 @@ AGENTS.md                   # architecture + conventions (this file)
   2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
-- **Files**: `QuestingAdventurer.yml` (manifest) · `QuestingAdventurer.js` (overlay panel) · `QuestingAdventurerSettings.js` (React CRUD: Move Library + Triggers sections) · `QuestingAdventurer.css` · `QuestingAdventurerSettings.css`.
+- **Files**: `QuestingAdventurer.yml` (manifest) · `QuestingAdventurerStorage.js` (Suite Data + csLib helper) · `QuestingAdventurer.js` (overlay panel + Quest Log + scene prompts) · `QuestingAdventurerSettings.js` (React CRUD + deals + hardware) · `QuestingAdventurer.css` · `QuestingAdventurerSettings.css`.
 
 ### Overlay CSS / collapse-drag regression checklist
 
@@ -113,7 +154,26 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 
 ## MosaicFilter
 
-- **Two UIs, one config key** `"MosaicFilter"`. State shape (flat object, no per-scene storage — all scenes share the same values): `{ blurAmount, widthPct, heightPct, xPct, yPct, active, follow, shape, mode }`. Percentages are of the player so the rectangle scales on resize.
+- **Two UIs, one config key** `"MosaicFilter"`. Persisted config shape:
+  `{ default: {blurAmount,widthPct,heightPct,xPct,yPct,active,follow,shape,mode,fill,fillColor,pixelSize}, scenePresets: { [sceneId]: state }, studioPresets: { [studioId]: state } }`.
+  Resolution order is scene > studio > default. Legacy flat config and the
+  0.2.x `{defaults,scenes}` shape migrate into `default`; `scenes` is ignored.
+- **Storage.** `MosaicFilterStorage.js` uses Suite Data when available and
+  falls back to csLib. Presets are data, not UI preferences, so they must stay
+  out of the Settings-page config snapshot when Suite Data is installed.
+- **Fill modes.** `fill` is `blur` | `solid` | `pixelate`. Solid uses
+  `--mf-fill-color` and no backdrop-filter. Pixelate uses a low-resolution
+  canvas redrawn with `requestVideoFrameCallback` (or throttled rAF fallback);
+  it is opt-in because it is more expensive than blur. Reverse + pixelate is
+  intentionally not implemented; reverse + solid is.
+- **Screenshot.** The Shot button composites the current video frame into a
+  canvas and applies the region effect there (not by screenshotting CSS).
+  Clipboard is attempted first; download is the fallback because the Clipboard
+  API requires a secure context. CORS/DRM-protected video cannot be captured.
+- **Panic screen.** Ctrl+Shift+X toggles a local, network-free decoy article,
+  pauses/mutes the video, swaps the tab title/favicon, and restores the title on
+  toggle. It does not auto-resume playback. All plugin UI nodes carry
+  `[data-mosaic-filter-ui]` for SFW Switch CSS.
 - **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a Scene-Tools-only launcher card (even-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
 - **Legacy shape migration**: versions ≤ 0.2.x stored `{ defaults: {...}, scenes: { [id]: {...} } }`. On load, `defaults` is used as the flat config and `scenes` is ignored; the next save writes the flat shape. `mergeStored` iterates `Object.keys(FALLBACK_DEFAULTS)` so new fields (e.g. `shape`, `mode`) are safe to add — missing keys fall back to defaults, and `sanitizeState` coerces unknown values.
 - **Write policy — never persist per animation frame.** `csLib.setConfiguration` is called only at user-driven boundaries: toggle buttons (immediate), drag/resize end `pointerup`/`pointercancel` (immediate), blur slider `change` event (slider release — the `input` event updates the visual `--mf-blur` only and must NOT save), and a best-effort `pagehide` write. Follow-cursor position updates are in-memory only.
@@ -125,13 +185,29 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 - Same cross-surface race caveat as QuestingAdventurer: overlay and settings maintain separate save locks and do not coordinate; last writer wins the whole config map. Settings edits won't live-reflect in an already-open overlay until next navigation/reload.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. Tracking issue: [issue #1](https://github.com/stashalizer/stashapp-plugins-vault/issues/1) (closed) — historical reference via `Refs #1` / `Fixes #1`.
-- **Shared module load order.** `MosaicFilter.yml` lists `MosaicFilterShared.js` **first** under `ui.javascript` so `window.MosaicFilterShared` exists before the overlay and settings scripts run. It owns `CONFIG_KEY`, `FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `mergeStored`, `sanitizeState`. Both surfaces must call into it instead of re-declaring defaults — a second copy is how the two surfaces drift apart.
+- **Shared module load order.** `MosaicFilter.yml` lists `MosaicFilterShared.js` **first** under `ui.javascript` so `window.MosaicFilterShared` exists before the overlay and settings scripts run, then `MosaicFilterStorage.js`. The shared module owns `CONFIG_KEY`, `FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `MAX_PRESETS`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `makeDefaultConfig`, `mergeStored`, `normalizeConfig`, `resolveState`, `makePreset`, `presetSource`, `sanitizeState`, and `sanitizePresetMap`. Both surfaces must call into it instead of re-declaring defaults — a second copy is how the two surfaces drift apart.
 - **All writes funnel through `saveNow()`** (coalesced by the `saving`/`pendingSave` lock); unlike QuestingAdventurer there is no separate `queueSave` wrapper.
-- **Files**: `MosaicFilter.yml` (manifest) · `MosaicFilterShared.js` (shared constants + pure helpers) · `MosaicFilter.js` (overlay) · `MosaicFilterSettings.js` (React settings form) · `MosaicFilter.css` · `MosaicFilterSettings.css`.
+- **Files**: `MosaicFilter.yml` (manifest) · `MosaicFilterShared.js` (shared constants + pure helpers) · `MosaicFilterStorage.js` (Suite Data + csLib helper) · `MosaicFilter.js` (overlay) · `MosaicFilterSettings.js` (React settings form + preset manager) · `MosaicFilter.css` · `MosaicFilterSettings.css`.
 
 ## SceneVersions
 
-- **No config key, no csLib dependency.** Data lives in each scene's `custom_fields` under key `"RelatedScenes"` (array of scene ID strings). No plugin-level config, so no cross-surface race (unlike QuestingAdventurer/MosaicFilter).
+- **No config key, no csLib dependency.** Data lives in each scene's `custom_fields` under key `"RelatedScenes"` (array of scene ID strings). No plugin-level config, so no cross-surface race (unlike QuestingAdventurer/MosaicFilter). This also means it is not exposed to the Settings-page rollback bug.
+- **Cleanup protection is per-tool, not universal.** On a new link,
+  `applyProtectionTags` reads the authoritative scene tags, merges the known
+  ignore tags, and writes the complete `tag_ids` list. Defaults are
+  `Ignore:Smart Resolve` and `Addtional Files Deleter: Scenes/Images: Ignore`
+  (the upstream spelling is intentional). Other cleaners use different names;
+  do not claim a single tag protects every tool. Tags are not removed on unlink.
+- **Card badge.** `SceneCard` does not carry `custom_fields` by default. The
+  badge batches visible scene ids into one `findScenes` query and caches counts;
+  do not replace it with one query per card.
+- **Saved filter.** `ensureVersionFilter` creates
+  `Scene Versions: has alternate cut` with
+  `custom_fields: [{field:"RelatedScenes", value:[], modifier:"NOT_NULL"}]`.
+- **Comparison / pHash.** The tab shows duration, resolution, codec, bitrate and
+  date side by side. pHash suggestions use `SceneFilterType.phash_distance`
+  with distance 8; they are suggestions only and never auto-link. If the current
+  scene has no stored phash, the UI says to generate one first.
 - **Bidirectional links**: when scene A lists B, B also lists A. `syncBidirectional` writes both sides on every link/unlink using `custom_fields: { partial: { RelatedScenes: [...] } }` to avoid clobbering other custom fields. Self-links filtered at every step.
 - **Tab-only React plugin** (no player overlay, no `csLib.PathElementListener`, no SPA re-injection). Single component `RelatedScenesTab` injected via `PluginApi.patch.before` on `"ScenePage.Tabs"` (Nav link, `eventKey: "scene-versions-panel"`, inserted after the Details tab) and `"ScenePage.TabContent"` (Tab.Pane).
 - **Apollo client for all data**: `libraries.Apollo.client.query` for reads (`FindSceneDocument`, `FindScenesDocument`), `libraries.Apollo.client.mutate` for writes (`SceneUpdateDocument`). No `csLib.getConfiguration`/`setConfiguration`.
@@ -146,13 +222,40 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 - **`getFolderPath` must keep the platform path separator** (`\` on Windows). The backend builds its LIKE pattern from `folders.path || filepath.Separator || files.basename` and matches the raw value sent, so normalising to `/` made the folder criterion match nothing and the suggestion list was **always empty on Windows** (fixed in 0.3.0). Do not "clean up" the separator.
 - **`INCLUDES` is a loose match.** It is a substring match that also splits the value on whitespace and ORs the terms, so paths in subfolders or containing spaces can produce extra hits. Accepted trade-off; irrelevant entries can be ignored.
 - **Tab-label count badge is live.** `RelatedScenesTabLabel` does its own `readRelatedIds` on mount (so the count shows before the tab is opened) and subscribes to a module-level pub/sub (`onCountChange` / `emitCountChange`, keyed by scene id) that the tab body emits on every edit-state change. The in-tab duplicate header was removed in 0.4.0 — don't re-add it.
-- **Files**: `SceneVersions.yml` (manifest, no `ui.requires`) · `SceneVersions.js` (tab component + label + suggest-from-folder) · `SceneVersions.css`.
+- **Files**: `SceneVersions.yml` (manifest, no `ui.requires`) · `SceneVersions.js` (tab + badge + protection + comparison + pHash) · `SceneVersions.css`.
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build. No tracking issue at this time.
 
 ## AudioSupport
 
 - **Audio-as-scene hack.** Stash up to and including v0.32.0 has no native audio support — the scanner rejects audio extensions, there is no Audio content type, and the `VideoFile` schema is video-shaped (`width: Int!`, `height: Int!`, `video_codec: String!` are non-nullable; re-checked at the v0.32.0 tag). The plugin works around this by having the user add audio extensions (mp3, flac, m4a, ogg, opus, wav) to the `VideoExtensions` config via the Setup wizard. Audio files are then ingested as scenes with `VideoFile{Width:0, Height:0, VideoCodec:""}`. GraphQL serves these without error. Designed to migrate to the native Audio type once [PR #6824](https://github.com/stashapp/stash/pull/6824) lands — it was still open as of v0.32.0, so re-check it before assuming this section is current. The Setup wizard writes the config with a **partial** `ConfigureGeneral({ videoExtensions })` input, which is why the config fields v0.32.0 removed (`dangerous_allow_public_without_auth`, `security_tripwire_accessed_from_public_internet`) are irrelevant here — keep it partial.
-- **Two UIs, two config keys.** Main config key `"AudioSupport"` (csLib): overlay-owned `{ collapsed, opacity, panelPos, playbackRate, loop, volume, lyricsVisible }`; settings-owned `{ audioTagName, showNavEntry }`. Queue state is isolated in a SEPARATE config key `"AudioSupportQueue"`: `{ queue: [sceneId, ...], currentIndex: number, repeat: "off" | "all" | "one" }` — this avoids the cross-surface race wiping queue state when the settings page saves.
+- **Two UIs, two config keys.** Main config key `"AudioSupport"` (csLib or
+  Suite Data): overlay-owned `{ collapsed, opacity, panelPos, playbackRate,
+  loop, volume, lyricsVisible }`; settings-owned `{ audioTagName, showNavEntry }`.
+  Queue state is isolated in a separate record `"queue"` (csLib fallback
+  `"AudioSupportQueue"`): `{ queue: [sceneId, ...], currentIndex, repeat }`.
+- **Storage.** `AudioSupportStorage.js` wraps Suite Data `runPluginOperation`
+  with revision retries; csLib is the fallback. Queue, config and the small
+  playback activity buffer must go through it.
+- **Cross-page dock.** The scene overlay keeps its own audio element. On SPA
+  navigation, `detachToDock()` copies the playing state into a body-level
+  dock audio element, so playback continues without a React remount. The dock
+  and overlay are mutually exclusive at playback time: starting overlay audio
+  pauses the dock. The dock advances through the queue by loading the next
+  direct stream, not by forcing a page navigation.
+- **Playback write-back.** `beginActivity()` calls `sceneAddPlay` once per
+  playback start; `flushActivity()` calls
+  `sceneSaveActivity(resume_time, playDuration)` every 5 seconds and on
+  pause/end/navigation. `maybeResumeFromScene` seeks to `scene.resume_time`
+  when it is more than 5 seconds in and not near the end. Do not use the
+  deprecated direct `play_count` update.
+- **Long-form mode.** `scene.scene_markers` is rendered as chapters with
+  click-to-seek; the sleep timer fades volume over 30 seconds and then pauses;
+  bookmarks are a JSON string in `custom_fields.AudioBookmarks` and must be
+  written with `custom_fields.partial`.
+- **Lyrics upgrades.** `parseLrcText(text, extraOffsetSec)` applies the LRC
+  `[offset]` plus the user calibration and groups identical timestamps into
+  primary/secondary lines. `AudioLyricsOffset` is a scalar custom field.
+  Karaoke highlighting is line-level only; do not claim word-level timing.
 - **Cross-surface race — mitigated, not eliminated.** Overlay and settings share the `"AudioSupport"` key with separate save locks (same pattern as QuestingAdventurer/MosaicFilter). `normalizeConfig` in both surfaces preserves all keys via `Object.assign({}, stored, { validated overrides })` so neither surface wipes the other's fields. The overlay's `saveNow` reads-then-merges. Settings edits still won't live-reflect in an already-open overlay until the next navigation/reload.
 - **Direct stream playback ONLY.** All transcode endpoints fail for audio-only input. The overlay loads `/scene/{id}/stream` (which is `http.ServeFile`, no ffmpeg) into an HTML5 `<audio>` element. Never wire transcode URLs. Use `scene.paths.stream` and not a hand-built path: the URL builder appends the `?apikey=` query param, which is mandatory once API-key authentication is enabled (v0.32.0 added a credentials step to the initial setup wizard, so authenticated installs are more likely than they used to be).
 - **Dead code trap: `extractCoverFromScene()`** (`AudioSupportSettings.js`) has no call site and builds a bare `/scene/{id}/stream` URL for jsmediatags — that path 401s on an authenticated instance. Do not revive it as-is; pass the scene's `paths.stream` through instead (or delete it in a commit that already bumps the plugin version for other reasons — a dead-code-only removal is not worth a publish).
@@ -181,7 +284,7 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer/MosaicFilter: treating a Promise as a plain object causes "data disappears after refresh").
 - **Generate task replaces the built-in one for audio libraries** (`mode: "generateVideo"`, issue #2). Stash's Generate job accepts either explicit `sceneIDs` or everything — `GenerateDialog.tsx` has no tag filter, and `internal/manager/task_generate.go` skips no files — so a plugin cannot prevent it from walking audio scenes; audio-only files have no video stream and the preview/sprite/phash/cover subtasks error out. `handleGenerateVideo` therefore *replaces* the entry point instead of intercepting it: it collects scene ids with `scene_filter.tags = { value: [audioTagId], modifier: "EXCLUDES" }` (paged 500, `findScenes.count` for progress), then makes **one** `metadataGenerate` call carrying every id. The batching that used to live here (250 per call) was wrong: each `metadataGenerate` call creates its own job, so a large library showed up as N generate tasks running back to back in the queue. `log.Progress` reports collection against the first 50% and the single queued call jumps to 100%. Filtering is two-layered and both layers are load-bearing: the server-side tag filter narrows the pages, and a per-file probe (`isAudioScene`, the same predicate the hook uses) drops anything the tag misses. The probe exists because tags are a cache, not a truth: `Scene.Create.Post` can fire while the scan is still attaching the file, so `isAudioScene` sees `files: []` and declines to tag — a scene scanned in the same second as a generate run reaches the task untagged and used to error out (observed on scene 7427, 2026-11-12). Probed audio scenes are therefore tagged inline before queueing (capped at `GENERATE_MAX_AUTO_TAG` = 500; past that, "Tag all audio scenes" is the right tool and the run logs a warning). A missing tag still aborts — never fall back to "all scenes", that reintroduces the bug. **Transcodes are hard-coded false** and a truthy `transcodes` arg is dropped with a warning: Stash's transcode task treats an audio-only file as a video and writes a blank file. Args: `tagName`, `sprites`, `previews`, `phashes`, `markers`, `covers`, `overwrite`, `dryRun` (all coerced by `asBool`, so `runPluginTask`'s string-typed args also work). Defaults are **previews only** — `previews` falls back to true, every other subtask to false — deliberately not Stash's GenerateDialog defaults, which also enable sprites, phashes and markers. The yml task hard-codes `tagName: Audio` because the Goja VM has no access to the plugin config — a renamed tag has to go through the Generate tab (which passes `audioTagName`) or be passed explicitly.
 - **Two entry points, one implementation.** The Generate tab calls `runPluginTask` (Apollo `gql` from `PluginApi.libraries.Apollo`, mutation queued via `args_map`, **no** `task_name` so nothing but the passed args applies) and shows the job id; the yml task exposes the same Goja path under Settings > Tasks for headless use. Do not re-implement the id collection in the browser.
-- **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, tasks `tagAll` + `generateVideo`) · `AudioSupport.js` (overlay) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/generate/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
+- **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, tasks `tagAll` + `generateVideo`) · `AudioSupportStorage.js` (Suite Data + csLib helper) · `AudioSupport.js` (overlay + dock + long-form) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/generate/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
 - **No migrations** (new plugin, no legacy data).
 - Bump `version:` in the yml for user-visible releases; the git hash is appended automatically by the build.
 

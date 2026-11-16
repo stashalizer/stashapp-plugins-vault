@@ -30,6 +30,7 @@
   var libraries = PluginApi.libraries;
   var components = PluginApi.components;
   var hooks = PluginApi.hooks;
+  var gql = libraries.Apollo && libraries.Apollo.gql;
   // The Apollo Client instance is NOT libraries.Apollo (that's the
   // @apollo/client namespace: gql, useQuery, etc.). The live client is
   // exposed via StashService.getClient(). Use it for query/mutate calls.
@@ -129,6 +130,88 @@
     });
   }
 
+  // ── Cleanup protection ──────────────────────────────────────────────
+  // There is no ecosystem-wide ignore tag. These are the documented defaults
+  // for the two cleaners with the clearest tag contracts. The labels are
+  // intentionally exact, including the upstream "Addtional" spelling.
+  var PROTECTION_TAG_NAMES = [
+    "Ignore:Smart Resolve",
+    "Addtional Files Deleter: Scenes/Images: Ignore",
+  ];
+  var protectionTagIdsPromise = null;
+
+  async function findOrCreateTag(name) {
+    var found = await apolloClient.query({
+      query: gql`
+        query SceneVersionsFindTag($name: String!) {
+          findTags(
+            tag_filter: { name: { value: $name, modifier: EQUALS } }
+            filter: { per_page: 1 }
+          ) {
+            tags { id name }
+          }
+        }
+      `,
+      variables: { name: name },
+      fetchPolicy: "no-cache",
+    });
+    var existing = found && found.data && found.data.findTags && found.data.findTags.tags;
+    if (existing && existing.length > 0) return existing[0].id;
+    var created = await apolloClient.mutate({
+      mutation: gql`
+        mutation SceneVersionsCreateTag($name: String!) {
+          tagCreate(input: { name: $name }) { id name }
+        }
+      `,
+      variables: { name: name },
+    });
+    return created.data.tagCreate.id;
+  }
+
+  async function getProtectionTagIds() {
+    if (!protectionTagIdsPromise) {
+      protectionTagIdsPromise = Promise.all(PROTECTION_TAG_NAMES.map(findOrCreateTag));
+    }
+    try {
+      return await protectionTagIdsPromise;
+    } catch (err) {
+      console.warn("SceneVersions: protection tag setup failed", err);
+      protectionTagIdsPromise = null;
+      return [];
+    }
+  }
+
+  async function applyProtectionTags(sceneId) {
+    try {
+      var tagIds = await getProtectionTagIds();
+      if (tagIds.length === 0) return;
+      var result = await apolloClient.query({
+        query: gql`
+          query SceneVersionsSceneTags($id: ID!) {
+            findScene(id: $id) { id tags { id } }
+          }
+        `,
+        variables: { id: String(sceneId) },
+        fetchPolicy: "no-cache",
+      });
+      var scene = result && result.data && result.data.findScene;
+      if (!scene) return;
+      var existing = (scene.tags || []).map(function (t) { return String(t.id); });
+      var merged = existing.slice();
+      for (var i = 0; i < tagIds.length; i++) {
+        var id = String(tagIds[i]);
+        if (merged.indexOf(id) === -1) merged.push(id);
+      }
+      if (merged.length === existing.length) return;
+      await apolloClient.mutate({
+        mutation: GQL.SceneUpdateDocument,
+        variables: { input: { id: String(sceneId), tag_ids: merged } },
+      });
+    } catch (err) {
+      console.warn("SceneVersions: could not apply protection tags to " + sceneId, err);
+    }
+  }
+
   async function syncBidirectional(currentSceneId, newIds, originalIds) {
     // Filter out self-link from both sets
     var filteredNew = excludeSelf(newIds, currentSceneId);
@@ -157,6 +240,14 @@
 
     // Always write the current scene last, regardless of peer failures.
     await writeRelatedIds(currentSceneId, filteredNew);
+
+    if (filteredNew.length > 0) {
+      var protectTasks = [applyProtectionTags(currentSceneId)];
+      for (var k = 0; k < added.length; k++) {
+        protectTasks.push(applyProtectionTags(added[k]));
+      }
+      await Promise.allSettled(protectTasks);
+    }
 
     return;
   }
@@ -325,6 +416,83 @@
     }
   }
 
+  function getPrimaryHash(scene) {
+    if (!scene || !Array.isArray(scene.files) || scene.files.length === 0) return null;
+    var files = scene.files;
+    var primary = scene.primary_file_id
+      ? files.find(function (f) { return String(f.id) === String(scene.primary_file_id); })
+      : files[0];
+    var fps = primary && primary.fingerprints;
+    if (!Array.isArray(fps)) return null;
+    var phash = fps.find(function (f) { return f.type === "phash" && f.value; });
+    return phash ? phash.value : null;
+  }
+
+  async function fetchPhashSuggestions(scene, excludeIds) {
+    var hash = getPrimaryHash(scene);
+    if (!hash) {
+      try {
+        var current = await apolloClient.query({
+          query: gql`
+            query SceneVersionsCurrentHash($id: ID!) {
+              findScene(id: $id) {
+                id
+                files { id fingerprints { type value } }
+              }
+            }
+          `,
+          variables: { id: String(scene.id) },
+          fetchPolicy: "no-cache",
+        });
+        var currentScene = current && current.data && current.data.findScene;
+        hash = getPrimaryHash(currentScene);
+      } catch (err) {
+        console.warn("SceneVersions: current pHash lookup failed", err);
+      }
+    }
+    if (!hash) return { needsHash: true, scenes: [] };
+    var excludeSet = new Set(excludeIds.map(String));
+    try {
+      var result = await apolloClient.query({
+        query: gql`
+          query SceneVersionsPhash($hash: String!) {
+            findScenes(
+              scene_filter: { phash_distance: { value: $hash, modifier: EQUALS, distance: 8 } }
+              filter: { per_page: 20, sort: "path" }
+            ) {
+              scenes {
+                id title date
+                files { id path duration width height video_codec bit_rate }
+                paths { screenshot }
+              }
+            }
+          }
+        `,
+        variables: { hash: hash },
+        fetchPolicy: "no-cache",
+      });
+      var scenes = (result && result.data && result.data.findScenes && result.data.findScenes.scenes) || [];
+      return {
+        needsHash: false,
+        scenes: scenes.filter(function (s) { return !excludeSet.has(String(s.id)); }),
+      };
+    } catch (err) {
+      console.warn("SceneVersions: pHash suggestions failed", err);
+      return { needsHash: false, scenes: [] };
+    }
+  }
+
+  function sceneFileSummary(scene) {
+    var file = scene && scene.files && scene.files[0];
+    if (!file) return { duration: "\u2014", resolution: "\u2014", codec: "\u2014", bitrate: "\u2014" };
+    return {
+      duration: typeof file.duration === "number" ? Math.round(file.duration) + "s" : "\u2014",
+      resolution: file.width && file.height ? file.width + "\u00d7" + file.height : "\u2014",
+      codec: file.video_codec || "\u2014",
+      bitrate: file.bit_rate ? Math.round(file.bit_rate / 1000) + " kbps" : "\u2014",
+    };
+  }
+
   // ── Count sync (tab label <-> tab content) ──────────────────────────
   //
   // The tab label (rendered in the ScenePage.Tabs patch) and the tab
@@ -351,6 +519,124 @@
   function emitCountChange(sceneId, count) {
     var set = countListeners[String(sceneId)];
     if (set) set.forEach(function (fn) { fn(count); });
+  }
+
+  // ── Card badge (batched) ────────────────────────────────────────────
+  // SceneCard does not receive custom_fields by default, so the badge asks
+  // for the current page's ids in one query instead of issuing one query per
+  // card.
+
+  var badgeCache = {};
+  var badgePending = {};
+  var badgeSubscribers = {};
+  var badgeTimer = null;
+
+  function notifyBadge(sceneId) {
+    var subs = badgeSubscribers[sceneId];
+    if (!subs) return;
+    subs.forEach(function (fn) { fn(badgeCache[sceneId] || 0); });
+  }
+
+  function flushBadgeBatch() {
+    badgeTimer = null;
+    var ids = Object.keys(badgePending);
+    if (ids.length === 0) return;
+    ids.forEach(function (id) { delete badgePending[id]; });
+    apolloClient.query({
+      query: gql`
+        query SceneVersionsBadgeBatch($ids: [ID!]!) {
+          findScenes(ids: $ids) {
+            scenes { id custom_fields }
+          }
+        }
+      `,
+      variables: { ids: ids },
+      fetchPolicy: "no-cache",
+    }).then(function (result) {
+      var scenes = (result && result.data && result.data.findScenes && result.data.findScenes.scenes) || [];
+      var seen = {};
+      scenes.forEach(function (s) {
+        var count = decodeIds(s.custom_fields && s.custom_fields[RELATED_KEY]).length;
+        badgeCache[String(s.id)] = count;
+        seen[String(s.id)] = true;
+        notifyBadge(String(s.id));
+      });
+      ids.forEach(function (id) {
+        if (!seen[id]) {
+          badgeCache[id] = 0;
+          notifyBadge(id);
+        }
+      });
+    }).catch(function (err) {
+      console.warn("SceneVersions: badge batch failed", err);
+      ids.forEach(function (id) {
+        badgeCache[id] = 0;
+        notifyBadge(id);
+      });
+    });
+  }
+
+  function requestBadge(sceneId) {
+    var id = String(sceneId);
+    if (badgeCache[id] !== undefined) return;
+    badgePending[id] = true;
+    if (!badgeTimer) badgeTimer = setTimeout(flushBadgeBatch, 30);
+  }
+
+  function VersionBadge(props) {
+    var sceneId = String(props.sceneId);
+    var initial = badgeCache[sceneId];
+    var pair = React.useState(initial === undefined ? 0 : initial);
+    var count = pair[0];
+    var setCount = pair[1];
+    React.useEffect(function () {
+      var id = String(props.sceneId);
+      function onCount(n) { setCount(n); }
+      if (!badgeSubscribers[id]) badgeSubscribers[id] = new Set();
+      badgeSubscribers[id].add(onCount);
+      requestBadge(id);
+      return function () {
+        var subs = badgeSubscribers[id];
+        if (subs) subs.delete(onCount);
+      };
+    }, [props.sceneId]);
+    if (!count) return null;
+    return h(Badge, {
+      pill: true,
+      bg: "info",
+      text: "dark",
+      className: "scene-versions-card-badge",
+      title: count + " related version" + (count === 1 ? "" : "s"),
+    }, "Versions " + count);
+  }
+
+  async function ensureVersionFilter() {
+    var existing = await apolloClient.query({
+      query: gql`query { findSavedFilters(mode: SCENES) { id name } }`,
+      fetchPolicy: "no-cache",
+    });
+    var filters = (existing && existing.data && existing.data.findSavedFilters) || [];
+    var name = "Scene Versions: has alternate cut";
+    if (filters.some(function (f) { return f.name === name; })) return false;
+    await apolloClient.mutate({
+      mutation: gql`
+        mutation SceneVersionsSaveFilter($input: SaveFilterInput!) {
+          saveFilter(input: $input) { id name }
+        }
+      `,
+      variables: {
+        input: {
+          mode: "SCENES",
+          name: name,
+          object_filter: {
+            custom_fields: [
+              { field: RELATED_KEY, value: [], modifier: "NOT_NULL" },
+            ],
+          },
+        },
+      },
+    });
+    return true;
   }
 
   // ── Tab label (count badge) ─────────────────────────────────────────
@@ -435,6 +721,12 @@
     var _h = useState(false);
     var suggestionsLoading = _h[0];
     var setSuggestionsLoading = _h[1];
+    var _i = useState(false);
+    var compareOpen = _i[0];
+    var setCompareOpen = _i[1];
+    var _j = useState([]);
+    var phashSuggestions = _j[0];
+    var setPhashSuggestions = _j[1];
     var Toast = hooks.useToast();
 
     // Restrict the scene picker to the current scene's folder so the
@@ -518,6 +810,22 @@
         return function () {
           cancelled = true;
         };
+      },
+      [scene.id, relatedIds]
+    );
+
+    useEffect(
+      function () {
+        var cancelled = false;
+        fetchPhashSuggestions(scene, [scene.id].concat(relatedIds))
+          .then(function (result) {
+            if (cancelled) return;
+            setPhashSuggestions(result);
+          })
+          .catch(function () {
+            if (!cancelled) setPhashSuggestions({ needsHash: false, scenes: [] });
+          });
+        return function () { cancelled = true; };
       },
       [scene.id, relatedIds]
     );
@@ -784,6 +1092,34 @@
             {
               variant: "outline-secondary",
               size: "sm",
+              onClick: function () { setCompareOpen(!compareOpen); },
+            },
+            compareOpen ? "Hide compare" : "Compare"
+          ),
+          h(
+            Button,
+            {
+              variant: "outline-secondary",
+              size: "sm",
+              onClick: function () {
+                ensureVersionFilter()
+                  .then(function (created) {
+                    if (created) Toast.success("Saved filter created: Scene Versions: has alternate cut");
+                    else Toast.success("Saved filter already exists: Scene Versions: has alternate cut");
+                  })
+                  .catch(function (err) {
+                    console.error("SceneVersions: saved filter failed", err);
+                    Toast.error("Could not create the scene filter");
+                  });
+              },
+            },
+            "Find all versioned"
+          ),
+          h(
+            Button,
+            {
+              variant: "outline-secondary",
+              size: "sm",
               disabled: !dirty || saving,
               onClick: handleDiscard,
             },
@@ -814,6 +1150,45 @@
           )
         )
       ),
+      compareOpen
+        ? h(
+            "div",
+            { className: "scene-versions-compare" },
+            h("h4", null, "Version comparison"),
+            h(
+              "table",
+              { className: "scene-versions-compare__table" },
+              h("thead", null,
+                h("tr", null,
+                  h("th", null, "Field"),
+                  h("th", null, "Current"),
+                  relatedScenes.map(function (s) {
+                    return h("th", { key: s.id }, sceneTitle(s));
+                  })
+                )
+              ),
+              h("tbody", null,
+                ["duration", "resolution", "codec", "bitrate"].map(function (field) {
+                  var base = sceneFileSummary(scene);
+                  return h("tr", { key: field },
+                    h("th", null, field),
+                    h("td", null, base[field]),
+                    relatedScenes.map(function (s) {
+                      return h("td", { key: s.id }, sceneFileSummary(s)[field]);
+                    })
+                  );
+                }),
+                h("tr", null,
+                  h("th", null, "date"),
+                  h("td", null, scene.date || "\u2014"),
+                  relatedScenes.map(function (s) {
+                    return h("td", { key: s.id }, s.date || "\u2014");
+                  })
+                )
+              )
+            )
+          )
+        : null,
       // Suggestions from same folder
       suggestions.length > 0
         ? h(
@@ -868,6 +1243,39 @@
               "div",
               { className: "scene-versions-suggestions-loading" },
               "Finding scenes in the same folder\u2026"
+            )
+          : null,
+      phashSuggestions.needsHash
+        ? h(
+            "div",
+            { className: "scene-versions-suggestions-loading" },
+            "No pHash is stored for this scene. Run Generate after enabling video pHashes to get same-shoot suggestions."
+          )
+        : phashSuggestions.scenes && phashSuggestions.scenes.length > 0
+          ? h(
+              "div",
+              { className: "scene-versions-suggestions" },
+              h("div", { className: "scene-versions-suggestions__header" }, "Possible same shoot (pHash)"),
+              phashSuggestions.scenes.map(function (s) {
+                return h(
+                  "div",
+                  { key: "phash-" + s.id, className: "scene-versions-suggestion" },
+                  s.paths && s.paths.screenshot
+                    ? h("img", { className: "scene-versions-suggestion__thumb", src: s.paths.screenshot, alt: "", loading: "lazy" })
+                    : h("div", { className: "scene-versions-suggestion__thumb scene-versions-suggestion__thumb--placeholder" }),
+                  h("span", { className: "scene-versions-suggestion__title" }, sceneTitle(s)),
+                  h(Button, {
+                    variant: "outline-primary",
+                    size: "sm",
+                    className: "scene-versions-suggestion__add",
+                    onClick: function (evt) {
+                      evt.preventDefault();
+                      evt.stopPropagation();
+                      handleAddSuggestion(s);
+                    },
+                  }, "Add")
+                );
+              })
             )
           : null
     );
@@ -934,6 +1342,21 @@
       } catch (e) {
         console.error("SceneVersions: ScenePage.TabContent patch failed", e);
         return [props];
+      }
+    });
+    PluginApi.patch.after("SceneCard.Overlays", function (props, result) {
+      try {
+        var sceneId = props && props.scene && props.scene.id;
+        if (!sceneId) return result;
+        return h(
+          React.Fragment,
+          null,
+          result,
+          h(VersionBadge, { sceneId: String(sceneId) })
+        );
+      } catch (e) {
+        console.error("SceneVersions: SceneCard.Overlays patch failed", e);
+        return result;
       }
     });
   } catch (e) {

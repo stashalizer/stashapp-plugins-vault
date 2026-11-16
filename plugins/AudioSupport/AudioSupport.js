@@ -59,6 +59,12 @@
 
   const CONFIG_KEY = "AudioSupport";
   const QUEUE_CONFIG_KEY = "AudioSupportQueue";
+  const storage = window.AudioSupportStorage || {
+    loadConfig: function () { return csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return csLib.setConfiguration(CONFIG_KEY, value); },
+    loadKey: function (key, csKey) { return csLib.getConfiguration(csKey); },
+    saveKey: function (key, value, csKey) { return csLib.setConfiguration(csKey, value); },
+  };
   const DEFAULT_OPACITY = 0.92;
   const DEFAULT_PANEL_POS = { top: 8, right: 8 };
 
@@ -104,6 +110,11 @@
 
   // Current scene id (for saving lyrics back to custom_fields).
   let currentSceneId = null;
+  let lyricsOffset = 0;
+  let chaptersState = [];
+  let bookmarksState = [];
+  let sleepTimerId = null;
+  let sleepFadeId = null;
 
   // Container element for lyrics DOM nodes, used for sync scrolling.
   let lyricsContainer = null;
@@ -135,11 +146,11 @@
     queueSaving = true;
     queuePendingSave = false;
     try {
-      await csLib.setConfiguration(QUEUE_CONFIG_KEY, {
+      await storage.saveKey("queue", {
         queue: queueState.queue,
         currentIndex: queueState.currentIndex,
         repeat: queueState.repeat,
-      });
+      }, QUEUE_CONFIG_KEY, "Audio Support queue");
     } catch (err) {
       console.error("AudioSupport: failed to save queue configuration", err);
     } finally {
@@ -154,7 +165,7 @@
   async function loadQueueState() {
     let stored = null;
     try {
-      stored = await csLib.getConfiguration(QUEUE_CONFIG_KEY);
+      stored = await storage.loadKey("queue", QUEUE_CONFIG_KEY);
     } catch (err) {
       console.error("AudioSupport: failed to read queue configuration", err);
       stored = null;
@@ -214,6 +225,270 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Docked player (survives SPA navigation)
+  // ---------------------------------------------------------------------------
+
+  let dockRoot = null;
+  let dockAudio = null;
+  let dockScene = null;
+  let dockTitle = null;
+
+  function graphqlRequest(query, variables) {
+    return fetch("/graphql", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query, variables: variables || {} }),
+    }).then(function (response) {
+      if (!response.ok) throw new Error("GraphQL HTTP " + response.status);
+      return response.json();
+    }).then(function (payload) {
+      if (payload.errors && payload.errors.length) throw new Error(payload.errors[0].message);
+      return payload.data;
+    });
+  }
+
+  let activityState = {
+    sceneId: null,
+    audio: null,
+    lastWrite: 0,
+    pendingDuration: 0,
+    timer: null,
+    counted: false,
+  };
+
+  function beginActivity(sceneId, audio) {
+    if (!sceneId || !audio) return;
+    if (activityState.sceneId === String(sceneId) && activityState.audio === audio && activityState.counted) {
+      return;
+    }
+    endActivity();
+    activityState.sceneId = String(sceneId);
+    activityState.audio = audio;
+    activityState.lastWrite = Date.now();
+    activityState.pendingDuration = 0;
+    activityState.counted = true;
+    graphqlRequest(
+      "mutation ($id: ID!) { sceneAddPlay(id: $id) { count history } }",
+      { id: String(sceneId) }
+    ).catch(function (err) { console.warn("AudioSupport: sceneAddPlay failed", err); });
+    activityState.timer = setInterval(function () {
+      flushActivity();
+    }, 5000);
+  }
+
+  function flushActivity(force) {
+    if (!activityState.audio || !activityState.sceneId) return;
+    const now = Date.now();
+    if (!force && now - activityState.lastWrite < 5000) return;
+    const elapsed = Math.max(0, (now - activityState.lastWrite) / 1000);
+    activityState.lastWrite = now;
+    if (!activityState.audio.paused) activityState.pendingDuration += elapsed;
+    const audio = activityState.audio;
+    const sceneId = activityState.sceneId;
+    if (audio.readyState < 1) return;
+    const duration = activityState.pendingDuration;
+    activityState.pendingDuration = 0;
+    graphqlRequest(
+      "mutation ($id: ID!, $resume: Float, $duration: Float) { sceneSaveActivity(id: $id, resume_time: $resume, playDuration: $duration) }",
+      { id: sceneId, resume: audio.currentTime || 0, duration: duration }
+    ).catch(function (err) { console.warn("AudioSupport: sceneSaveActivity failed", err); });
+  }
+
+  function endActivity() {
+    if (activityState.timer) {
+      clearInterval(activityState.timer);
+      activityState.timer = null;
+    }
+    if (activityState.audio) flushActivity(true);
+    activityState.sceneId = null;
+    activityState.audio = null;
+    activityState.counted = false;
+  }
+
+  function maybeResumeFromScene(scene, audio) {
+    if (!scene || !audio) return;
+    const resume = typeof scene.resume_time === "number" ? scene.resume_time : 0;
+    if (resume > 5 && isFinite(audio.duration) && resume < audio.duration - 5) {
+      try {
+        audio.currentTime = resume;
+      } catch (err) {
+        console.warn("AudioSupport: resume seek failed", err);
+      }
+    }
+  }
+
+  function ensureDock() {
+    if (dockRoot) return dockRoot;
+    dockRoot = document.createElement("div");
+    dockRoot.className = "audio-support-dock";
+
+    const controls = document.createElement("div");
+    controls.className = "audio-support-dock__controls";
+
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.textContent = "\u23ee";
+    prev.title = "Previous track";
+    prev.addEventListener("click", function () { dockStep(-1); });
+
+    const play = document.createElement("button");
+    play.type = "button";
+    play.textContent = "\u25b6";
+    play.title = "Play/Pause";
+    play.addEventListener("click", function () {
+      if (!dockAudio) return;
+      if (dockAudio.paused) dockAudio.play().catch(function () {});
+      else dockAudio.pause();
+    });
+
+    const next = document.createElement("button");
+    next.type = "button";
+    next.textContent = "\u23ed";
+    next.title = "Next track";
+    next.addEventListener("click", function () { dockStep(1); });
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "\u00d7";
+    close.title = "Stop and close dock";
+    close.addEventListener("click", closeDock);
+
+    controls.appendChild(prev);
+    controls.appendChild(play);
+    controls.appendChild(next);
+    controls.appendChild(close);
+
+    dockTitle = document.createElement("span");
+    dockTitle.className = "audio-support-dock__title";
+    dockTitle.textContent = "Audio";
+
+    dockRoot.appendChild(controls);
+    dockRoot.appendChild(dockTitle);
+    document.body.appendChild(dockRoot);
+
+    dockAudio = document.createElement("audio");
+    dockAudio.preload = "metadata";
+    dockAudio.addEventListener("play", function () {
+      if (dockScene) beginActivity(dockScene.id, dockAudio);
+      syncDockButtons();
+    });
+    dockAudio.addEventListener("pause", function () {
+      flushActivity(true);
+      syncDockButtons();
+    });
+    dockAudio.addEventListener("ended", function () {
+      endActivity();
+      if (queueState.repeat === "one") {
+        dockAudio.currentTime = 0;
+        dockAudio.play().catch(function () {});
+        return;
+      }
+      dockStep(1, true);
+    });
+    dockAudio.addEventListener("loadedmetadata", function () {
+      if (dockScene) maybeResumeFromScene(dockScene, dockAudio);
+      syncDockButtons();
+    });
+    dockAudio.addEventListener("timeupdate", function () {
+      if (!dockAudio.paused) flushActivity();
+    });
+    dockRoot.appendChild(dockAudio);
+    return dockRoot;
+  }
+
+  function syncDockButtons() {
+    if (!dockRoot || !dockAudio) return;
+    const play = dockRoot.querySelector("button[title='Play/Pause']");
+    if (play) play.textContent = dockAudio.paused ? "\u25b6" : "\u23f8";
+    if (dockTitle && dockScene) dockTitle.textContent = getSceneDisplayName(dockScene);
+  }
+
+  function startDockPlayback(scene, audio, startTime) {
+    if (!scene || !audio) return;
+    ensureDock();
+    dockScene = scene;
+    dockRoot.classList.add("audio-support-dock--visible");
+    const src = scene.paths && scene.paths.stream ? scene.paths.stream : "/scene/" + scene.id + "/stream";
+    if (dockAudio.src !== new URL(src, window.location.href).href) {
+      dockAudio.src = src;
+      dockAudio.currentTime = 0;
+    }
+    dockAudio.playbackRate = audio.playbackRate || state.playbackRate;
+    dockAudio.volume = audio.volume;
+    dockAudio.loop = audio.loop;
+    const seekTo = typeof startTime === "number" ? startTime : audio.currentTime;
+    const applySeekAndPlay = function () {
+      try {
+        if (seekTo > 0) dockAudio.currentTime = seekTo;
+      } catch (err) { /* metadata may not be ready */ }
+      dockAudio.play().catch(function (err) {
+        console.warn("AudioSupport: dock play failed", err);
+      });
+    };
+    if (dockAudio.readyState >= 1) applySeekAndPlay();
+    else dockAudio.addEventListener("loadedmetadata", applySeekAndPlay, { once: true });
+    syncDockButtons();
+  }
+
+  function detachToDock() {
+    if (!audioEl || audioEl.paused || !cachedScene) return;
+    startDockPlayback(cachedScene, audioEl, audioEl.currentTime);
+  }
+
+  async function dockPlayScene(sceneId, index) {
+    const scene = await fetchScene(sceneId);
+    if (!scene) return;
+    const audioFile = getAudioFile(scene);
+    if (!audioFile) return;
+    if (typeof index === "number") queueState.currentIndex = index;
+    const inQueueIndex = queueState.queue.indexOf(String(scene.id));
+    if (inQueueIndex !== -1) queueState.currentIndex = inQueueIndex;
+    sceneInQueue = true;
+    saveQueueNow();
+    ensureDock();
+    dockScene = scene;
+    dockRoot.classList.add("audio-support-dock--visible");
+    dockAudio.src = scene.paths && scene.paths.stream ? scene.paths.stream : "/scene/" + scene.id + "/stream";
+    dockAudio.playbackRate = state.playbackRate;
+    dockAudio.volume = state.volume;
+    dockAudio.loop = state.loop;
+    syncDockButtons();
+    try {
+      await dockAudio.play();
+    } catch (err) {
+      console.warn("AudioSupport: dock play failed", err);
+    }
+  }
+
+  function dockStep(delta, auto) {
+    const len = queueState.queue.length;
+    if (len === 0) return;
+    let next = queueState.currentIndex + delta;
+    if (next < 0) next = queueState.repeat === "all" && auto ? len - 1 : 0;
+    if (next >= len) {
+      if (queueState.repeat === "all") next = 0;
+      else return;
+    }
+    dockPlayScene(queueState.queue[next], next);
+  }
+
+  function closeDock() {
+    endActivity();
+    if (dockAudio) {
+      dockAudio.pause();
+      dockAudio.removeAttribute("src");
+      dockAudio.load();
+    }
+    if (dockRoot) dockRoot.classList.remove("audio-support-dock--visible");
+    dockScene = null;
+  }
+
+  function pauseDock() {
+    if (dockAudio && !dockAudio.paused) dockAudio.pause();
+  }
+
+  // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
 
@@ -258,7 +533,7 @@
     return hours * 3600 + mins * 60 + secs + ms / 1000;
   }
 
-  function parseLrcText(text) {
+  function parseLrcText(text, extraOffsetSec) {
     const entries = [];
     const metadata = {};
     if (typeof text !== "string" || text.trim() === "") {
@@ -287,7 +562,7 @@
       for (const tag of timeTags) {
         const seconds = parseTimeToSeconds(tag);
         if (seconds !== null) {
-          entries.push({ time: seconds, text: lyricText });
+          entries.push({ time: seconds, text: lyricText, text2: "" });
         }
       }
     }
@@ -297,14 +572,18 @@
       const parsed = parseInt(metadata.offset, 10);
       if (!Number.isNaN(parsed)) offsetMs = parsed;
     }
-    if (offsetMs !== 0) {
-      const offsetSec = offsetMs / 1000;
-      for (const entry of entries) {
-        entry.time = Math.max(0, entry.time + offsetSec);
+    const totalOffset = offsetMs / 1000 + (typeof extraOffsetSec === "number" ? extraOffsetSec : 0);
+    const grouped = [];
+    for (const entry of entries) {
+      const adjusted = Math.max(0, entry.time + totalOffset);
+      const prev = grouped[grouped.length - 1];
+      if (prev && Math.abs(prev.time - adjusted) < 0.01) {
+        if (!prev.text2 && entry.text) prev.text2 = entry.text;
+      } else {
+        grouped.push({ time: adjusted, text: entry.text, text2: "" });
       }
-      entries.sort(function (a, b) { return a.time - b.time; });
     }
-    return { entries: entries, metadata: metadata };
+    return { entries: grouped, metadata: metadata };
   }
 
   function findCurrentLyricIndex(time) {
@@ -373,7 +652,7 @@
     saving = true;
     pendingSave = false;
     try {
-      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const stored = (await storage.loadConfig()) || {};
       const merged = Object.assign({}, stored, {
         collapsed: state.collapsed,
         opacity: state.opacity,
@@ -384,7 +663,9 @@
         volume: state.volume,
         lyricsVisible: state.lyricsVisible,
       });
-      await csLib.setConfiguration(CONFIG_KEY, merged);
+      await storage.saveConfig(merged, function (latest) {
+        return Object.assign({}, latest || {}, merged);
+      }, "Audio Support overlay");
     } catch (err) {
       console.error("AudioSupport: failed to save configuration", err);
     } finally {
@@ -399,7 +680,7 @@
   async function loadState() {
     let stored = null;
     try {
-      stored = await csLib.getConfiguration(CONFIG_KEY);
+      stored = await storage.loadConfig();
     } catch (err) {
       console.error("AudioSupport: failed to read configuration", err);
       stored = null;
@@ -475,6 +756,72 @@
     } catch (err) {
       console.error("AudioSupport: failed to save lyrics", err);
       return false;
+    }
+  }
+
+  async function saveSceneCustomField(sceneId, field, value) {
+    if (!window.PluginApi || !window.PluginApi.GQL || !window.PluginApi.utils || !window.PluginApi.utils.StashService) {
+      return false;
+    }
+    try {
+      const client = window.PluginApi.utils.StashService.getClient();
+      const partial = {};
+      partial[field] = value;
+      await client.mutate({
+        mutation: window.PluginApi.GQL.SceneUpdateDocument,
+        variables: {
+          input: {
+            id: sceneId,
+            custom_fields: { partial: partial },
+          },
+        },
+      });
+      return true;
+    } catch (err) {
+      console.error("AudioSupport: failed to save custom field", field, err);
+      return false;
+    }
+  }
+
+  async function fetchChapters(sceneId) {
+    try {
+      const response = await fetch("/graphql", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "query ($id: ID!) { findScene(id: $id) { scene_markers { id seconds title } } }",
+          variables: { id: String(sceneId) },
+        }),
+      });
+      const payload = await response.json();
+      const scene = payload.data && payload.data.findScene;
+      return ((scene && scene.scene_markers) || []).map(function (m) {
+        return { id: String(m.id), seconds: typeof m.seconds === "number" ? m.seconds : 0, title: m.title || "" };
+      }).sort(function (a, b) { return a.seconds - b.seconds; });
+    } catch (err) {
+      console.warn("AudioSupport: chapter lookup failed", err);
+      return [];
+    }
+  }
+
+  function parseBookmarks(scene) {
+    const raw = scene && scene.custom_fields && scene.custom_fields.AudioBookmarks;
+    if (typeof raw !== "string" || !raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(function (b) {
+        return b && typeof b.seconds === "number" && isFinite(b.seconds);
+      }).map(function (b) {
+        return {
+          id: String(b.id || ("bm-" + b.seconds)),
+          seconds: b.seconds,
+          label: typeof b.label === "string" && b.label ? b.label : formatTime(b.seconds),
+        };
+      });
+    } catch (err) {
+      return [];
     }
   }
 
@@ -695,6 +1042,47 @@
     queueIndicator.title = "Queue position";
     speedLoop.appendChild(queueIndicator);
 
+    const sleepSelect = document.createElement("select");
+    sleepSelect.className = "audio-support-overlay__sleep-select";
+    sleepSelect.title = "Sleep timer";
+    sleepSelect.setAttribute("aria-label", "Sleep timer");
+    [["0", "Sleep off"], ["5", "5 min"], ["15", "15 min"], ["30", "30 min"], ["60", "60 min"]].forEach(function (opt) {
+      const option = document.createElement("option");
+      option.value = opt[0];
+      option.textContent = opt[1];
+      sleepSelect.appendChild(option);
+    });
+    sleepSelect.addEventListener("change", function () {
+      if (sleepTimerId) {
+        clearTimeout(sleepTimerId);
+        sleepTimerId = null;
+      }
+      if (sleepFadeId) {
+        clearInterval(sleepFadeId);
+        sleepFadeId = null;
+      }
+      const minutes = parseInt(sleepSelect.value, 10) || 0;
+      if (minutes <= 0) return;
+      const fadeMs = 30000;
+      const delay = Math.max(0, minutes * 60000 - fadeMs);
+      sleepTimerId = setTimeout(function () {
+        const startVolume = audio.volume;
+        const started = Date.now();
+        sleepFadeId = setInterval(function () {
+          const progress = Math.min(1, (Date.now() - started) / fadeMs);
+          audio.volume = startVolume * (1 - progress);
+          if (progress >= 1) {
+            clearInterval(sleepFadeId);
+            sleepFadeId = null;
+            audio.pause();
+            audio.volume = startVolume;
+            sleepSelect.value = "0";
+          }
+        }, 500);
+      }, delay);
+    });
+    speedLoop.appendChild(sleepSelect);
+
     transport.appendChild(speedLoop);
     body.appendChild(transport);
 
@@ -713,6 +1101,44 @@
     const streamUrl = scene.paths && scene.paths.stream ? scene.paths.stream : "/scene/" + scene.id + "/stream";
     audio.src = streamUrl;
     overlay.appendChild(audio);
+
+    audio.addEventListener("play", function () {
+      pauseDock();
+      beginActivity(scene.id, audio);
+    });
+    audio.addEventListener("pause", function () {
+      flushActivity(true);
+    });
+    audio.addEventListener("ended", function () {
+      endActivity();
+    });
+    audio.addEventListener("loadedmetadata", function () {
+      maybeResumeFromScene(scene, audio);
+    });
+    audio.addEventListener("timeupdate", function () {
+      if (!audio.paused) flushActivity();
+    });
+
+    if (chaptersState.length > 0) {
+      const chapters = document.createElement("div");
+      chapters.className = "audio-support-overlay__chapters";
+      const heading = document.createElement("div");
+      heading.className = "audio-support-overlay__chapters-header";
+      heading.textContent = "Chapters";
+      chapters.appendChild(heading);
+      chaptersState.forEach(function (chapter) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "audio-support-overlay__chapter";
+        row.textContent = formatTime(chapter.seconds) + " · " + (chapter.title || "Chapter");
+        row.addEventListener("click", function () {
+          audio.currentTime = chapter.seconds;
+          if (audio.paused) audio.play().catch(function () {});
+        });
+        chapters.appendChild(row);
+      });
+      body.appendChild(chapters);
+    }
 
     // Wire controls
     playBtn.addEventListener("click", function () {
@@ -773,8 +1199,13 @@
             line.classList.add("audio-support-overlay__lyrics-line--current");
             line.scrollIntoView({ behavior: "smooth", block: "center" });
           }
+          const start = parseFloat(line.dataset.time) || 0;
+          const end = parseFloat(line.dataset.end) || (start + 4);
+          const pct = clamp((time - start) / Math.max(0.1, end - start), 0, 1);
+          line.style.setProperty("--as-karaoke", (pct * 100).toFixed(1) + "%");
         } else {
           line.classList.remove("audio-support-overlay__lyrics-line--current");
+          line.style.removeProperty("--as-karaoke");
         }
       }
     }
@@ -914,6 +1345,78 @@
     lyricsSection.className = "audio-support-overlay__lyrics-section";
     body.appendChild(lyricsSection);
 
+    const bookmarksSection = document.createElement("div");
+    bookmarksSection.className = "audio-support-overlay__bookmarks";
+    body.appendChild(bookmarksSection);
+
+    function persistBookmarks() {
+      if (currentSceneId) {
+        saveSceneCustomField(currentSceneId, "AudioBookmarks", JSON.stringify(bookmarksState));
+      }
+    }
+
+    function renderBookmarksSection() {
+      clearChildren(bookmarksSection);
+      const header = document.createElement("div");
+      header.className = "audio-support-overlay__bookmarks-header";
+      const label = document.createElement("span");
+      label.textContent = "Bookmarks";
+      header.appendChild(label);
+      const add = document.createElement("button");
+      add.type = "button";
+      add.textContent = "+ Bookmark";
+      add.className = "audio-support-overlay__bookmark-add";
+      add.addEventListener("click", function () {
+        const seconds = audio.currentTime || 0;
+        bookmarksState.push({
+          id: "bm-" + Date.now().toString(36),
+          seconds: seconds,
+          label: formatTime(seconds),
+        });
+        bookmarksState.sort(function (a, b) { return a.seconds - b.seconds; });
+        persistBookmarks();
+        renderBookmarksSection();
+      });
+      header.appendChild(add);
+      bookmarksSection.appendChild(header);
+      bookmarksState.forEach(function (bookmark) {
+        const row = document.createElement("div");
+        row.className = "audio-support-overlay__bookmark";
+        const seek = document.createElement("button");
+        seek.type = "button";
+        seek.textContent = formatTime(bookmark.seconds) + " · " + bookmark.label;
+        seek.addEventListener("click", function () {
+          audio.currentTime = bookmark.seconds;
+          if (audio.paused) audio.play().catch(function () {});
+        });
+        const del = document.createElement("button");
+        del.type = "button";
+        del.textContent = "\u00d7";
+        del.title = "Delete bookmark";
+        del.addEventListener("click", function () {
+          bookmarksState = bookmarksState.filter(function (b) { return b.id !== bookmark.id; });
+          persistBookmarks();
+          renderBookmarksSection();
+        });
+        row.appendChild(seek);
+        row.appendChild(del);
+        bookmarksSection.appendChild(row);
+      });
+    }
+
+    function setLyricsOffset(value) {
+      lyricsOffset = Math.round(value * 10) / 10;
+      const parsed = parseLrcText(lyricsState.raw || "", lyricsOffset);
+      lyricsState.parsed = parsed.entries;
+      lyricsState.metadata = parsed.metadata;
+      if (currentSceneId) saveSceneCustomField(currentSceneId, "AudioLyricsOffset", lyricsOffset);
+      renderLyricsSection();
+    }
+
+    function adjustLyricsOffset(delta) {
+      setLyricsOffset(lyricsOffset + delta);
+    }
+
     function renderLyricsSection() {
       clearChildren(lyricsSection);
       if (!state.lyricsVisible) {
@@ -946,16 +1449,52 @@
       loadBtn.textContent = hasLyrics ? "Edit LRC" : "Load LRC";
       loadBtn.addEventListener("click", showLyricsEditor);
       header.appendChild(loadBtn);
+
+      const offsetWrap = document.createElement("span");
+      offsetWrap.className = "audio-support-overlay__lyrics-offset";
+      const minus = document.createElement("button");
+      minus.type = "button";
+      minus.textContent = "-0.1s";
+      minus.title = "Lyrics earlier by 100 ms";
+      minus.addEventListener("click", function () { adjustLyricsOffset(-0.1); });
+      const plus = document.createElement("button");
+      plus.type = "button";
+      plus.textContent = "+0.1s";
+      plus.title = "Lyrics later by 100 ms";
+      plus.addEventListener("click", function () { adjustLyricsOffset(0.1); });
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.textContent = "0";
+      reset.title = "Reset lyrics offset";
+      reset.addEventListener("click", function () { setLyricsOffset(0); });
+      offsetWrap.appendChild(minus);
+      offsetWrap.appendChild(plus);
+      offsetWrap.appendChild(reset);
+      header.appendChild(offsetWrap);
       lyricsSection.appendChild(header);
 
       if (hasLyrics) {
         const container = document.createElement("div");
         container.className = "audio-support-overlay__lyrics-lines";
-        for (const entry of lyricsState.parsed) {
+        for (let i = 0; i < lyricsState.parsed.length; i++) {
+          const entry = lyricsState.parsed[i];
           const line = document.createElement("div");
           line.className = "audio-support-overlay__lyrics-line";
           line.dataset.time = String(entry.time);
-          line.textContent = entry.text || "\u266a";
+          line.dataset.index = String(i);
+          if (i + 1 < lyricsState.parsed.length) {
+            line.dataset.end = String(lyricsState.parsed[i + 1].time);
+          }
+          const primary = document.createElement("span");
+          primary.className = "audio-support-overlay__lyrics-primary";
+          primary.textContent = entry.text || "\u266a";
+          line.appendChild(primary);
+          if (entry.text2) {
+            const secondary = document.createElement("span");
+            secondary.className = "audio-support-overlay__lyrics-secondary";
+            secondary.textContent = entry.text2;
+            line.appendChild(secondary);
+          }
           line.addEventListener("click", function () {
             audio.currentTime = entry.time;
             if (audio.paused) audio.play().catch(function () {});
@@ -1026,7 +1565,7 @@
       saveBtn.textContent = "Save";
       saveBtn.addEventListener("click", async function () {
         const text = textarea.value;
-        const parsed = parseLrcText(text);
+        const parsed = parseLrcText(text, lyricsOffset);
         lyricsState = { parsed: parsed.entries, metadata: parsed.metadata, raw: text };
         if (currentSceneId) {
           await saveSceneLyrics(currentSceneId, text);
@@ -1047,6 +1586,7 @@
     }
 
     renderLyricsSection();
+    renderBookmarksSection();
 
     return { overlay: overlay, audio: audio, playBtn: playBtn, seek: seek, time: time, prevBtn: prevBtn, nextBtn: nextBtn, queueIndicator: queueIndicator };
   }
@@ -1292,6 +1832,15 @@
   // ---------------------------------------------------------------------------
 
   function teardownOverlay() {
+    if (activityState.audio === audioEl) endActivity();
+    if (sleepTimerId) {
+      clearTimeout(sleepTimerId);
+      sleepTimerId = null;
+    }
+    if (sleepFadeId) {
+      clearInterval(sleepFadeId);
+      sleepFadeId = null;
+    }
     removeKeyboardListeners();
     if (volumeSaveTimeout) {
       clearTimeout(volumeSaveTimeout);
@@ -1346,8 +1895,12 @@
     const rawLyrics = scene.custom_fields && typeof scene.custom_fields.AudioLyrics === "string"
       ? scene.custom_fields.AudioLyrics
       : null;
-    const parsedLyrics = parseLrcText(rawLyrics || "");
+    const storedOffset = scene.custom_fields && scene.custom_fields.AudioLyricsOffset;
+    lyricsOffset = typeof storedOffset === "number" && isFinite(storedOffset) ? storedOffset : 0;
+    const parsedLyrics = parseLrcText(rawLyrics || "", lyricsOffset);
     lyricsState = { parsed: parsedLyrics.entries, metadata: parsedLyrics.metadata, raw: rawLyrics };
+    chaptersState = await fetchChapters(scene.id);
+    bookmarksState = parseBookmarks(scene);
 
     overlayRoot = document.createElement("div");
     overlayRoot.className = "audio-support-overlay";
@@ -1369,6 +1922,7 @@
   // overlay bound to the previous (now-detached) player before re-injecting,
   // so we don't leak a dangling overlay or double-mount on the new player.
   function reInject() {
+    detachToDock();
     teardownOverlay();
     tryInject();
   }
@@ -1382,12 +1936,13 @@
   }
 
   window.addEventListener("pagehide", function () {
-    // Flush any pending volume/queue saves before leaving the page.
+    // Flush any pending volume/queue/activity saves before leaving the page.
     if (volumeSaveTimeout) {
       clearTimeout(volumeSaveTimeout);
       volumeSaveTimeout = null;
       state.volume = audioEl ? clamp(audioEl.volume, 0, 1) : state.volume;
     }
+    flushActivity(true);
     saveNow();
     saveQueueNow();
   });

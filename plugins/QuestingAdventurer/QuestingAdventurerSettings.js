@@ -37,6 +37,45 @@
   const CONFIG_KEY = "QuestingAdventurer";
   const LEGACY_CONFIG_KEY = "SceneRules";
   const PLUGIN_ROUTE = "/plugins/questingadventurer";
+  const DEAL_CS_KEY = "QuestingAdventurerDeal";
+  const DEAL_TTL_MS = 10 * 60 * 1000;
+
+  function makeDealCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const bytes = new Uint8Array(8);
+    if (window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    let out = "";
+    for (let i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
+    return out;
+  }
+
+  function normaliseDeal(value) {
+    if (!value || typeof value !== "object") return null;
+    return {
+      code: typeof value.code === "string" ? value.code : "",
+      createdAt: typeof value.createdAt === "number" ? value.createdAt : 0,
+      expiresAt: typeof value.expiresAt === "number" ? value.expiresAt : 0,
+      usedAt: typeof value.usedAt === "number" ? value.usedAt : null,
+      action: value.action === "draw-trigger" ? "draw-trigger" : "draw-trigger",
+    };
+  }
+
+  function dealStatus(deal) {
+    if (!deal || !deal.code) return "missing";
+    if (deal.usedAt) return "used";
+    if (Date.now() > deal.expiresAt) return "expired";
+    return "active";
+  }
+  const storage = window.QuestingAdventurerStorage || {
+    loadConfig: function () { return csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return csLib.setConfiguration(CONFIG_KEY, value); },
+    loadKey: function (key, csKey) { return csLib.getConfiguration(csKey); },
+    saveKey: function (key, value, csKey) { return csLib.setConfiguration(csKey, value); },
+  };
 
   let settingsToolsCallCount = 0;
   let saving = false;
@@ -153,7 +192,7 @@
     try {
       const triggersToSave = latestTriggers || [];
       const movesToSave = latestMoves || [];
-      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const stored = (await storage.loadConfig()) || {};
       const merged = {
         moves: movesToSave,
         triggers: triggersToSave,
@@ -183,8 +222,14 @@
             : { width: 360, height: undefined },
         showAddControls: stored.showAddControls === true,
         showManualControls: stored.showManualControls === true,
+        hardware: stored.hardware && typeof stored.hardware === "object" ? stored.hardware : {},
       };
-      const result = csLib.setConfiguration(CONFIG_KEY, merged);
+      const result = storage.saveConfig(merged, function (latest) {
+        return Object.assign({}, latest || {}, {
+          moves: movesToSave,
+          triggers: triggersToSave,
+        });
+      }, "Questing Adventurer settings");
       await result;
       saving = false;
       if (pendingSave) saveTriggersNow();
@@ -209,6 +254,16 @@
     const [moves, setMoves] = useState([]);
     const [triggers, setTriggers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [deal, setDeal] = useState(null);
+    const [partnerMode, setPartnerMode] = useState(false);
+    const [dealMessage, setDealMessage] = useState("");
+    const [hardware, setHardware] = useState({
+      enabled: false,
+      url: "ws://localhost:12345",
+      intensity: 0.4,
+      durationMs: 1000,
+    });
+    const [hardwareStatus, setHardwareStatus] = useState("");
     const [editingId, setEditingId] = useState(null);
     const [footerText, setFooterText] = useState("");
     const inputRef = useRef(null);
@@ -227,7 +282,7 @@
       (async function () {
         try {
           await migrateFromLegacy();
-          const stored = await csLib.getConfiguration(CONFIG_KEY);
+          const stored = await storage.loadConfig();
           if (stored && Array.isArray(stored.moves) && Array.isArray(stored.triggers)) {
             // v2 format
             finish(stored.moves, stored.triggers);
@@ -238,6 +293,34 @@
             // Persist the migrated form
             saveMoves(migrated.moves);
             saveTriggers(migrated.triggers);
+          }
+          if (stored && stored.hardware && typeof stored.hardware === "object") {
+            setHardware({
+              enabled: stored.hardware.enabled === true,
+              url: typeof stored.hardware.url === "string" && stored.hardware.url ? stored.hardware.url : "ws://localhost:12345",
+              intensity: typeof stored.hardware.intensity === "number" ? Math.max(0, Math.min(1, stored.hardware.intensity)) : 0.4,
+              durationMs: typeof stored.hardware.durationMs === "number" ? Math.max(100, Math.min(10000, stored.hardware.durationMs)) : 1000,
+            });
+          }
+
+          const params = new URLSearchParams(window.location.search);
+          const code = params.get("deal");
+          if (code) {
+            setPartnerMode(true);
+            const storedDeal = normaliseDeal(await storage.loadKey("deal", DEAL_CS_KEY));
+            if (!storedDeal || storedDeal.code !== code) {
+              setDealMessage("This deal code does not exist.");
+            } else if (dealStatus(storedDeal) === "used") {
+              setDeal(storedDeal);
+              setDealMessage("This deal has already been used.");
+            } else if (dealStatus(storedDeal) === "expired") {
+              setDeal(storedDeal);
+              setDealMessage("This deal has expired.");
+            } else {
+              setDeal(storedDeal);
+            }
+          } else {
+            setDeal(normaliseDeal(await storage.loadKey("deal", DEAL_CS_KEY)));
           }
         } catch (err) {
           console.error("QuestingAdventurer settings: load failed:", err);
@@ -285,6 +368,8 @@
         name: trimmed,
         active: false,
         attachedMoveIds: [],
+        sceneTagIds: [],
+        markerTagIds: [],
       }];
       commitTriggers(nextTriggers);
     }
@@ -467,7 +552,234 @@
       });
     }
 
+    async function createDeal() {
+      const nextDeal = {
+        code: makeDealCode(),
+        createdAt: Date.now(),
+        expiresAt: Date.now() + DEAL_TTL_MS,
+        usedAt: null,
+        action: "draw-trigger",
+      };
+      setDeal(nextDeal);
+      setDealMessage("");
+      try {
+        await storage.saveKey("deal", nextDeal, DEAL_CS_KEY, "Questing Adventurer deal");
+      } catch (err) {
+        console.error("QuestingAdventurer: could not save deal", err);
+        setDealMessage("Could not save the deal code.");
+      }
+    }
+
+    async function copyDealLink() {
+      if (!deal || !deal.code) return;
+      const link = window.location.origin + PLUGIN_ROUTE + "?deal=" + encodeURIComponent(deal.code);
+      try {
+        await navigator.clipboard.writeText(link);
+        setDealMessage("Link copied.");
+      } catch (err) {
+        setDealMessage(link);
+      }
+    }
+
+    async function drawForPartner() {
+      if (!deal || dealStatus(deal) !== "active") return;
+      const inactive = triggers.filter(function (t) { return t.type === "trigger" && !t.active; });
+      if (inactive.length === 0) {
+        setDealMessage("No inactive triggers are available.");
+        return;
+      }
+      const picked = inactive[Math.floor(Math.random() * inactive.length)];
+      const nextTriggers = triggers.map(function (t) {
+        return t.id === picked.id ? Object.assign({}, t, { active: true }) : t;
+      });
+      setTriggers(nextTriggers);
+      saveTriggers(nextTriggers);
+      const usedDeal = Object.assign({}, deal, { usedAt: Date.now() });
+      setDeal(usedDeal);
+      setDealMessage("Drew: " + picked.name);
+      try {
+        await storage.saveKey("deal", usedDeal, DEAL_CS_KEY, "Questing Adventurer partner");
+      } catch (err) {
+        console.error("QuestingAdventurer: could not mark deal used", err);
+      }
+    }
+
+    async function saveHardware() {
+      const stored = (await storage.loadConfig()) || {};
+      const payload = Object.assign({}, stored, {
+        moves: latestMoves || moves,
+        triggers: latestTriggers || triggers,
+        hardware: hardware,
+      });
+      try {
+        await storage.saveConfig(payload, function (latest) {
+          return Object.assign({}, latest || {}, {
+            moves: latestMoves || moves,
+            triggers: latestTriggers || triggers,
+            hardware: hardware,
+          });
+        }, "Questing Adventurer hardware");
+        setHardwareStatus("Saved.");
+      } catch (err) {
+        console.error("QuestingAdventurer: hardware save failed", err);
+        setHardwareStatus("Could not save hardware settings.");
+      }
+    }
+
+    function testHardware() {
+      setHardwareStatus("Connecting…");
+      let socket;
+      try {
+        socket = new WebSocket(hardware.url);
+      } catch (err) {
+        setHardwareStatus("Invalid WebSocket URL.");
+        return;
+      }
+      const timer = setTimeout(function () {
+        setHardwareStatus("No Intiface response within 3 seconds.");
+        try { socket.close(); } catch (err) { /* ignore */ }
+      }, 3000);
+      socket.addEventListener("open", function () {
+        socket.send(JSON.stringify({
+          RequestServerInfo: { Id: 1, ClientName: "Questing Adventurer", MessageVersion: 1 },
+        }));
+      });
+      socket.addEventListener("message", function (event) {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch (err) { return; }
+        if (msg.ServerInfo) {
+          clearTimeout(timer);
+          setHardwareStatus("Connected to Intiface.");
+          socket.close();
+        }
+      });
+      socket.addEventListener("error", function () {
+        clearTimeout(timer);
+        setHardwareStatus("Connection failed. Check that Intiface is running and the URL is reachable.");
+      });
+    }
+
+    function renderHardwarePanel() {
+      return h("section", { className: "questing-adventurer-settings__deal" },
+        h("h2", null, "Hardware bridge (experimental)"),
+        h("p", { className: "questing-adventurer-settings__deal-hint" },
+          "Optional local Intiface/Buttplug connection. Disabled by default. ",
+          "A completed move sends one vibration command; no hardware data is stored or sent anywhere else."
+        ),
+        h("label", { className: "questing-adventurer-settings__checkbox" },
+          h("input", {
+            type: "checkbox",
+            checked: !!hardware.enabled,
+            onChange: function (e) { setHardware(Object.assign({}, hardware, { enabled: !!e.target.checked })); },
+          }),
+          h("span", null, "Enable hardware bridge")
+        ),
+        h("div", { className: "questing-adventurer-settings__deal-row" },
+          h("label", null,
+            h("span", null, "WebSocket URL"),
+            h("input", {
+              type: "text",
+              value: hardware.url,
+              onChange: function (e) { setHardware(Object.assign({}, hardware, { url: e.target.value })); },
+            })
+          ),
+          h("label", null,
+            h("span", null, "Intensity (0–1)"),
+            h("input", {
+              type: "number",
+              min: 0,
+              max: 1,
+              step: 0.05,
+              value: hardware.intensity,
+              onChange: function (e) {
+                setHardware(Object.assign({}, hardware, {
+                  intensity: Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)),
+                }));
+              },
+            })
+          ),
+          h("label", null,
+            h("span", null, "Duration (ms)"),
+            h("input", {
+              type: "number",
+              min: 100,
+              max: 10000,
+              step: 100,
+              value: hardware.durationMs,
+              onChange: function (e) {
+                setHardware(Object.assign({}, hardware, {
+                  durationMs: Math.max(100, Math.min(10000, parseInt(e.target.value, 10) || 1000)),
+                }));
+              },
+            })
+          )
+        ),
+        h("div", { className: "questing-adventurer-settings__deal-row" },
+          h("button", { type: "button", onClick: saveHardware }, "Save hardware"),
+          h("button", { type: "button", onClick: testHardware }, "Test connection")
+        ),
+        hardwareStatus ? h("p", { className: "questing-adventurer-settings__deal-message" }, hardwareStatus) : null
+      );
+    }
+
+    function renderDealPanel() {
+      const status = dealStatus(deal);
+      return h("section", { className: "questing-adventurer-settings__deal" },
+        h("h2", null, "Deal to a partner"),
+        h("p", { className: "questing-adventurer-settings__deal-hint" },
+          "Create a one-time code. Your partner must be able to open this Stash instance and sign in. ",
+          "The code expires in 10 minutes and works once."
+        ),
+        h("div", { className: "questing-adventurer-settings__deal-row" },
+          h("button", { type: "button", onClick: createDeal }, "Create deal code"),
+          deal && status === "active"
+            ? h("button", { type: "button", onClick: copyDealLink }, "Copy link")
+            : null
+        ),
+        deal
+          ? h("div", { className: "questing-adventurer-settings__deal-code" },
+              h("strong", null, deal.code),
+              h("span", null, " " + status)
+            )
+          : null,
+        dealMessage ? h("p", { className: "questing-adventurer-settings__deal-message" }, dealMessage) : null
+      );
+    }
+
+    function renderPartnerPanel() {
+      const status = dealStatus(deal);
+      return h("section", { className: "questing-adventurer-settings__deal questing-adventurer-settings__deal--partner" },
+        h("h2", null, "Partner draw"),
+        h("p", null, "Your partner is drawing one inactive trigger. This cannot be undone from this page."),
+        deal
+          ? h("div", { className: "questing-adventurer-settings__deal-code" },
+              h("strong", null, deal.code),
+              h("span", null, " " + status)
+            )
+          : null,
+        dealMessage ? h("p", { className: "questing-adventurer-settings__deal-message" }, dealMessage) : null,
+        status === "active"
+          ? h("button", {
+              type: "button",
+              className: "questing-adventurer-settings__deal-draw",
+              onClick: drawForPartner,
+            }, "Draw a trigger")
+          : null
+      );
+    }
+
+    function updateTriggerTagPool(triggerId, field, tags) {
+      const ids = (tags || []).map(function (t) { return String(t.id); });
+      const next = triggers.map(function (t) {
+        if (t.id !== triggerId) return t;
+        return Object.assign({}, t, { [field]: ids });
+      });
+      setTriggers(next);
+      saveTriggers(next);
+    }
+
     function renderTrigger(trigger) {
+      const TagSelect = PluginApi.components && PluginApi.components.TagIDSelect;
       return h(
         "div",
         { key: trigger.id, className: "questing-adventurer-settings__trigger" },
@@ -538,6 +850,32 @@
             "×"
           )
         ),
+        TagSelect
+          ? h(
+              "div",
+              { className: "questing-adventurer-settings__tag-pools" },
+              h(
+                "label",
+                null,
+                h("span", null, "Scene tags (empty = every scene)"),
+                h(TagSelect, {
+                  ids: trigger.sceneTagIds || [],
+                  isMulti: true,
+                  onSelect: function (tags) { updateTriggerTagPool(trigger.id, "sceneTagIds", tags); },
+                })
+              ),
+              h(
+                "label",
+                null,
+                h("span", null, "Marker tags (timed prompts)"),
+                h(TagSelect, {
+                  ids: trigger.markerTagIds || [],
+                  isMulti: true,
+                  onSelect: function (tags) { updateTriggerTagPool(trigger.id, "markerTagIds", tags); },
+                })
+              )
+            )
+          : null,
         (trigger.attachedMoveIds || []).map(function (moveId) {
           const move = moves.find(function (m) { return m.id === moveId; });
           if (!move) return null;
@@ -761,16 +1099,30 @@
       );
     }
 
+    if (loading) {
+      return h("div", { className: "questing-adventurer-settings" },
+        h("h2", { className: "questing-adventurer-settings__header" }, "Questing Adventurer"),
+        h("div", null, "Loading...")
+      );
+    }
+
+    if (partnerMode) {
+      return h("div", { className: "questing-adventurer-settings" },
+        h("h2", { className: "questing-adventurer-settings__header" }, "Questing Adventurer"),
+        renderPartnerPanel()
+      );
+    }
+
     return h(
       "div",
       { className: "questing-adventurer-settings" },
       h("h2", { className: "questing-adventurer-settings__header" }, "Questing Adventurer"),
-      loading
-        ? h("div", null, "Loading...")
-        : h(
-            "div",
-            { className: "questing-adventurer-settings__body" },
-            renderMoveLibrary(),
+      h(
+        "div",
+        { className: "questing-adventurer-settings__body" },
+        renderDealPanel(),
+        renderHardwarePanel(),
+        renderMoveLibrary(),
             h("h3", { className: "questing-adventurer-settings__section-header" }, "Triggers"),
             triggers.length === 0
               ? h(
@@ -822,7 +1174,7 @@
                 "Add Move"
               )
             )
-          )
+      )
     );
   }
 

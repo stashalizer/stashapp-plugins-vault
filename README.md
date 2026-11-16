@@ -19,7 +19,14 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 
 ## Tested environment
 
-Each plugin has been **code-reviewed and functionally tested** before release — overlays, settings pages, persistence, and migrations all verified against real Stash sessions. Testing is done primarily on **Windows** (desktop Stash + Chromium-based browser). Other environments (macOS, Linux, mobile/touch browsers, other Stash versions) are **not yet tested**. If you run into issues on those platforms, please report them in a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues) — it helps expand the tested matrix.
+Each plugin is code-reviewed against the repository's architecture notes. The
+November 2026 feature pass has **not** yet completed a live functional pass on
+Stash 0.31.x/0.32.x; use the plugin's issue tracker to report regressions.
+Testing is done primarily on **Windows** (desktop Stash + Chromium-based
+browser). Other environments (macOS, Linux, mobile/touch browsers, other Stash
+versions) are **not yet tested**. If you run into issues, please report them in a
+[GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues) —
+it helps expand the tested matrix.
 
 **Stash v0.32.0 (React 18 UI):** compatibility was re-verified against the v0.32.0 source — every patch target the plugins use (`ScenePlayer`, `ScenePage.Tabs` / `ScenePage.TabContent`, `PluginRoutes`, `SettingsToolsSection`, `MainNavBar.MenuItems`), the `SceneIDSelect` props, the `#VideoJsPlayer` mount id, the `custom_fields` / `cover_image` mutation shapes, and the `VideoFile` field nullability the audio workaround depends on are unchanged. A live v0.32.0 install has **not** been through the full functional pass yet, so v0.31.x remains the functionally tested baseline.
 
@@ -64,6 +71,10 @@ Turns scene playback into a quest. While a scene plays, the viewer is a "questin
 - **Reward** — picks a random *active* trigger that still has attached moves and removes a random attached move. If a trigger ends up with zero attached moves, it's set back to `active: false`.
 - **➕ Add toggle** — reveals an inline footer for adding a new trigger or a new move on the fly without leaving the player.
 - **Manual Selection library** — for fine-grained control the random buttons can't give you: explicitly activate any inactive trigger, or attach any library move to any trigger via a dropdown. Lets you set up a specific configuration instead of relying on randomness.
+- **Quest Log** — mark attached moves Done; history, daily completed counts and streaks persist across reloads.
+- **Scene-aware triggers** — restrict a trigger to scenes with chosen tags, and show prompts when playback reaches markers with chosen tags.
+- **Partner deal** — create a one-time, 10-minute link so a partner signed in to the same Stash instance can draw one inactive trigger.
+- **Hardware bridge (experimental)** — opt-in local Intiface connection on move completion.
 
 ### Known limitations
 
@@ -81,6 +92,10 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 - **Two blur directions.** *Normal* mode blurs the area inside the filter. *Reverse* mode blurs everything *outside* the filter and leaves the filter area clear — handy for "spotlight" style viewing.
 - **Two shapes.** Rectangle (default) or ellipse — the reverse-mode hole is cut precisely to match, using a `clip-path: path()` technique that works across modern Chromium/Firefox/Safari.
 - **Follow-cursor.** Turn it on and the filter re-centers on your pointer as you move it — no dragging needed. Drag is disabled in this mode (resize still works).
+- **Blur, solid and pixelate** fill modes. Solid cannot leak shape or colour; pixelate uses a low-resolution video canvas and is opt-in.
+- **Global, scene and studio presets** — resolution order is scene > studio > global default.
+- **Redacted screenshot** — copy or download the current frame with the filter applied.
+- **Panic screen** — Ctrl+Shift+X shows a local, network-free decoy article and pauses/mutes playback.
 
 ### How to use it
 
@@ -101,15 +116,18 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 
 **On the settings page** at **Settings → Tools → Scene Tools → Mosaic Filter** (or `/plugins/mosaicfilter`):
 
-- **Filter style** — blur amount, shape (Rectangle / Ellipse), mode (Normal / Reverse).
+- **Filter style** — blur amount, fill mode, shape (Rectangle / Ellipse), mode (Normal / Reverse), solid colour and pixel size.
 - **Geometry** — width, height, and X/Y position, all as percentages of the player.
-- **Behavior** — "Active by default" and "Follow cursor by default" checkboxes, then **Save**.
+- **Presets** — edit the global default or any scene/studio preset; use Save scene / Save studio in the overlay to create one.
+- **Behavior** — "Active" and "Follow cursor" checkboxes, then **Save**.
 
 ### Known limitations
 
-- The config is **global, not per-scene** — every scene shares the same filter position, size, and settings. If you need different filters for different scenes, that's not supported yet (feedback welcome).
+- Pixelate is more expensive than blur and is not available in reverse mode; reverse + solid is supported.
+- Screenshot capture depends on a same-origin video; CORS/DRM-protected streams cannot be captured.
+- Clipboard copy requires a secure context; the plugin falls back to a PNG download.
 - The overlay and settings page keep separate save locks and don't coordinate. Settings edits won't live-reflect in an already-open overlay until the next navigation/reload.
-- `backdrop-filter: blur(...)` is used for the effect; on browsers that don't support it, the filter degrades to a semi-opaque rectangle rather than a true blur. Stash's bundled Chromium supports it.
+- `backdrop-filter: blur(...)` is used for the blur mode; on browsers that don't support it, the filter degrades to a semi-opaque rectangle rather than a true blur. Stash's bundled Chromium supports it.
 
 ---
 
@@ -123,6 +141,9 @@ Think of it as a **lightweight alternative to Stash's built-in Groups**. Stash's
 
 - **Bidirectional auto-sync.** Link once and both scenes show each other — no need to edit both sides.
 - **Suggest-from-folder.** Scenes sharing the same file folder surface as quick-add candidates, so the most likely related scenes are one click away.
+- **Cleanup protection.** New links apply the known ignore tags used by Smart Resolve and additionalFilesDeleter, so duplicate cleaners can skip versioned scenes. Protection is per-tool; other cleaners need their own ignore tags.
+- **Visible outside the tab.** A scene-card version badge and a saved filter (`Scene Versions: has alternate cut`) make versioned scenes discoverable in the library.
+- **Comparison and pHash.** Compare duration, resolution, codec, bitrate and date side by side; pHash suggests possible same-shoot scenes without auto-linking.
 - **No extra dependency.** Works without CommunityScriptsUILibrary — no csLib required.
 
 ### How to use it
@@ -138,6 +159,8 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 ### Known limitations
 
 - Suggest-from-folder uses substring `INCLUDES` on path, so scenes in subfolders whose path contains the folder string may also appear. This is usually fine since folders hold few scenes, and irrelevant suggestions can be ignored.
+- Cleanup protection is per-tool. The plugin applies the known Smart Resolve and additionalFilesDeleter tags, but other cleaners use different names; configure their own ignore tag. Protection is not a backup.
+- pHash suggestions depend on a generated video pHash and are suggestions only; they never create links automatically.
 - Concurrent multi-user edits to the same scene's related list could race (acceptable for typical single-user Stash).
 - No batch query — N related scenes trigger N parallel `FindSceneDocument` calls. Fine for small N.
 
@@ -150,7 +173,9 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 ### Features
 
 - **Audio-as-scene playback.** Audio files are ingested as scenes and played back with a dedicated HTML5 audio overlay (direct stream only — no broken transcodes). The video.js player is replaced entirely for audio-only scenes.
-- **Synced LRC lyrics.** Upload or paste `.lrc` text in the overlay; lyrics scroll in sync with playback, highlight the current line, auto-scroll, and click any line to seek. Lyrics are stored per-scene.
+- **Synced LRC lyrics.** Upload or paste `.lrc` text in the overlay; lyrics scroll in sync with playback, highlight the current line, auto-scroll, and click any line to seek. Lyrics are stored per-scene. Offset calibration, bilingual lines and line-level karaoke highlight are included.
+- **Cross-page dock.** Playback continues after SPA navigation in a bottom-right dock; the dock has play/pause, prev/next and close controls. Resume time and play duration are written back to Stash with `sceneSaveActivity`, and play starts are recorded with `sceneAddPlay`.
+- **Long-form controls.** Scene markers become chapters; add a sleep timer (5/15/30/60 minutes) and per-scene bookmarks.
 - **Play queue + auto-advance.** Build a queue from any browse view ("Play Work", "Play All", or a single track). The overlay auto-advances to the next track when the current one ends. Repeat modes: off / all / one. Prev/next buttons + queue indicator in the transport bar. Keyboard shortcuts: `n` (next), `p` (prev), `r` (repeat).
 - **Browse page.** Three views under the Browse tab: **By Work** (groups audio by parent directory, natural-sorted chapters, "Play Work" queues the whole work), **All Audio** (flat grid with search/sort, "Play All" queues the filtered list), **By Tag** (tag cards → scene grid, "Play All" queues the tag's scenes).
 - **Cover art.** Extract embedded cover art from MP3/ID3v2, FLAC, and M4A files, or generate default gradient covers via canvas. Stored as scene cover blobs.

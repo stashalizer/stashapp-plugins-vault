@@ -26,6 +26,13 @@
     return;
   }
 
+  const storage = window.QuestingAdventurerStorage || {
+    loadConfig: function () { return csLib.getConfiguration("QuestingAdventurer").then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return csLib.setConfiguration("QuestingAdventurer", value); },
+    loadKey: function () { return Promise.resolve(null); },
+    saveKey: function () { return Promise.resolve(false); },
+  };
+
   const CONFIG_KEY = "QuestingAdventurer";
   const LEGACY_CONFIG_KEY = "SceneRules";
   const DEFAULT_OPACITY = 0.6;
@@ -57,6 +64,440 @@
   // the browser fires after pointerup) is suppressed — otherwise dragging
   // the chip would also toggle collapse. Reset on every pointerup.
   let suppressNextClick = false;
+
+  // ── Quest Log ────────────────────────────────────────────────────────
+  // Sessions are stored outside the plugin's settings object. Suite Data is
+  // preferred; csLib is the backward-compatible fallback.
+  const LOG_KEY = "log";
+  const LOG_CS_KEY = "QuestingAdventurerLog";
+  const MAX_SESSIONS = 200;
+  const MAX_EVENTS_PER_SESSION = 500;
+  let questLog = { sessions: [] };
+  let currentSession = null;
+  let currentSceneId = null;
+  let logSaving = false;
+  let logPending = false;
+  let logSaveTimer = null;
+  let hardwareConfig = { enabled: false, url: "ws://localhost:12345", intensity: 0.4, durationMs: 1000 };
+
+  function dayKey(timestamp) {
+    const d = new Date(timestamp);
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + month + "-" + day;
+  }
+
+  function normalizeQuestLog(value) {
+    const log = value && typeof value === "object" ? value : {};
+    const sessions = Array.isArray(log.sessions) ? log.sessions : [];
+    return {
+      sessions: sessions
+        .filter(function (s) { return s && typeof s === "object" && typeof s.id === "string"; })
+        .slice(-MAX_SESSIONS)
+        .map(function (s) {
+          return {
+            id: s.id,
+            sceneId: s.sceneId ? String(s.sceneId) : null,
+            startedAt: typeof s.startedAt === "number" ? s.startedAt : Date.now(),
+            endedAt: typeof s.endedAt === "number" ? s.endedAt : null,
+            events: Array.isArray(s.events) ? s.events.slice(-MAX_EVENTS_PER_SESSION) : [],
+            counts: s.counts && typeof s.counts === "object" ? s.counts : {},
+          };
+        }),
+    };
+  }
+
+  async function loadQuestLog() {
+    try {
+      const stored = await storage.loadKey(LOG_KEY, LOG_CS_KEY);
+      questLog = normalizeQuestLog(stored);
+    } catch (err) {
+      console.error("QuestingAdventurer: failed to load quest log:", err);
+      questLog = { sessions: [] };
+    }
+  }
+
+  function ensureSession() {
+    if (currentSession) return currentSession;
+    const now = Date.now();
+    currentSession = {
+      id: generateId(),
+      sceneId: currentSceneId ? String(currentSceneId) : null,
+      startedAt: now,
+      endedAt: null,
+      events: [],
+      counts: {
+        penalty: 0,
+        reward: 0,
+        manualActivate: 0,
+        attach: 0,
+        detach: 0,
+        moveCompleted: 0,
+      },
+    };
+    questLog.sessions.push(currentSession);
+    trimQuestLog();
+    return currentSession;
+  }
+
+  function trimQuestLog() {
+    if (questLog.sessions.length > MAX_SESSIONS) {
+      questLog.sessions = questLog.sessions.slice(-MAX_SESSIONS);
+    }
+    for (const session of questLog.sessions) {
+      if (session.events.length > MAX_EVENTS_PER_SESSION) {
+        session.events = session.events.slice(-MAX_EVENTS_PER_SESSION);
+      }
+    }
+  }
+
+  function recordEvent(type, data) {
+    const session = ensureSession();
+    const event = Object.assign(
+      { at: Date.now(), type: type, actor: "user", source: "manual" },
+      data || {}
+    );
+    session.events.push(event);
+    if (event.type === "move-completed") {
+      session.counts.moveCompleted = (session.counts.moveCompleted || 0) + 1;
+    }
+    trimQuestLog();
+    scheduleQuestLogSave();
+  }
+
+  function countEvent(type) {
+    const session = ensureSession();
+    session.counts[type] = (session.counts[type] || 0) + 1;
+  }
+
+  function isMoveCompleted(moveId) {
+    if (!currentSession || !Array.isArray(currentSession.events)) return false;
+    return currentSession.events.some(function (e) {
+      return e.type === "move-completed" && e.moveId === moveId;
+    });
+  }
+
+  function completeMove(moveId, triggerId) {
+    if (!moveId || isMoveCompleted(moveId)) return;
+    recordEvent("move-completed", { moveId: moveId, triggerId: triggerId || null });
+    const move = state.moves.find(function (m) { return m.id === moveId; });
+    dispatchHardwareCommand();
+    announceToAria("Completed " + (move ? move.text : "move") + ".");
+    render();
+  }
+
+  function dispatchHardwareCommand() {
+    if (!hardwareConfig.enabled || !hardwareConfig.url) return;
+    try {
+      const socket = new WebSocket(hardwareConfig.url);
+      let deviceIndex = null;
+      let stopped = false;
+      const stop = function () {
+        if (stopped) return;
+        stopped = true;
+        if (deviceIndex !== null && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ StopDeviceCmd: { Id: 4, DeviceIndex: deviceIndex } }));
+        }
+        setTimeout(function () {
+          try { socket.close(); } catch (err) { /* ignore */ }
+        }, 100);
+      };
+      socket.addEventListener("open", function () {
+        socket.send(JSON.stringify({
+          RequestServerInfo: {
+            Id: 1,
+            ClientName: "Questing Adventurer",
+            MessageVersion: 1,
+          },
+        }));
+      });
+      socket.addEventListener("message", function (event) {
+        let message;
+        try { message = JSON.parse(event.data); } catch (err) { return; }
+        if (message.ServerInfo && hardwareConfig.enabled) {
+          socket.send(JSON.stringify({ StartScanning: { Id: 2 } }));
+        }
+        if (message.DeviceAdded && deviceIndex === null) {
+          deviceIndex = message.DeviceAdded.DeviceIndex;
+          socket.send(JSON.stringify({
+            ScalarCmd: {
+              Id: 3,
+              DeviceIndex: deviceIndex,
+              Scalars: [
+                {
+                  Index: 0,
+                  Scalar: Math.max(0, Math.min(1, Number(hardwareConfig.intensity) || 0)),
+                  ActuatorType: "Vibrate",
+                },
+              ],
+            },
+          }));
+          setTimeout(stop, Math.max(100, Number(hardwareConfig.durationMs) || 1000));
+        }
+      });
+      socket.addEventListener("error", function () {
+        console.warn("QuestingAdventurer: Intiface connection failed");
+        stop();
+      });
+      setTimeout(stop, 5000);
+    } catch (err) {
+      console.warn("QuestingAdventurer: Intiface dispatch failed", err);
+    }
+  }
+
+  function endSession() {
+    if (!currentSession) return;
+    currentSession.endedAt = Date.now();
+    currentSession = null;
+    scheduleQuestLogSave(true);
+    render();
+  }
+
+  function flushQuestLogSave() {
+    if (logSaving) {
+      logPending = true;
+      return;
+    }
+    logSaving = true;
+    logPending = false;
+    const snapshot = JSON.parse(JSON.stringify(questLog));
+    storage.saveKey(LOG_KEY, snapshot, LOG_CS_KEY, "Questing Adventurer quest log", function (latest) {
+      // Merge by session id so a concurrent tab's sessions are not dropped.
+      const merged = normalizeQuestLog(latest);
+      const byId = {};
+      for (const s of merged.sessions) byId[s.id] = s;
+      for (const s of snapshot.sessions) byId[s.id] = s;
+      return { sessions: Object.keys(byId).map(function (id) { return byId[id]; }).slice(-MAX_SESSIONS) };
+    }).then(function () {
+      logSaving = false;
+      if (logPending) flushQuestLogSave();
+    }).catch(function (err) {
+      console.error("QuestingAdventurer: failed to save quest log:", err);
+      logSaving = false;
+      if (logPending) flushQuestLogSave();
+    });
+  }
+
+  function scheduleQuestLogSave(immediate) {
+    if (logSaveTimer) clearTimeout(logSaveTimer);
+    if (immediate) {
+      flushQuestLogSave();
+      return;
+    }
+    logSaveTimer = setTimeout(function () {
+      logSaveTimer = null;
+      flushQuestLogSave();
+    }, 800);
+  }
+
+  function getQuestLogStats() {
+    const completedDays = new Set();
+    let totalCompleted = 0;
+    for (const session of questLog.sessions) {
+      for (const event of session.events) {
+        if (event.type === "move-completed" && typeof event.at === "number") {
+          completedDays.add(dayKey(event.at));
+          totalCompleted++;
+        }
+      }
+    }
+    const today = dayKey(Date.now());
+    let todayCompleted = 0;
+    for (const session of questLog.sessions) {
+      for (const event of session.events) {
+        if (event.type === "move-completed" && dayKey(event.at) === today) todayCompleted++;
+      }
+    }
+    let cursor = new Date();
+    if (!completedDays.has(dayKey(cursor.getTime()))) cursor.setDate(cursor.getDate() - 1);
+    let streak = 0;
+    while (completedDays.has(dayKey(cursor.getTime()))) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return { todayCompleted: todayCompleted, totalCompleted: totalCompleted, streak: streak };
+  }
+
+  function renderQuestLog(panel) {
+    const stats = getQuestLogStats();
+    const box = document.createElement("div");
+    box.className = "questing-adventurer-panel__quest-log";
+
+    const header = document.createElement("div");
+    header.className = "questing-adventurer-panel__quest-log-header";
+    const title = document.createElement("span");
+    title.textContent = "Quest Log";
+    header.appendChild(title);
+    if (currentSession) {
+      const end = document.createElement("button");
+      end.type = "button";
+      end.dataset.action = "end-session";
+      end.className = "questing-adventurer-panel__quest-log-end";
+      end.textContent = "End";
+      end.title = "End the current session";
+      end.setAttribute("aria-label", "End current quest session");
+      header.appendChild(end);
+    }
+    box.appendChild(header);
+
+    const summary = document.createElement("div");
+    summary.className = "questing-adventurer-panel__quest-log-summary";
+    summary.textContent =
+      "Today: " + stats.todayCompleted +
+      " done · Streak: " + stats.streak +
+      " day" + (stats.streak === 1 ? "" : "s");
+    box.appendChild(summary);
+
+    const completedNow = currentSession
+      ? currentSession.events.filter(function (e) { return e.type === "move-completed"; }).length
+      : 0;
+    if (currentSession) {
+      const now = document.createElement("div");
+      now.className = "questing-adventurer-panel__quest-log-current";
+      now.textContent = "This session: " + completedNow + " move" + (completedNow === 1 ? "" : "s") + " completed";
+      box.appendChild(now);
+    }
+
+    const recent = questLog.sessions.slice(-3).reverse();
+    if (recent.length > 0) {
+      const list = document.createElement("div");
+      list.className = "questing-adventurer-panel__quest-log-recent";
+      for (const session of recent) {
+        const done = session.events.filter(function (e) { return e.type === "move-completed"; }).length;
+        if (done === 0 && !session.endedAt) continue;
+        const row = document.createElement("div");
+        row.className = "questing-adventurer-panel__quest-log-row";
+        row.textContent =
+          new Date(session.startedAt).toLocaleDateString() +
+          " · " + done + " done";
+        list.appendChild(row);
+      }
+      if (list.children.length > 0) box.appendChild(list);
+    }
+
+    panel.appendChild(box);
+  }
+
+  // ── Scene-aware triggers ────────────────────────────────────────────
+  var sceneContext = { tagIds: [], markers: [] };
+  var sceneContextSceneId = null;
+  var timelineCleanup = null;
+  var firedMarkerIds = {};
+
+  async function fetchSceneContext(sceneId) {
+    try {
+      const response = await fetch("/graphql", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query:
+            "query ($id: ID!) { findScene(id: $id) { tags { id } scene_markers { id seconds title tags { id } } } }",
+          variables: { id: String(sceneId) },
+        }),
+      });
+      const payload = await response.json();
+      if (payload.errors && payload.errors.length) throw new Error(payload.errors[0].message);
+      const scene = payload.data && payload.data.findScene;
+      if (!scene) return { tagIds: [], markers: [] };
+      return {
+        tagIds: (scene.tags || []).map(function (t) { return String(t.id); }),
+        markers: (scene.scene_markers || []).map(function (m) {
+          return {
+            id: String(m.id),
+            seconds: typeof m.seconds === "number" ? m.seconds : 0,
+            title: m.title || "",
+            tagIds: (m.tags || []).map(function (t) { return String(t.id); }),
+          };
+        }),
+      };
+    } catch (err) {
+      console.warn("QuestingAdventurer: scene context lookup failed", err);
+      return { tagIds: [], markers: [] };
+    }
+  }
+
+  function isTriggerEligible(trigger) {
+    const required = Array.isArray(trigger.sceneTagIds) ? trigger.sceneTagIds : [];
+    if (required.length === 0) return true;
+    return required.some(function (id) { return sceneContext.tagIds.indexOf(String(id)) !== -1; });
+  }
+
+  function getEligibleTriggers() {
+    return state.triggers.filter(isTriggerEligible);
+  }
+
+  function attachTimelinePrompts() {
+    if (timelineCleanup) timelineCleanup();
+    const video = document.querySelector("#VideoJsPlayer video");
+    if (!video) return;
+    const onTime = function () {
+      const t = video.currentTime || 0;
+      for (const marker of sceneContext.markers) {
+        if (firedMarkerIds[marker.id]) continue;
+        if (t + 0.15 < marker.seconds) continue;
+        firedMarkerIds[marker.id] = true;
+        const trigger = getEligibleTriggers().find(function (tr) {
+          const wanted = Array.isArray(tr.markerTagIds) ? tr.markerTagIds : [];
+          return wanted.some(function (id) { return marker.tagIds.indexOf(String(id)) !== -1; });
+        });
+        if (trigger) showMarkerPrompt(marker, trigger);
+      }
+    };
+    video.addEventListener("timeupdate", onTime);
+    timelineCleanup = function () {
+      video.removeEventListener("timeupdate", onTime);
+      timelineCleanup = null;
+    };
+  }
+
+  function showMarkerPrompt(marker, trigger) {
+    const panel = document.querySelector(".questing-adventurer-panel");
+    if (!panel) return;
+    const existing = panel.querySelector(".questing-adventurer-panel__prompt");
+    if (existing) existing.remove();
+    const box = document.createElement("div");
+    box.className = "questing-adventurer-panel__prompt";
+    const title = document.createElement("div");
+    title.className = "questing-adventurer-panel__prompt-title";
+    title.textContent = "Prompt · " + (marker.title || trigger.name);
+    box.appendChild(title);
+    const copy = document.createElement("div");
+    copy.className = "questing-adventurer-panel__prompt-copy";
+    copy.textContent = trigger.name + " is available at this marker.";
+    box.appendChild(copy);
+    const actions = document.createElement("div");
+    actions.className = "questing-adventurer-panel__prompt-actions";
+    const accept = document.createElement("button");
+    accept.type = "button";
+    accept.textContent = "Accept";
+    accept.dataset.action = "accept-marker-prompt";
+    accept.dataset.triggerId = trigger.id;
+    accept.dataset.markerId = marker.id;
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Dismiss";
+    dismiss.dataset.action = "dismiss-marker-prompt";
+    actions.appendChild(accept);
+    actions.appendChild(dismiss);
+    box.appendChild(actions);
+    panel.appendChild(box);
+  }
+
+  function acceptMarkerPrompt(triggerId, markerId) {
+    const trigger = state.triggers.find(function (t) { return t.id === triggerId; });
+    if (!trigger || trigger.active) {
+      const prompt = document.querySelector(".questing-adventurer-panel__prompt");
+      if (prompt) prompt.remove();
+      return;
+    }
+    trigger.active = true;
+    countEvent("manualActivate");
+    recordEvent("trigger-activated", { triggerId: trigger.id, source: "marker", markerId: markerId });
+    queueSave();
+    announceToAria("Activated " + trigger.name + " from a scene marker.");
+    render();
+  }
 
   function generateId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -111,7 +552,7 @@
   // an empty trigger. The button is also disabled in that case.
   function applyPenalty() {
     if (state.triggers.length === 0) return;
-    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
+    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active && isTriggerEligible(t); });
     let trigger;
     let activatedANewTrigger = false;
     if (inactiveTriggers.length > 0) {
@@ -119,7 +560,12 @@
       trigger.active = true;
       activatedANewTrigger = true;
     } else {
-      trigger = state.triggers[Math.floor(Math.random() * state.triggers.length)];
+      const eligible = getEligibleTriggers();
+      if (eligible.length === 0) {
+        announceToAria("No triggers match this scene's tags.");
+        return;
+      }
+      trigger = eligible[Math.floor(Math.random() * eligible.length)];
     }
     // Per-trigger move filter: a move is "available" for THIS trigger if
     // (a) it's not already attached to this trigger (no duplicates on the
@@ -154,6 +600,11 @@
     }
     const attachedMove = availableForTrigger[Math.floor(Math.random() * availableForTrigger.length)];
     trigger.attachedMoveIds.push(attachedMove.id);
+    countEvent("penalty");
+    if (activatedANewTrigger) {
+      recordEvent("trigger-activated", { triggerId: trigger.id, source: "penalty" });
+    }
+    recordEvent("move-attached", { triggerId: trigger.id, moveId: attachedMove.id, source: "penalty" });
     queueSave();
     announceToAria(
       "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
@@ -178,6 +629,11 @@
       deactivated = true;
     }
     const removedMove = state.moves.find(function (m) { return m.id === removedMoveId; });
+    countEvent("reward");
+    recordEvent("move-detached", { triggerId: trigger.id, moveId: removedMoveId, source: "reward" });
+    if (deactivated) {
+      recordEvent("trigger-deactivated", { triggerId: trigger.id, source: "reward" });
+    }
     queueSave();
     if (removedMove) {
       announceToAria(
@@ -585,7 +1041,7 @@
 
   async function loadState() {
     try {
-      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const stored = (await storage.loadConfig()) || {};
       // v2 format has both `moves` and `triggers` arrays.
       if (Array.isArray(stored.moves) && Array.isArray(stored.triggers)) {
         state.moves = stored.moves.map(function (m) {
@@ -602,6 +1058,8 @@
           // INACTIVE (active: false) so the user activates them via Penalty.
           active: t.active === true,
           attachedMoveIds: Array.isArray(t.attachedMoveIds) ? t.attachedMoveIds : [],
+          sceneTagIds: Array.isArray(t.sceneTagIds) ? t.sceneTagIds.map(String) : [],
+          markerTagIds: Array.isArray(t.markerTagIds) ? t.markerTagIds.map(String) : [],
         };
       });
       } else {
@@ -628,6 +1086,14 @@
       state.opacity = Math.min(1, Math.max(0, o));
       state.showAddControls = stored.showAddControls === true;
       state.showManualControls = stored.showManualControls === true;
+      if (stored.hardware && typeof stored.hardware === "object") {
+        hardwareConfig = {
+          enabled: stored.hardware.enabled === true,
+          url: typeof stored.hardware.url === "string" && stored.hardware.url ? stored.hardware.url : "ws://localhost:12345",
+          intensity: typeof stored.hardware.intensity === "number" ? Math.max(0, Math.min(1, stored.hardware.intensity)) : 0.4,
+          durationMs: typeof stored.hardware.durationMs === "number" ? Math.max(100, Math.min(10000, stored.hardware.durationMs)) : 1000,
+        };
+      }
       if (
         stored.panelSize &&
         typeof stored.panelSize.width === "number" &&
@@ -671,7 +1137,7 @@
     saving = true;
     pendingSave = false;
     try {
-      const result = csLib.setConfiguration(CONFIG_KEY, {
+      const result = storage.saveConfig({
         moves: state.moves,
         triggers: state.triggers,
         collapsed: state.collapsed,
@@ -680,7 +1146,23 @@
         panelSize: state.panelSize,
         showAddControls: state.showAddControls,
         showManualControls: state.showManualControls,
-      });
+        hardware: hardwareConfig,
+      }, function (latest) {
+        // Persist this surface's values on top of the newest revision. The
+        // two surfaces own different fields; this at least guarantees the
+        // write is based on the newest revision rather than a stale one.
+        return Object.assign({}, latest || {}, {
+          moves: state.moves,
+          triggers: state.triggers,
+          collapsed: state.collapsed,
+          opacity: state.opacity,
+          panelPos: state.panelPos,
+          panelSize: state.panelSize,
+          showAddControls: state.showAddControls,
+          showManualControls: state.showManualControls,
+          hardware: hardwareConfig,
+        });
+      }, "Questing Adventurer overlay");
       await result;
       saving = false;
       if (pendingSave) queueSave();
@@ -930,7 +1412,7 @@
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
-    const activeTriggers = state.triggers.filter(function (t) { return t.active === true; });
+    const activeTriggers = state.triggers.filter(function (t) { return t.active === true && isTriggerEligible(t); });
     if (activeTriggers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "questing-adventurer-panel__empty";
@@ -1069,6 +1551,8 @@
 
     renderActiveList(panel);
 
+    renderQuestLog(panel);
+
     // Manual selection "Library" section. Rendered between the active-trigger
     // list and the bottom toggles when the user has opened it via the ≡ button.
     if (state.showManualControls) {
@@ -1191,6 +1675,23 @@
     const controls = document.createElement("span");
     controls.className = "questing-adventurer-panel__controls";
 
+    if (indented) {
+      const doneBtn = document.createElement("button");
+      doneBtn.type = "button";
+      doneBtn.dataset.action = "complete-move";
+      doneBtn.dataset.id = move.id;
+      doneBtn.dataset.triggerId = parentTriggerId || "";
+      const completed = isMoveCompleted(move.id);
+      doneBtn.className =
+        "questing-adventurer-panel__complete-button" +
+        (completed ? " questing-adventurer-panel__complete-button--done" : "");
+      doneBtn.title = completed ? "Completed in this session" : "Mark this move complete";
+      doneBtn.setAttribute("aria-label", completed ? "Move completed" : "Mark move complete");
+      doneBtn.textContent = completed ? "\u2713" : "\u25cb";
+      doneBtn.disabled = completed;
+      controls.appendChild(doneBtn);
+    }
+
     const delBtn = document.createElement("button");
     delBtn.dataset.action = "delete-move";
     delBtn.dataset.id = move.id;
@@ -1219,6 +1720,8 @@
       name: name,
       active: false,
       attachedMoveIds: [],
+      sceneTagIds: [],
+      markerTagIds: [],
     });
     queueSave();
     render();
@@ -1265,7 +1768,7 @@
     library.appendChild(headerEl);
 
     // --- Section 1: Activate inactive triggers ---
-    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active; });
+    const inactiveTriggers = state.triggers.filter(function (t) { return !t.active && isTriggerEligible(t); });
     if (inactiveTriggers.length > 0) {
       const subheader = document.createElement("div");
       subheader.className = "questing-adventurer-panel__library-subheader";
@@ -1301,8 +1804,8 @@
     // cap are filtered out — there's no point showing them, as the
     // attach handler would refuse them anyway.
     const availableMoves = getAvailableMoves();
-    const activeTriggers = state.triggers.filter(function (t) { return t.active; });
-    const inactiveForAttach = state.triggers.filter(function (t) { return !t.active; });
+    const activeTriggers = state.triggers.filter(function (t) { return t.active && isTriggerEligible(t); });
+    const inactiveForAttach = state.triggers.filter(function (t) { return !t.active && isTriggerEligible(t); });
 
     if (state.moves.length > 0) {
       const subheader = document.createElement("div");
@@ -1413,6 +1916,8 @@
     });
     if (!trigger || trigger.active) return;
     trigger.active = true;
+    countEvent("manualActivate");
+    recordEvent("trigger-activated", { triggerId: trigger.id, source: "manual" });
     queueSave();
     announceToAria("Activated " + trigger.name + ".");
     render();
@@ -1456,6 +1961,11 @@
     trigger.attachedMoveIds.push(moveId);
     const wasInactive = !trigger.active;
     if (wasInactive) trigger.active = true;
+    countEvent("attach");
+    if (wasInactive) {
+      recordEvent("trigger-activated", { triggerId: trigger.id, source: "manual-attach" });
+    }
+    recordEvent("move-attached", { triggerId: trigger.id, moveId: moveId, source: "manual" });
     queueSave();
     announceToAria(
       "Attached " + move.text + " to " + trigger.name +
@@ -1603,6 +2113,20 @@
         if (id) {
           consumeFooterText(panel, function (text) { addMoveInto(id, text); });
         }
+        break;
+      }
+      case "complete-move":
+        if (id) completeMove(id, el.dataset.triggerId);
+        break;
+      case "end-session":
+        endSession();
+        break;
+      case "accept-marker-prompt":
+        if (el.dataset.triggerId) acceptMarkerPrompt(el.dataset.triggerId, el.dataset.markerId);
+        break;
+      case "dismiss-marker-prompt": {
+        const prompt = document.querySelector(".questing-adventurer-panel__prompt");
+        if (prompt) prompt.remove();
         break;
       }
       case "delete-move":
@@ -1772,6 +2296,7 @@
   async function setupPanel(playerEl) {
     const match = window.location.pathname.match(/\/scenes\/(\d+)/);
     if (!match) return;
+    currentSceneId = match[1];
 
     if (playerEl.querySelector(".questing-adventurer-panel")) return;
 
@@ -1782,6 +2307,10 @@
 
     await migrateFromLegacy();
     await loadState();
+    await loadQuestLog();
+    sceneContextSceneId = String(match[1]);
+    sceneContext = await fetchSceneContext(match[1]);
+    firedMarkerIds = {};
 
     // Use a plain <div> (not a <dialog>) so the rest of the page is NOT
     // made inert. The overlay is appended to the video player element
@@ -1845,6 +2374,7 @@
       }, 300);
     });
     render();
+    attachTimelinePrompts();
   }
 
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
@@ -1855,10 +2385,26 @@
     typeof window.PluginApi.Event.addEventListener === "function"
   ) {
     window.PluginApi.Event.addEventListener("stash:location", function () {
+      const nextMatch = window.location.pathname.match(/\/scenes\/(\d+)/);
+      if (currentSession && (!nextMatch || String(currentSession.sceneId) !== nextMatch[1])) {
+        endSession();
+      }
+      if (!nextMatch || (sceneContextSceneId && sceneContextSceneId !== nextMatch[1])) {
+        if (timelineCleanup) timelineCleanup();
+        firedMarkerIds = {};
+      }
       if (!document.querySelector(".questing-adventurer-panel")) {
         const player = document.querySelector("#VideoJsPlayer");
         if (player) setupPanel(player);
       }
     });
   }
+
+  window.addEventListener("pagehide", function () {
+    if (currentSession) {
+      currentSession.endedAt = Date.now();
+      currentSession = null;
+      flushQuestLogSave();
+    }
+  });
 })();

@@ -683,3 +683,151 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* Cross-page dock ------------------------------------------------------- */
+.audio-support-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10000;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 8px 10px;
+  background: rgba(16, 16, 16, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-family: sans-serif;
+}
+
+.audio-support-dock--visible {
+  display: flex;
+}
+
+.audio-support-dock__controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.audio-support-dock__controls button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.audio-support-dock__controls button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.audio-support-dock__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* Lyrics upgrades -------------------------------------------------------- */
+.audio-support-overlay__lyrics-offset {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 6px;
+}
+
+.audio-support-overlay__lyrics-offset button,
+.audio-support-overlay__bookmark-add {
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.audio-support-overlay__lyrics-line {
+  position: relative;
+}
+
+.audio-support-overlay__lyrics-line--current {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 220, 120, 0.24) 0,
+    rgba(255, 220, 120, 0.24) var(--as-karaoke, 0%),
+    transparent var(--as-karaoke, 0%),
+    transparent 100%
+  );
+}
+
+.audio-support-overlay__lyrics-primary {
+  display: block;
+}
+
+.audio-support-overlay__lyrics-secondary {
+  display: block;
+  opacity: 0.65;
+  font-size: 0.86em;
+}
+
+/* Chapters / bookmarks --------------------------------------------------- */
+.audio-support-overlay__chapters,
+.audio-support-overlay__bookmarks {
+  margin: 8px 12px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.audio-support-overlay__chapters-header,
+.audio-support-overlay__bookmarks-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.audio-support-overlay__chapter,
+.audio-support-overlay__bookmark button {
+  display: block;
+  width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.audio-support-overlay__chapter:hover,
+.audio-support-overlay__bookmark button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.audio-support-overlay__bookmark {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.audio-support-overlay__bookmark button:first-child {
+  flex: 1;
+}
+
+.audio-support-overlay__sleep-select {
+  font-size: 11px;
+  max-width: 92px;
+}

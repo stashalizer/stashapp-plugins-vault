@@ -364,3 +364,38 @@
     text-align: center;
   }
 }
+
+/* Scene-card version badge ------------------------------------------------ */
+.scene-versions-card-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 3;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Comparison table ------------------------------------------------------- */
+.scene-versions-compare {
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.scene-versions-compare__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86em;
+}
+
+.scene-versions-compare__table th,
+.scene-versions-compare__table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+  text-align: left;
+  white-space: nowrap;
+}
+
+.scene-versions-compare__table thead th {
+  font-weight: 600;
+}

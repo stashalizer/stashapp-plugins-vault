@@ -1,18 +1,9 @@
 /**
  * MosaicFilterSettings — full-page settings UI.
  *
- * Architecture:
- * - Registers a route via PluginApi.patch.before("PluginRoutes", ...) at
- *   /plugins/mosaicfilter.
- * - Adds a launcher card in Settings > Tools via
- *   PluginApi.patch.before("SettingsToolsSection", ...). The launcher appears
- *   only under the "Scene Tools" subsection (the second SettingsToolsSection
- *   instance in SettingsToolsPanel) by gating on a module-level call counter.
- * - Reads/writes the same config key ("MosaicFilter") as the overlay. The
- *   config is a single flat object (no per-scene storage); the form on this
- *   page edits the same values the overlay reads and writes.
- * - Both surfaces maintain separate save locks and do not coordinate; this
- *   is the same trade-off QuestingAdventurer makes.
+ * The persisted config has three layers: global defaults, per-studio presets
+ * and per-scene presets. The overlay resolves scene > studio > default. This
+ * page can edit the default layer or any existing preset, and delete presets.
  */
 (function () {
   "use strict";
@@ -27,56 +18,94 @@
   const { useState, useEffect } = React;
   const { Route, Link } = PluginApi.libraries.ReactRouterDOM;
 
-  const csLib = window.csLib;
   const CONFIG_KEY = window.MosaicFilterShared.CONFIG_KEY;
   const PLUGIN_ROUTE = "/plugins/mosaicfilter";
-
   const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
   const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
+  const storage = window.MosaicFilterStorage || {
+    loadConfig: function () { return window.csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return window.csLib.setConfiguration(CONFIG_KEY, value); },
+  };
 
-  const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
-
-  let settingsToolsCallCount = 0;
-
-  // Utilities from shared module MosaicFilterShared.js
   var clamp = window.MosaicFilterShared.clamp;
   var isFiniteNumber = window.MosaicFilterShared.isFiniteNumber;
   var makeDefaultState = window.MosaicFilterShared.makeDefaultState;
-  var mergeStored = window.MosaicFilterShared.mergeStored;
+  var makeDefaultConfig = window.MosaicFilterShared.makeDefaultConfig;
+  var normalizeConfig = window.MosaicFilterShared.normalizeConfig;
   var sanitizeState = window.MosaicFilterShared.sanitizeState;
 
+  let settingsToolsCallCount = 0;
+
+  function targetLabel(target, config) {
+    if (target.kind === "scene") return "Scene preset · " + target.id;
+    if (target.kind === "studio") return "Studio preset · " + target.id;
+    return "Global default";
+  }
+
+  function targetState(config, target) {
+    if (target.kind === "scene") return config.scenePresets[String(target.id)] || makeDefaultState();
+    if (target.kind === "studio") return config.studioPresets[String(target.id)] || makeDefaultState();
+    return config.default;
+  }
+
   function MosaicFilterSettingsPage() {
+    const [config, setConfig] = useState(function () { return makeDefaultConfig(); });
+    const [target, setTarget] = useState({ kind: "default", id: null });
     const [loaded, setLoaded] = useState(false);
-    const [state, setState] = useState(() => makeDefaultState());
     const [dirty, setDirty] = useState(false);
     const [saveError, setSaveError] = useState(null);
 
     useEffect(function () {
       let cancelled = false;
       (async function () {
-        let stored = null;
         try {
-          stored = await csLib.getConfiguration(CONFIG_KEY);
+          const stored = await storage.loadConfig();
+          if (!cancelled) setConfig(normalizeConfig(stored));
         } catch (err) {
           console.error("MosaicFilter settings: failed to read configuration", err);
         }
-        if (cancelled) return;
-        setState(mergeStored(stored));
-        setLoaded(true);
+        if (!cancelled) setLoaded(true);
       })();
       return function () { cancelled = true; };
     }, []);
 
+    const state = targetState(config, target);
+
     function updateField(patch) {
-      setState(function (prev) {
-        return sanitizeState(Object.assign({}, prev, patch));
+      setConfig(function (prev) {
+        const next = normalizeConfig(prev);
+        const updated = sanitizeState(Object.assign({}, targetState(next, target), patch));
+        if (target.kind === "scene") next.scenePresets[String(target.id)] = updated;
+        else if (target.kind === "studio") next.studioPresets[String(target.id)] = updated;
+        else next.default = updated;
+        return next;
       });
+      setDirty(true);
+    }
+
+    function deletePreset(kind, id) {
+      setConfig(function (prev) {
+        const next = normalizeConfig(prev);
+        if (kind === "scene") delete next.scenePresets[String(id)];
+        if (kind === "studio") delete next.studioPresets[String(id)];
+        return next;
+      });
+      if (target.kind === kind && String(target.id) === String(id)) {
+        setTarget({ kind: "default", id: null });
+      }
       setDirty(true);
     }
 
     async function save() {
       try {
-        await csLib.setConfiguration(CONFIG_KEY, state);
+        await storage.saveConfig(config, function (latest) {
+          const normalized = normalizeConfig(latest);
+          return {
+            default: config.default,
+            scenePresets: Object.assign({}, normalized.scenePresets, config.scenePresets),
+            studioPresets: Object.assign({}, normalized.studioPresets, config.studioPresets),
+          };
+        }, "Mosaic Filter settings");
         setSaveError(null);
         setDirty(false);
       } catch (err) {
@@ -86,12 +115,11 @@
     }
 
     if (!loaded) {
-      return h("div", { className: "mosaic-filter-settings" },
+      return h("div", { className: "mosaic-filter-settings", "data-mosaic-filter-ui": "true" },
         h("p", { className: "mosaic-filter-settings__loading" }, "Loading…")
       );
     }
 
-    // Helper: a number-input row whose value is displayed as a percent.
     function percentField(label, fieldKey, minPct, maxPct) {
       return h("label", null,
         h("span", null, label),
@@ -104,8 +132,7 @@
           onChange: function (e) {
             const v = parseInt(e.target.value, 10);
             const safe = isNaN(v) ? minPct : v;
-            const pct = clamp(safe, minPct, maxPct) / 100;
-            updateField({ [fieldKey]: pct });
+            updateField({ [fieldKey]: clamp(safe, minPct, maxPct) / 100 });
           },
         })
       );
@@ -133,61 +160,100 @@
         h("span", null, label),
         h("select", {
           value: state[fieldKey],
-          onChange: function (e) {
-            updateField({ [fieldKey]: e.target.value });
-          },
+          onChange: function (e) { updateField({ [fieldKey]: e.target.value }); },
         },
           options.map(function (opt) {
-            return h("option", { value: opt.value }, opt.label);
+            return h("option", { value: opt.value, key: opt.value }, opt.label);
           })
         )
       );
     }
 
-    return h("div", { className: "mosaic-filter-settings" },
+    function presetList(kind, map) {
+      const keys = Object.keys(map);
+      if (keys.length === 0) {
+        return h("p", { className: "mosaic-filter-settings__hint" },
+          "No " + kind + " presets yet. Use “Save " + kind + "” in the player overlay.");
+      }
+      return h("div", { className: "mosaic-filter-settings__preset-list" },
+        keys.map(function (id) {
+          return h("div", { className: "mosaic-filter-settings__preset-row", key: kind + ":" + id },
+            h("span", null, (kind === "scene" ? "Scene " : "Studio ") + id),
+            h("button", {
+              type: "button",
+              className: "mosaic-filter-settings__button",
+              onClick: function () { setTarget({ kind: kind, id: id }); },
+            }, "Edit"),
+            h("button", {
+              type: "button",
+              className: "mosaic-filter-settings__button mosaic-filter-settings__button--danger",
+              onClick: function () { deletePreset(kind, id); },
+            }, "Delete")
+          );
+        })
+      );
+    }
+
+    return h("div", { className: "mosaic-filter-settings", "data-mosaic-filter-ui": "true" },
       h("h1", null, "Mosaic Filter"),
       h("p", { className: "mosaic-filter-settings__intro" },
-        "Place a draggable, resizable blur region over any scene. ",
-        "Settings are global — the same filter is used on every scene. ",
-        "Turn on Follow so the region tracks the cursor (the most common use case)."
+        "Region-level redaction for any scene. Presets resolve scene > studio > global default. ",
+        "Use the overlay's Save scene / Save studio buttons to create a preset."
       ),
 
       h("section", { className: "mosaic-filter-settings__section" },
-        h("h2", null, "Filter style"),
-        h("p", { className: "mosaic-filter-settings__hint" },
-          "Look and feel of the blur region."
-        ),
+        h("h2", null, "Editing: " + targetLabel(target, config)),
+        target.kind !== "default"
+          ? h("button", {
+              type: "button",
+              className: "mosaic-filter-settings__button",
+              onClick: function () { setTarget({ kind: "default", id: null }); },
+            }, "Back to global default")
+          : null,
         h("div", { className: "mosaic-filter-settings__row" },
           pixelField("Blur amount (px)", "blurAmount", 0, MAX_BLUR),
+          selectField("Fill", "fill", [
+            { value: "blur", label: "Blur" },
+            { value: "solid", label: "Solid" },
+            { value: "pixelate", label: "Pixelate" },
+          ]),
           selectField("Shape", "shape", [
             { value: "rectangle", label: "Rectangle" },
             { value: "ellipse", label: "Ellipse" },
           ]),
           selectField("Mode", "mode", [
-            { value: "normal", label: "Normal — blur inside the filter" },
-            { value: "reverse", label: "Reverse — blur everything else" },
-          ]),
+            { value: "normal", label: "Normal — hide inside the filter" },
+            { value: "reverse", label: "Reverse — hide everything else" },
+          ])
         ),
+        h("div", { className: "mosaic-filter-settings__row" },
+          h("label", null,
+            h("span", null, "Solid colour"),
+            h("input", {
+              type: "color",
+              value: state.fillColor,
+              onChange: function (e) { updateField({ fillColor: e.target.value }); },
+            })
+          ),
+          pixelField("Pixel size (px)", "pixelSize", 4, 64)
+        )
       ),
 
       h("section", { className: "mosaic-filter-settings__section" },
         h("h2", null, "Geometry"),
         h("p", { className: "mosaic-filter-settings__hint" },
-          "Default size and position on the player."
+          "Size and position as percentages of the player."
         ),
         h("div", { className: "mosaic-filter-settings__row" },
           percentField("Width (% of player)", "widthPct", Math.round(MIN_SIZE_PCT * 100), 100),
           percentField("Height (% of player)", "heightPct", Math.round(MIN_SIZE_PCT * 100), 100),
           percentField("Position X (% from left)", "xPct", 0, 100),
-          percentField("Position Y (% from top)", "yPct", 0, 100),
-        ),
+          percentField("Position Y (% from top)", "yPct", 0, 100)
+        )
       ),
 
       h("section", { className: "mosaic-filter-settings__section" },
         h("h2", null, "Behavior"),
-        h("p", { className: "mosaic-filter-settings__hint" },
-          "Defaults when a scene starts."
-        ),
         h("div", { className: "mosaic-filter-settings__row" },
           h("label", { className: "mosaic-filter-settings__checkbox" },
             h("input", {
@@ -195,7 +261,7 @@
               checked: !!state.active,
               onChange: function (e) { updateField({ active: !!e.target.checked }); },
             }),
-            h("span", null, "Active by default")
+            h("span", null, "Active")
           ),
           h("label", { className: "mosaic-filter-settings__checkbox" },
             h("input", {
@@ -203,9 +269,22 @@
               checked: !!state.follow,
               onChange: function (e) { updateField({ follow: !!e.target.checked }); },
             }),
-            h("span", null, "Follow cursor by default")
-          ),
-        ),
+            h("span", null, "Follow cursor")
+          )
+        )
+      ),
+
+      h("section", { className: "mosaic-filter-settings__section" },
+        h("h2", null, "Scene presets"),
+        presetList("scene", config.scenePresets)
+      ),
+
+      h("section", { className: "mosaic-filter-settings__section" },
+        h("h2", null, "Studio presets"),
+        presetList("studio", config.studioPresets)
+      ),
+
+      h("section", { className: "mosaic-filter-settings__section" },
         h("div", { className: "mosaic-filter-settings__actions" },
           h("button", {
             type: "button",
@@ -213,13 +292,11 @@
             disabled: !dirty,
             onClick: save,
           }, "Save"),
-          saveError ? h("span", { className: "mosaic-filter-settings__error" }, saveError) : null,
-        ),
-      ),
+          saveError ? h("span", { className: "mosaic-filter-settings__error" }, saveError) : null
+        )
+      )
     );
   }
-
-  // Route + launcher registration ----------------------------------------
 
   PluginApi.patch.before("PluginRoutes", function (props) {
     const newChildren = h(
@@ -233,12 +310,6 @@
 
   PluginApi.patch.before("SettingsToolsSection", function (props) {
     settingsToolsCallCount += 1;
-    // SettingsToolsPanel.tsx renders the same PatchContainerComponent twice
-    // in fixed order: 1st = general "Tools", 2nd = "Scene Tools". React
-    // re-renders fire the pair in the same order, so parity (odd = Tools,
-    // even = Scene Tools) is the correct gate. Assumption documented because
-    // if Stash ever renders only one instance or swaps the order, the card
-    // lands in the wrong section.
     if (settingsToolsCallCount % 2 !== 0) {
       return [props];
     }
@@ -249,7 +320,7 @@
         "div",
         { className: "mosaic-filter-settings__launcher-card" },
         h("h3", null, "Mosaic Filter"),
-        h("p", null, "Default mosaic settings (applied to every scene)")
+        h("p", null, "Global defaults and scene/studio presets")
       )
     );
     const newChildren = Array.isArray(props.children)

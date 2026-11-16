@@ -252,3 +252,51 @@
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.9rem;
 }
+
+/* Partner deal ----------------------------------------------------------- */
+.questing-adventurer-settings__deal {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+}
+
+.questing-adventurer-settings__deal-hint,
+.questing-adventurer-settings__deal-message {
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+
+.questing-adventurer-settings__deal-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.questing-adventurer-settings__deal-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.questing-adventurer-settings__deal-draw {
+  margin-top: 8px;
+  padding: 8px 16px;
+  font-size: 1rem;
+}
+
+/* Scene/marker tag pools */
+.questing-adventurer-settings__tag-pools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 4px 12px 8px;
+}
+
+.questing-adventurer-settings__tag-pools label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.82em;
+  opacity: 0.9;
+}

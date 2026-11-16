@@ -174,3 +174,27 @@
   font-size: 13px;
   opacity: 0.75;
 }
+
+.mosaic-filter-settings__preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mosaic-filter-settings__preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+}
+
+.mosaic-filter-settings__preset-row > span {
+  flex: 1;
+}
+
+.mosaic-filter-settings__button--danger {
+  border-color: rgba(220, 80, 80, 0.6);
+  color: rgb(220, 80, 80);
+}

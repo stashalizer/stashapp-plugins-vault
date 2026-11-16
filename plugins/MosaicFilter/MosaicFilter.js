@@ -37,6 +37,10 @@
   const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
   const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
   const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
+  const storage = window.MosaicFilterStorage || {
+    loadConfig: function () { return csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return csLib.setConfiguration(CONFIG_KEY, value); },
+  };
 
   // ---------------------------------------------------------------------------
   // Utilities (from shared module MosaicFilterShared.js)
@@ -45,14 +49,23 @@
   var clamp = window.MosaicFilterShared.clamp;
   var isFiniteNumber = window.MosaicFilterShared.isFiniteNumber;
   var makeDefaultState = window.MosaicFilterShared.makeDefaultState;
+  var makeDefaultConfig = window.MosaicFilterShared.makeDefaultConfig;
   var mergeStored = window.MosaicFilterShared.mergeStored;
   var sanitizeState = window.MosaicFilterShared.sanitizeState;
+  var normalizeConfig = window.MosaicFilterShared.normalizeConfig;
+  var resolveState = window.MosaicFilterShared.resolveState;
+  var makePreset = window.MosaicFilterShared.makePreset;
+  var presetSource = window.MosaicFilterShared.presetSource;
 
-  // Module-level state. `state` is the single global config object. It is
-  // reloaded from csLib on every fresh mount of the overlay (e.g. after
-  // navigation, after the settings page writes, or after React re-mounts
-  // the player element).
+  // Module-level state. `config` owns the persisted layers (default + scene
+  // and studio presets); `state` is the effective flat state for the current
+  // scene. Every user edit updates the effective layer and then persists.
+  let config = makeDefaultConfig();
   let state = makeDefaultState();
+  let context = { sceneId: null, studioId: null, source: "default" };
+  let studioLookupToken = 0;
+  let pixelLoopActive = false;
+  let pixelVideoFrameCallback = null;
 
   let saving = false;
   let pendingSave = false;
@@ -78,17 +91,37 @@
   let lastPointer = null;
 
   // ---------------------------------------------------------------------------
-  // Persistence (csLib is async; coalesce concurrent writes with a lock)
+  // Persistence (Suite Data preferred; csLib fallback)
   // ---------------------------------------------------------------------------
 
-  async function saveNow() {
+  function applyEffectiveChange() {
+    const preset = makePreset(state);
+    if (context.source === "scene" && context.sceneId) {
+      config.scenePresets[String(context.sceneId)] = preset;
+    } else if (context.source === "studio" && context.studioId) {
+      config.studioPresets[String(context.studioId)] = preset;
+    } else {
+      config.default = preset;
+    }
+  }
+
+  async function persistConfig() {
     if (saving) {
       pendingSave = true;
       return;
     }
     saving = true;
     try {
-      await csLib.setConfiguration(CONFIG_KEY, state);
+      await storage.saveConfig(config, function (latest) {
+        const normalized = normalizeConfig(latest);
+        // Keep the newest revision's maps, then overlay this tab's current
+        // effective layer. Presets for other scenes/studios survive.
+        return {
+          default: config.default,
+          scenePresets: Object.assign({}, normalized.scenePresets, config.scenePresets),
+          studioPresets: Object.assign({}, normalized.studioPresets, config.studioPresets),
+        };
+      }, "Mosaic Filter overlay");
     } catch (err) {
       console.error("MosaicFilter: failed to save configuration", err);
     } finally {
@@ -100,16 +133,49 @@
     }
   }
 
-  // Load config from csLib and update the in-memory `state`.
+  async function saveNow() {
+    applyEffectiveChange();
+    await persistConfig();
+  }
+
+  async function resolveStudioId(sceneId) {
+    if (!sceneId || !window.PluginApi || !window.PluginApi.utils || !window.PluginApi.utils.StashService) {
+      return null;
+    }
+    const client = window.PluginApi.utils.StashService.getClient();
+    if (!client) return null;
+    try {
+      const result = await client.query({
+        query: window.PluginApi.GQL.FindSceneDocument,
+        variables: { id: String(sceneId) },
+        fetchPolicy: "no-cache",
+      });
+      const scene = result && result.data && result.data.findScene;
+      return scene && scene.studio ? String(scene.studio.id) : null;
+    } catch (err) {
+      console.warn("MosaicFilter: studio lookup failed", err);
+      return null;
+    }
+  }
+
   async function loadState() {
     let stored = null;
     try {
-      stored = await csLib.getConfiguration(CONFIG_KEY);
+      stored = await storage.loadConfig();
     } catch (err) {
       console.error("MosaicFilter: failed to read configuration", err);
       stored = null;
     }
-    state = mergeStored(stored);
+    config = normalizeConfig(stored);
+    const match = window.location.pathname.match(/\/scenes\/(\d+)/);
+    context.sceneId = match ? match[1] : null;
+    const token = ++studioLookupToken;
+    const studioId = await resolveStudioId(context.sceneId);
+    if (token === studioLookupToken) {
+      context.studioId = studioId;
+    }
+    context.source = presetSource(config, context.sceneId, context.studioId);
+    state = resolveState(config, context.sceneId, context.studioId);
   }
 
   // ---------------------------------------------------------------------------
@@ -132,6 +198,12 @@
     const r = document.createElement("div");
     r.className = "mosaic-filter-rectangle";
     r.dataset.action = "rect-drag";
+    r.setAttribute("data-mosaic-filter-ui", "true");
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "mosaic-filter-rectangle__pixel-canvas";
+    canvas.setAttribute("aria-hidden", "true");
+    r.appendChild(canvas);
 
     const h = document.createElement("div");
     h.className = "mosaic-filter-rectangle__resize";
@@ -154,6 +226,7 @@
     b.dataset.action = "panel";
     b.setAttribute("role", "toolbar");
     b.setAttribute("aria-label", "Mosaic filter controls");
+    b.setAttribute("data-mosaic-filter-ui", "true");
     return b;
   }
 
@@ -163,10 +236,13 @@
     const follow = !!state.follow;
     const shape = state.shape;
     const mode = state.mode;
+    const fill = state.fill;
+    const sourceLabel = context.source === "scene" ? "Scene preset" : context.source === "studio" ? "Studio preset" : "Default";
+    const hasPreset = context.source !== "default";
     bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
     bar.innerHTML =
-      `<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls">` +
-        `🔲 Mosaic ${on ? "ON" : "OFF"}` +
+      `<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls · ${sourceLabel}">` +
+        `🔲 Mosaic ${on ? "ON" : "OFF"} · ${sourceLabel}` +
       `</span>` +
       `<span class="mosaic-filter-bar__controls">` +
         `<span class="mosaic-filter-bar__slider">` +
@@ -183,11 +259,32 @@
         `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-shape" title="${shape === "ellipse" ? "Shape: ellipse. Click to switch to rectangle." : "Shape: rectangle. Click to switch to ellipse."}">` +
           `${shape === "ellipse" ? "● Ellipse" : "▭ Rectangle"}` +
         `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="${mode === "reverse" ? "Mode: reverse — blur outside the filter. Click to switch to normal." : "Mode: normal — blur inside the filter. Click to switch to reverse."}">` +
+        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="${mode === "reverse" ? "Mode: reverse — hide outside the filter. Click to switch to normal." : "Mode: normal — hide inside the filter. Click to switch to reverse."}">` +
           `${mode === "reverse" ? "◈ Reverse" : "▣ Normal"}` +
         `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the mosaic to default size, position, and blur">` +
+        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="cycle-fill" title="Fill mode: ${fill}. Click to cycle blur → solid → pixelate.">` +
+          `${fill === "solid" ? "■ Solid" : fill === "pixelate" ? "▦ Pixelate" : "◌ Blur"}` +
+        `</button>` +
+        (fill === "solid"
+          ? `<input type="color" value="${state.fillColor}" data-action="fill-color" title="Solid fill colour" aria-label="Solid fill colour" />`
+          : "") +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="save-scene-preset" title="Save the current filter as a preset for this scene" ${context.sceneId ? "" : "disabled"}>` +
+          `Save scene` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="save-studio-preset" title="Save the current filter as a preset for this studio" ${context.studioId ? "" : "disabled"}>` +
+          `Save studio` +
+        `</button>` +
+        (hasPreset
+          ? `<button type="button" class="mosaic-filter-bar__button" data-action="clear-preset" title="Remove the preset for this scene/studio">Clear preset</button>`
+          : "") +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the current filter to defaults">` +
           `↺ Reset` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="screenshot" title="Copy or download a redacted screenshot of the current frame">` +
+          `📷 Shot` +
+        `</button>` +
+        `<button type="button" class="mosaic-filter-bar__button" data-action="panic" title="Show a neutral local reference page (Ctrl+Shift+X to toggle)">` +
+          `⛔ Panic` +
         `</button>` +
         `<button type="button" class="mosaic-filter-bar__button" data-action="close-bar" title="Hide the control bar (the rectangle stays if it is active)" aria-label="Close controls">` +
           `✕` +
@@ -207,10 +304,14 @@
     rect.style.width = (state.widthPct * pw) + "px";
     rect.style.height = (state.heightPct * ph) + "px";
     player.style.setProperty("--mf-blur", state.blurAmount + "px");
+    player.style.setProperty("--mf-fill-color", state.fillColor);
     rect.classList.toggle("mosaic-filter-rectangle--hidden", !state.active);
     rect.classList.toggle("mosaic-filter-rectangle--ellipse", state.shape === 'ellipse');
     rect.classList.toggle("mosaic-filter-rectangle--reverse", state.mode === 'reverse');
+    rect.classList.toggle("mosaic-filter-rectangle--fill-solid", state.fill === 'solid');
+    rect.classList.toggle("mosaic-filter-rectangle--fill-pixelate", state.fill === 'pixelate');
     updateMask();
+    syncPixelCanvas();
   }
 
   // Update the reverse-mode mask layer position, size, and shape to match
@@ -296,6 +397,266 @@
     const reverseOn = state.active && state.mode === 'reverse';
     maskLayer.classList.toggle('mosaic-filter-mask-layer--reverse', reverseOn);
     maskLayer.classList.toggle('mosaic-filter-mask-layer--hidden', !state.active);
+    maskLayer.classList.toggle('mosaic-filter-mask-layer--fill-solid', reverseOn && state.fill === 'solid');
+    maskLayer.classList.toggle('mosaic-filter-mask-layer--fill-blur', reverseOn && state.fill === 'blur');
+  }
+
+  function getVideoElement() {
+    if (!player) return null;
+    return player.querySelector("video");
+  }
+
+  function stopPixelLoop() {
+    pixelLoopActive = false;
+    if (pixelVideoFrameCallback && getVideoElement() && getVideoElement().cancelVideoFrameCallback) {
+      try { getVideoElement().cancelVideoFrameCallback(pixelVideoFrameCallback); } catch (_) { /* ignore */ }
+    }
+    pixelVideoFrameCallback = null;
+  }
+
+  function drawPixelFrame() {
+    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+    const video = getVideoElement();
+    if (!canvas || !video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+    const width = Math.max(4, Math.floor(rect.clientWidth / Math.max(4, state.pixelSize)));
+    const height = Math.max(4, Math.floor(rect.clientHeight / Math.max(4, state.pixelSize)));
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Cover-crop the video into the filter region so the pixelated preview
+    // does not stretch when the region has a different aspect ratio.
+    const targetAspect = width / height;
+    const sourceAspect = video.videoWidth / video.videoHeight;
+    let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+    if (sourceAspect > targetAspect) {
+      sw = video.videoHeight * targetAspect;
+      sx = (video.videoWidth - sw) / 2;
+    } else {
+      sh = video.videoWidth / targetAspect;
+      sy = (video.videoHeight - sh) / 2;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+  }
+
+  function startPixelLoop() {
+    if (pixelLoopActive) return;
+    const video = getVideoElement();
+    if (!video) return;
+    pixelLoopActive = true;
+    if (typeof video.requestVideoFrameCallback === "function") {
+      const onFrame = function () {
+        if (!pixelLoopActive) return;
+        drawPixelFrame();
+        pixelVideoFrameCallback = video.requestVideoFrameCallback(onFrame);
+      };
+      pixelVideoFrameCallback = video.requestVideoFrameCallback(onFrame);
+      return;
+    }
+    let last = 0;
+    const tick = function (now) {
+      if (!pixelLoopActive) return;
+      if (!last || now - last > 80) {
+        last = now;
+        drawPixelFrame();
+      }
+      window.requestAnimationFrame(tick);
+    };
+    window.requestAnimationFrame(tick);
+  }
+
+  function syncPixelCanvas() {
+    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+    if (!canvas) return;
+    const on = state.active && state.fill === "pixelate" && state.mode === "normal";
+    canvas.style.display = on ? "block" : "none";
+    if (on) {
+      drawPixelFrame();
+      startPixelLoop();
+    } else {
+      stopPixelLoop();
+    }
+  }
+
+  function clipFilterRegion(ctx, x, y, w, h) {
+    ctx.beginPath();
+    if (state.shape === "ellipse") {
+      ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    } else {
+      ctx.rect(x, y, w, h);
+    }
+    ctx.clip();
+  }
+
+  function paintFilterEffect(ctx, video, x, y, w, h, canvasWidth, canvasHeight) {
+    if (state.fill === "solid") {
+      ctx.fillStyle = state.fillColor;
+      ctx.fillRect(x, y, w, h);
+      return;
+    }
+    if (state.fill === "pixelate") {
+      const temp = document.createElement("canvas");
+      temp.width = Math.max(2, Math.floor(w / Math.max(4, state.pixelSize)));
+      temp.height = Math.max(2, Math.floor(h / Math.max(4, state.pixelSize)));
+      const tctx = temp.getContext("2d");
+      tctx.imageSmoothingEnabled = false;
+      tctx.drawImage(video, 0, 0, canvasWidth, canvasHeight, 0, 0, temp.width, temp.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(temp, 0, 0, temp.width, temp.height, x, y, w, h);
+      ctx.imageSmoothingEnabled = true;
+      return;
+    }
+    ctx.filter = "blur(" + state.blurAmount + "px)";
+    ctx.drawImage(video, 0, 0, canvasWidth, canvasHeight, 0, 0, canvasWidth, canvasHeight);
+    ctx.filter = "none";
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function setScreenshotStatus(message) {
+    if (!bar) return;
+    const chip = bar.querySelector(".mosaic-filter-bar__chip");
+    if (chip) chip.title = message;
+  }
+
+  function captureRedacted() {
+    const video = getVideoElement();
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      setScreenshotStatus("Screenshot unavailable: video frame is not ready.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const pw = player.clientWidth || canvas.width;
+    const ph = player.clientHeight || canvas.height;
+    const x = state.xPct * pw * (canvas.width / pw);
+    const y = state.yPct * ph * (canvas.height / ph);
+    const w = state.widthPct * pw * (canvas.width / pw);
+    const h = state.heightPct * ph * (canvas.height / ph);
+
+    if (state.mode === "reverse") {
+      const effect = document.createElement("canvas");
+      effect.width = canvas.width;
+      effect.height = canvas.height;
+      const ectx = effect.getContext("2d");
+      ectx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      paintFilterEffect(ectx, video, 0, 0, canvas.width, canvas.height, canvas.width, canvas.height);
+      ctx.drawImage(effect, 0, 0);
+      ctx.save();
+      clipFilterRegion(ctx, x, y, w, h);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    } else {
+      ctx.save();
+      clipFilterRegion(ctx, x, y, w, h);
+      paintFilterEffect(ctx, video, x, y, w, h, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    canvas.toBlob(function (blob) {
+      if (!blob) {
+        setScreenshotStatus("Screenshot failed.");
+        return;
+      }
+      const filename = "scene-" + (context.sceneId || "frame") + "-redacted.png";
+      if (navigator.clipboard && window.ClipboardItem) {
+        navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function () {
+          setScreenshotStatus("Redacted screenshot copied.");
+        }).catch(function () {
+          downloadBlob(blob, filename);
+          setScreenshotStatus("Clipboard unavailable; downloaded instead.");
+        });
+      } else {
+        downloadBlob(blob, filename);
+        setScreenshotStatus("Redacted screenshot downloaded.");
+      }
+    }, "image/png");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Panic screen
+  // ---------------------------------------------------------------------------
+
+  var panicEl = null;
+  var panicActive = false;
+  var panicPrevTitle = null;
+  var panicPrevIcon = null;
+
+  function buildPanicScreen() {
+    const root = document.createElement("div");
+    root.className = "mosaic-filter-panic";
+    root.setAttribute("data-mosaic-filter-ui", "true");
+    root.setAttribute("role", "dialog");
+    root.setAttribute("aria-label", "Reference article");
+
+    const page = document.createElement("article");
+    page.className = "mosaic-filter-panic__article";
+    const heading = document.createElement("h1");
+    heading.textContent = "Reference article";
+    page.appendChild(heading);
+    const sub = document.createElement("p");
+    sub.className = "mosaic-filter-panic__sub";
+    sub.textContent = "From the reference collection";
+    page.appendChild(sub);
+    const body = document.createElement("p");
+    body.textContent =
+      "This page is a local, static placeholder. It is not connected to the network, does not load remote images, " +
+      "and exists only to give the current tab a believable, neutral appearance.";
+    page.appendChild(body);
+    const body2 = document.createElement("p");
+    body2.textContent =
+      "Use the same shortcut to return to the previous view. Playback remains paused when the placeholder is dismissed.";
+    page.appendChild(body2);
+    root.appendChild(page);
+    return root;
+  }
+
+  function togglePanicScreen() {
+    if (panicActive) {
+      if (panicEl && panicEl.parentElement) panicEl.parentElement.removeChild(panicEl);
+      panicEl = null;
+      panicActive = false;
+      document.title = panicPrevTitle || document.title;
+      if (panicPrevIcon) {
+        panicPrevIcon.href = panicPrevIcon.__mosaicOriginal || panicPrevIcon.href;
+      }
+      document.body.classList.remove("mosaic-filter-panic-open");
+      return;
+    }
+    const video = getVideoElement();
+    if (video) {
+      video.pause();
+      video.muted = true;
+    }
+    panicPrevTitle = document.title;
+    const icon = document.querySelector("link[rel='icon']");
+    if (icon) {
+      panicPrevIcon = icon;
+      icon.__mosaicOriginal = icon.href;
+      icon.href = "data:image/svg+xml," + encodeURIComponent(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23fff'/></svg>"
+      );
+    }
+    document.title = "Reference article";
+    panicEl = buildPanicScreen();
+    document.body.appendChild(panicEl);
+    document.body.classList.add("mosaic-filter-panic-open");
+    panicActive = true;
   }
 
   function render() {
@@ -308,6 +669,8 @@
   // ---------------------------------------------------------------------------
 
   function teardown() {
+    stopPixelLoop();
+    if (panicActive) togglePanicScreen();
     detachFollowListener();
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
@@ -365,6 +728,13 @@
 
   async function setupPanel(targetPlayer) {
     if (player !== targetPlayer) {
+      teardown();
+    }
+    const routeMatch = window.location.pathname.match(/\/scenes\/(\d+)/);
+    const routeSceneId = routeMatch ? routeMatch[1] : null;
+    if (rect && bar && context.sceneId !== routeSceneId) {
+      // Same player element, different scene: drop the overlay and reload the
+      // effective preset for the new scene.
       teardown();
     }
     if (rect && bar) {
@@ -515,6 +885,36 @@
         saveNow();
         render();
         break;
+      case "cycle-fill":
+        state.fill = state.fill === 'blur' ? 'solid' : state.fill === 'solid' ? 'pixelate' : 'blur';
+        saveNow();
+        render();
+        break;
+      case "save-scene-preset":
+        if (!context.sceneId) break;
+        context.source = "scene";
+        applyEffectiveChange();
+        persistConfig();
+        render();
+        break;
+      case "save-studio-preset":
+        if (!context.studioId) break;
+        context.source = "studio";
+        applyEffectiveChange();
+        persistConfig();
+        render();
+        break;
+      case "clear-preset":
+        if (context.source === "scene" && context.sceneId) {
+          delete config.scenePresets[String(context.sceneId)];
+        } else if (context.source === "studio" && context.studioId) {
+          delete config.studioPresets[String(context.studioId)];
+        }
+        context.source = presetSource(config, context.sceneId, context.studioId);
+        state = resolveState(config, context.sceneId, context.studioId);
+        persistConfig();
+        render();
+        break;
       case "reset-defaults":
         Object.assign(state, makeDefaultState());
         saveNow();
@@ -523,6 +923,12 @@
       case "close-bar":
         barCollapsed = true;
         renderBar();
+        break;
+      case "screenshot":
+        captureRedacted();
+        break;
+      case "panic":
+        togglePanicScreen();
         break;
       default:
         break;
@@ -546,6 +952,14 @@
 
   function onBarChange(e) {
     const target = e.target;
+    if (target.dataset && target.dataset.action === "fill-color") {
+      if (/^#[0-9a-fA-F]{6}$/.test(target.value)) {
+        state.fillColor = target.value;
+        saveNow();
+        renderRect();
+      }
+      return;
+    }
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
     // Slider release: persist the final blur amount. (State was already
@@ -634,6 +1048,15 @@
       tryInject();
     });
   }
+
+  // Panic shortcut: avoid single-key bindings that would collide with video
+  // controls or other plugins. The local decoy page has no network requests.
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey && e.shiftKey && (e.key === "X" || e.key === "x")) {
+      e.preventDefault();
+      togglePanicScreen();
+    }
+  });
 
   // Re-position the rectangle on window resize so the percentages stay right.
   window.addEventListener("resize", function () {

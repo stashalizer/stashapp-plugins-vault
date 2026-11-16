@@ -39,6 +39,12 @@
 
   const CONFIG_KEY = "AudioSupport";
   const QUEUE_CONFIG_KEY = "AudioSupportQueue";
+  const storage = window.AudioSupportStorage || {
+    loadConfig: function () { return csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
+    saveConfig: function (value) { return csLib.setConfiguration(CONFIG_KEY, value); },
+    loadKey: function (key, csKey) { return csLib.getConfiguration(csKey); },
+    saveKey: function (key, value, csKey) { return csLib.setConfiguration(csKey, value); },
+  };
   const PLUGIN_ROUTE = "/plugins/audiosupport";
   // Plugin id = directory name = yml basename; runPluginTask needs it verbatim.
   const PLUGIN_ID = "AudioSupport";
@@ -84,14 +90,14 @@
     queueSaving = true;
     queuePendingSave = false;
     try {
-      const stored = (await csLib.getConfiguration(QUEUE_CONFIG_KEY)) || {};
+      const stored = (await storage.loadKey("queue", QUEUE_CONFIG_KEY)) || {};
       const merged = {
         queue: Array.isArray(stored.queue) ? stored.queue : [],
         currentIndex: typeof stored.currentIndex === "number" ? stored.currentIndex : 0,
         repeat: ["off", "all", "one"].indexOf(stored.repeat) !== -1 ? stored.repeat : "off",
       };
       Object.assign(merged, patch);
-      await csLib.setConfiguration(QUEUE_CONFIG_KEY, merged);
+      await storage.saveKey("queue", merged, QUEUE_CONFIG_KEY, "Audio Support queue");
     } catch (err) {
       console.error("AudioSupport settings: failed to save queue config", err);
       throw err;
@@ -172,10 +178,12 @@
     saving = true;
     pendingSave = false;
     try {
-      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const stored = (await storage.loadConfig()) || {};
       const merged = normalizeConfig(stored);
       Object.assign(merged, patch);
-      await csLib.setConfiguration(CONFIG_KEY, merged);
+      await storage.saveConfig(merged, function (latest) {
+        return Object.assign({}, latest || {}, patch);
+      }, "Audio Support settings");
     } catch (err) {
       console.error("AudioSupport settings: save failed", err);
       throw err;
@@ -192,7 +200,7 @@
 
   async function loadConfig() {
     try {
-      const stored = (await csLib.getConfiguration(CONFIG_KEY)) || {};
+      const stored = (await storage.loadConfig()) || {};
       return normalizeConfig(stored);
     } catch (err) {
       console.error("AudioSupport settings: load failed", err);

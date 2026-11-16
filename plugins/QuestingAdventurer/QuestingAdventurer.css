@@ -807,3 +807,104 @@
   width: 100%;
   box-sizing: border-box;
 }
+
+/* Quest Log */
+.questing-adventurer-panel__quest-log {
+  margin: 6px 8px 4px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #fff;
+  font-family: sans-serif;
+  font-size: 12px;
+}
+
+.questing-adventurer-panel__quest-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.questing-adventurer-panel__quest-log-end {
+  padding: 1px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.questing-adventurer-panel__quest-log-summary,
+.questing-adventurer-panel__quest-log-current {
+  opacity: 0.9;
+  margin-top: 2px;
+}
+
+.questing-adventurer-panel__quest-log-recent {
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding-top: 4px;
+}
+
+.questing-adventurer-panel__quest-log-row {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.questing-adventurer-panel__complete-button {
+  padding: 0 4px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+  width: 18px;
+  height: 18px;
+}
+
+.questing-adventurer-panel__complete-button--done {
+  border-color: rgba(120, 220, 140, 0.8);
+  color: rgb(120, 220, 140);
+  cursor: default;
+}
+
+/* Scene marker prompt */
+.questing-adventurer-panel__prompt {
+  margin: 6px 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 220, 120, 0.6);
+  border-radius: 4px;
+  background: rgba(40, 32, 8, 0.9);
+  color: #fff;
+  font-family: sans-serif;
+  font-size: 12px;
+}
+
+.questing-adventurer-panel__prompt-title {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.questing-adventurer-panel__prompt-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.questing-adventurer-panel__prompt-actions button {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}

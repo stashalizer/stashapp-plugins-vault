@@ -1,0 +1,56 @@
+name: Mirror plugin source
+
+# Optional fallback source. Requires repository secrets:
+#   MIRROR_PUSH_URL — authenticated git URL of the mirror repository
+#   MIRROR_BRANCH   — branch to publish (default: main)
+# The mirror must serve the contents of _site/main at its Pages root.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugins/**'
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-plugin-source
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: '0'
+
+      - name: Build plugin site
+        run: |
+          chmod +x build_site.sh
+          ./build_site.sh _site/main
+
+      - name: Publish to mirror
+        env:
+          MIRROR_PUSH_URL: ${{ secrets.MIRROR_PUSH_URL }}
+          MIRROR_BRANCH: ${{ secrets.MIRROR_BRANCH }}
+        run: |
+          if [ -z "$MIRROR_PUSH_URL" ]; then
+            echo "MIRROR_PUSH_URL is not configured; skipping mirror." >&2
+            exit 0
+          fi
+          branch="${MIRROR_BRANCH:-main}"
+          git clone "$MIRROR_PUSH_URL" mirror
+          find mirror -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+          cp -R _site/main/. mirror/
+          cd mirror
+          git config user.name "stashapp-plugins mirror"
+          git config user.email "mirror@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Mirror already up to date."
+            exit 0
+          fi
+          git commit -m "chore: mirror plugin source $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin "HEAD:${branch}"
