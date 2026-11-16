@@ -1344,7 +1344,12 @@
         return [props];
       }
     });
-    PluginApi.patch.after("SceneCard.Overlays", function (props, result) {
+    // PatchFunction calls the render function with (props, legacyContext), then
+    // appends the render result, so an after handler MUST declare the context
+    // slot. Reading the result as the 2nd parameter yields React's
+    // emptyContextObject ({}), and rendering it as a child throws
+    // "Objects are not valid as a React child (found: object with keys {})".
+    PluginApi.patch.after("SceneCard.Overlays", function (props, _ctx, result) {
       try {
         var sceneId = props && props.scene && props.scene.id;
         if (!sceneId) return result;

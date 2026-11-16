@@ -200,7 +200,15 @@ Each item below was a **separate fix commit** (`a55a166`, `a8426aa`, `f7085df`, 
   do not claim a single tag protects every tool. Tags are not removed on unlink.
 - **Card badge.** `SceneCard` does not carry `custom_fields` by default. The
   badge batches visible scene ids into one `findScenes` query and caches counts;
-  do not replace it with one query per card.
+  do not replace it with one query per card. It is injected with
+  `PluginApi.patch.after("SceneCard.Overlays", …)`, and that handler **must**
+  declare the context slot: `function (props, _ctx, result)`. Stash's
+  `PatchFunction` calls the render function as `(props, legacyContext)` and then
+  appends the render result, so a two-parameter handler reads React's
+  `emptyContextObject` (`{}`) as `result`, and rendering it throws
+  `Minified React error #31 — object with keys {}` on the whole Scenes page
+  (fixed in 0.5.1). The same arity rule applies to `patch.instead`
+  (`props, _ctx, next`).
 - **Saved filter.** `ensureVersionFilter` creates
   `Scene Versions: has alternate cut` with
   `custom_fields: [{field:"RelatedScenes", value:[], modifier:"NOT_NULL"}]`.

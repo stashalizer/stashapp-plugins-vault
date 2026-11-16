@@ -55,6 +55,7 @@ Caveats that cost real time:
 |---|---|---|
 | `patch.instead("ScenePlayer", (props, ctx, next))` | AudioSupport | Unchanged. `runInstead` still calls `fns[0](props, ctx, next)`; `ScenePlayer` is still `PatchComponent("ScenePlayer", ...)` with the same props (`scene`, `hideScrubberOverride`, …) |
 | `ScenePage.Tabs` / `ScenePage.TabContent` | SceneVersions | Unchanged. Children are still `Nav.Item > Nav.Link eventKey="scene-details-panel"` and `<Tab.Pane>`; `props.scene` is still passed |
+| `patch.after("SceneCard.Overlays", (props, ctx, result))` | SceneVersions badge | Unchanged, but the arity is a trap — see *Environment traps* below. `SceneCardOverlays` is `React.memo(PatchComponent(...))` and still receives `(scene, selecting, …)` |
 | `SettingsToolsSection` | all three settings pages | Still a `PatchContainerComponent` instantiated **twice** in `SettingsToolsPanel.tsx` — the even-call counter still selects the Scene Tools section |
 | `PluginRoutes`, `MainNavBar.MenuItems` | `PluginRoutes`: all three settings pages; `MainNavBar.MenuItems`: AudioSupport | Both in the patch list |
 | `SceneIDSelect` (`isMulti`, `excludeIds`, `extraCriteria`) | SceneVersions | All three props still accepted (`excludeIds` / `extraCriteria` on `ExtraSceneProps`) |
@@ -103,6 +104,17 @@ The UI moved from React 17 to React 18. What that means for plugins:
 - No plugin in this repo uses `ReactDOM`, class components, or `findDOMNode` —
   keep it that way. Patch functions receive plain props and return elements; that
   surface is unchanged.
+- **`patch.after` handlers take three parameters, not two.** Stash's
+  `PatchFunction` (`ui/v2.5/src/patch.tsx`) calls the render function as
+  `fn(props, legacyContext)` — React's `getMaskedContext` hands every
+  non-context component `emptyContextObject`, literally `{}` — and only then
+  `afterFn.apply(ctx, args.concat(result))`. So `function (props, result)`
+  binds `result` to that empty context object, and rendering it makes React
+  throw `Minified React error #31 — Objects are not valid as a React child
+  (found: object with keys {})`, which blanked the whole Scenes page (SceneVersions
+  0.5.0, fixed in 0.5.1). Write `function (props, _ctx, result)`.
+  `patch.instead` has the same shape for its next function:
+  `function (props, _ctx, next)`.
 - React 18 batches state updates inside promises and timeouts too. Settings
   pages that `await` a save and then `setState` are fine, but do not rely on a
   synchronous re-render between two `setState` calls in the same tick.
