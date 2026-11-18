@@ -6,9 +6,10 @@
 > **audio playback**, including how Stash's built-in `scan` and `generate` tasks
 > handle audio files.
 >
-> Evidence base: Stash v0.31.1 source (cloned at `.slim/clonedeps/repos/stashapp__stash/`)
+> Evidence base: Stash v0.31.1 source
+> ([`stashapp/stash@v0.31.1`](https://github.com/stashapp/stash/tree/v0.31.1))
 > cross-validated against external research (GitHub issues, PRs, docs, community
-> plugins). All source citations are `path:line` against that clone.
+> plugins). All source citations are `path:line` against that tag.
 >
 > **Baseline note (re-checked 2026-11-08 against [v0.32.0](https://github.com/stashapp/stash/releases/tag/v0.32.0)):**
 > this investigation was performed against v0.31.1 and every `path:line`
@@ -660,9 +661,8 @@ docker run --rm -d --name stash-audio-test \
 ```
 
 > If `stashapp/stash:v0.31.1` is unavailable on Docker Hub, check
-> `ghcr.io/stashapp/stash:v0.31.1` or build from the cloned source:
-> `cd .slim/clonedeps/repos/stashapp__stash && make docker`. The clone is
-> already at v0.31.1.
+> `ghcr.io/stashapp/stash:v0.31.1` or build from source:
+> `git clone --depth 1 --branch v0.31.1 https://github.com/stashapp/stash && cd stash && make docker`.
 
 **B. Prepare one test file per audio codec**
 
@@ -813,9 +813,9 @@ the other fallback the player might use.
 
 ### 9.6 Results matrix template
 
-Fill this in during testing and record the outcome in the deepwork file
-(`.slim/deepwork/audio-support-feasibility.md`) so the plugin's player
-component (§7.2 component 3) can be built against confirmed data.
+Fill this in during testing and record the outcome in this matrix so the
+plugin's player component (§7.2 component 3) can be built against confirmed
+data.
 
 | Codec | Direct stream plays? (Q5) | Direct `Content-Type` | WEBM transcode: ffprobe streams (Q6) | WEBM transcode plays in-browser? (Q6) | Player source choice |
 |-------|---------------------------|------------------------|--------------------------------------|---------------------------------------|----------------------|
@@ -844,7 +844,7 @@ rm -rf /tmp/stash-audio-test /tmp/test-audio.html /tmp/test-transcode.html /tmp/
 
 ## References
 
-- Stash v0.31.1 source clone: `.slim/clonedeps/repos/stashapp__stash/`
+- Stash v0.31.1 source: https://github.com/stashapp/stash/tree/v0.31.1
 - Issue #1258 (canonical): https://github.com/stashapp/stash/issues/1258
 - Issue #11 (original, closed): https://github.com/stashapp/stash/issues/11
 - Issue #4109 (mp3 panic): https://github.com/stashapp/stash/issues/4109

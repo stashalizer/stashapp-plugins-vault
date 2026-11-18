@@ -16,9 +16,15 @@ below). Three channels, in order of preference:
    exist".
 2. **`raw.githubusercontent.com` (fallback).** Plain `curl -sL <url>` works for
    any file, so the docs stay usable even without the connector. Pipe to a temp
-   file and read it rather than trying to skim it inline. This is the cheapest
-   way to diff two tags:
-   `curl -sL https://raw.githubusercontent.com/stashapp/stash/v0.32.0/<path>`.
+   file and read it rather than trying to skim it inline. `raw` URLs have no
+   `latest` alias, so resolve the newest release tag first — this doubles as the
+   cheapest way to diff two tags:
+
+   ```bash
+   TAG=$(git ls-remote --tags --refs --sort=-v:refname \
+     https://github.com/stashapp/stash | head -1 | sed 's#.*refs/tags/##')
+   curl -sL "https://raw.githubusercontent.com/stashapp/stash/$TAG/<path>"
+   ```
 3. **Web fetch on `docs.stashapp.cc` (concepts only).** The site is Docusaurus;
    pages convert to markdown cleanly. Good for *what a plugin is* and *what the
    UI API offers*, but it lags the source — it is not authoritative on exact
