@@ -1,10 +1,35 @@
+/* =============================================================================
+   QuestingAdventurer — video overlay panel
+
+   Design notes (keep these in mind before restyling):
+   - The panel floats over playing video, so text must stay legible even when
+     the user drags the opacity slider down to a low alpha over a bright frame.
+     Three devices do that work together: a tinted near-black base, a hairline
+     border + outer shadow so the panel edge reads against any frame, and a
+     subtle text-shadow on top of an optional backdrop blur.
+   - Hierarchy is carried by one repeated device: a 10px uppercase micro-label
+     ("TRIGGERS", "QUEST LOG", "MANUAL SELECTION") over 13px content. Do not
+     introduce a second heading style.
+   - All surfaces, radii and text colours derive from the tokens declared on
+     .questing-adventurer-panel. Re-tinting the panel is a token edit, not a
+     selector-by-selector hunt.
+   - Structural invariants that must NOT change (each was a regression fix,
+     see AGENTS.md "Overlay CSS / collapse-drag regression checklist"):
+       * the collapsed override must stay AFTER the base sizing rules,
+       * `container-type: normal` + `width: fit-content` only in the collapsed
+         branch,
+       * the close button stays absolutely positioned out of the flex flow,
+       * rows keep ::before/::after free for the drag drop indicators,
+       * nothing here may bind behaviour to the decorative resize strips.
+   ============================================================================= */
+
 .questing-adventurer-panel {
   /* position: absolute (not fixed) because the panel is a child of the
      video player (#VideoJsPlayer), which is `position: relative`. The
      top/right offsets are relative to the player — which becomes the
      viewport when the player goes fullscreen. This way the overlay
-     sits inside the fullscreen view, on top of the video, controlled by
-     z-index — no top layer or modal tricks needed. */
+     sits inside the fullscreen view, controlled by z-index — no top
+     layer or modal tricks needed. */
   position: absolute;
   top: 8px;
   right: 8px;
@@ -17,15 +42,62 @@
      itself in that edge case. */
   max-height: none;
   overflow-y: auto;
-  background: rgba(0, 0, 0, var(--qa-bg-alpha, 0.6));
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  line-height: 1.4;
-  font-family: sans-serif;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
+
+  /* --- Tokens -------------------------------------------------------------
+     Text is deliberately not pure #fff (it vibrates against video) and the
+     darks are not pure #000 (they read as a hole punched in the frame). */
+  --qa-accent: #93b8e0;
+  --qa-accent-soft: rgba(147, 184, 224, 0.55);
+  --qa-accent-tint: rgba(147, 184, 224, 0.14);
+  --qa-accent-wash: rgba(147, 184, 224, 0.07);
+  --qa-line: rgba(255, 255, 255, 0.11);
+  --qa-line-soft: rgba(255, 255, 255, 0.07);
+  --qa-surface: rgba(255, 255, 255, 0.05);
+  --qa-surface-hover: rgba(255, 255, 255, 0.10);
+  --qa-text: #f1f5f9;
+  --qa-text-2: rgba(238, 244, 250, 0.80);
+  --qa-text-3: rgba(238, 244, 250, 0.52);
+  --qa-ok: #8fe0a0;
+  --qa-warn: #f2c97b;
+  --qa-danger: #ff9d9d;
+
+  --qa-r-panel: 12px;
+  --qa-r-card: 8px;
+  --qa-r-item: 7px;
+  --qa-r-ctl: 6px;
+  --qa-ctl: 24px;          /* header / row control size */
+  --qa-ease: cubic-bezier(0.2, 0, 0, 1);
+  --qa-fast: 0.15s;
+
+  padding: 8px 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--qa-r-panel);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0) 40%),
+    rgba(13, 16, 21, var(--qa-bg-alpha, 0.6));
+  box-shadow:
+    0 18px 44px -18px rgba(0, 0, 0, 0.7),
+    0 2px 10px rgba(0, 0, 0, 0.32);
+  color: var(--qa-text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  /* Keeps 13px text readable at low panel opacity over a bright frame. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.38);
+}
+
+/* Blur the frame behind the panel instead of only darkening it — at the low
+   opacity settings users actually pick, this is what keeps text legible.
+   Guarded so browsers without backdrop-filter simply keep the flat tint. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .questing-adventurer-panel {
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
+    backdrop-filter: blur(10px) saturate(1.15);
+  }
 }
 
 /* Override video.js's vjs-user-inactive class so the overlay isn't faded
@@ -36,8 +108,10 @@
   visibility: visible !important;
 }
 
+/* --- Collapsed chip ------------------------------------------------------ */
+
 .questing-adventurer-panel--collapsed {
-  padding: 4px 8px;
+  padding: 5px 10px;
 }
 
 .questing-adventurer-panel__chip {
@@ -49,19 +123,50 @@
   cursor: move;
   white-space: nowrap;
   user-select: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.2px;
+  letter-spacing: 0.01em;
   touch-action: none;
 }
+
+.questing-adventurer-panel__chip-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.questing-adventurer-panel__chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 1px;
+  border: 1px solid rgba(147, 184, 224, 0.30);
+  border-radius: 999px;
+  background: var(--qa-accent-tint);
+  color: var(--qa-accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* --- Header -------------------------------------------------------------- */
 
 .questing-adventurer-panel__header {
   position: relative;
   display: flex;
+  flex-wrap: nowrap;
   justify-content: space-between;
   align-items: center;
-  font-weight: bold;
+  gap: 8px;
   margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--qa-line-soft);
   flex-shrink: 0;
   cursor: move;
   -webkit-user-select: none;
@@ -69,25 +174,15 @@
   touch-action: none;
 }
 
-.questing-adventurer-panel__header button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 4px;
-  border-radius: 3px;
-  touch-action: auto;
-}
-
-.questing-adventurer-panel__header button:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.questing-adventurer-panel__header button[disabled] {
-  opacity: 0.4;
-  cursor: not-allowed;
+/* Micro-label + count pill. The label is what turns a row of three anonymous
+   buttons into "the toolbar of a thing called Triggers", and the pill puts
+   the active count where the eye already is instead of only in the chip. */
+.questing-adventurer-panel__header-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .questing-adventurer-panel__header-title {
@@ -95,14 +190,72 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qa-text-3);
+}
+
+.questing-adventurer-panel__header-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid rgba(147, 184, 224, 0.28);
+  border-radius: 999px;
+  background: var(--qa-accent-tint);
+  color: var(--qa-accent);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.questing-adventurer-panel__header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--qa-ctl);
+  min-width: var(--qa-ctl);
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--qa-r-ctl);
+  background: transparent;
+  color: var(--qa-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
+  touch-action: auto;
+}
+
+.questing-adventurer-panel__header button:hover:not([disabled]) {
+  background: var(--qa-surface-hover);
+  border-color: var(--qa-line);
+  color: var(--qa-text);
+}
+
+.questing-adventurer-panel__header button[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .questing-adventurer-panel__header-controls {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
+  /* Reserve the corner the close button occupies so a hover-expanded opacity
+     slider can never slide underneath it. */
+  padding-right: calc(var(--qa-ctl) + 4px);
 }
 
 /* Pin the close (collapse) button to the top-right corner of the header.
@@ -113,13 +266,46 @@
    hover triggered the slider to expand (width 0 → 80px with a transition),
    shifting close rightward and making it "run away" from the cursor.
    z-index: 2 keeps the pinned button above the expanded slider so it
-   stays clickable even on narrow panels where they overlap. */
-.questing-adventurer-panel__close-button {
+   stays clickable even on narrow panels where they overlap.
+   The header has no top padding, so top: 0 + the shared control height
+   centres the glyph on the same optical line as Penalty / Reward. */
+.questing-adventurer-panel__header .questing-adventurer-panel__close-button {
   position: absolute;
-  top: 50%;
+  top: 0;
   right: 0;
-  transform: translateY(-50%);
   z-index: 2;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--qa-text-3);
+}
+
+.questing-adventurer-panel__header .questing-adventurer-panel__close-button:hover {
+  color: var(--qa-text);
+}
+
+/* --- Header actions: Penalty / Reward / opacity -------------------------- */
+
+/* These variant rules are written with the __header prefix on purpose: the
+   generic `.…__header button` rule is (0,1,1), so a bare `.__penalty-button`
+   (0,1,0) would lose every shared property and the buttons would render with
+   no box at rest but a tinted box on hover. Keep the prefix. */
+.questing-adventurer-panel__header .questing-adventurer-panel__penalty-button,
+.questing-adventurer-panel__header .questing-adventurer-panel__reward-button {
+  border-color: var(--qa-line);
+  background: var(--qa-surface);
+}
+
+.questing-adventurer-panel__header .questing-adventurer-panel__penalty-button:not([disabled]):hover {
+  color: var(--qa-warn);
+  border-color: rgba(242, 201, 123, 0.45);
+  background: rgba(242, 201, 123, 0.14);
+}
+
+.questing-adventurer-panel__header .questing-adventurer-panel__reward-button:not([disabled]):hover {
+  color: var(--qa-ok);
+  border-color: rgba(143, 224, 160, 0.40);
+  background: rgba(143, 224, 160, 0.13);
 }
 
 .questing-adventurer-panel__opacity-control {
@@ -128,13 +314,13 @@
   align-items: center;
 }
 
-.questing-adventurer-panel__opacity-button {
-  font-size: 14px;
-  font-family: sans-serif;
+.questing-adventurer-panel__header .questing-adventurer-panel__opacity-button {
+  font-size: 13px;
+  color: var(--qa-text-3);
 }
 
 .questing-adventurer-panel__opacity-button:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.6);
+  outline: 1px solid var(--qa-accent-soft);
   outline-offset: 2px;
 }
 
@@ -148,12 +334,13 @@
   cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
-  transition: width 0.18s ease, opacity 0.18s ease, margin-left 0.18s ease;
+  transition: width 0.18s var(--qa-ease), opacity 0.18s var(--qa-ease),
+    margin-left 0.18s var(--qa-ease);
 }
 
 .questing-adventurer-panel__opacity-control:hover .questing-adventurer-panel__opacity-slider,
 .questing-adventurer-panel__opacity-control:focus-within .questing-adventurer-panel__opacity-slider {
-  width: 80px;
+  width: 76px;
   opacity: 1;
   margin-left: 6px;
 }
@@ -164,14 +351,14 @@
 
 .questing-adventurer-panel__opacity-slider::-webkit-slider-runnable-track {
   height: 3px;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
 }
 
 .questing-adventurer-panel__opacity-slider::-moz-range-track {
   height: 3px;
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
 }
 
 .questing-adventurer-panel__opacity-slider::-webkit-slider-thumb {
@@ -179,99 +366,175 @@
   appearance: none;
   width: 12px;
   height: 12px;
-  background: #fff;
-  border-radius: 50%;
   margin-top: -4.5px;
+  background: #f1f5f9;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
   cursor: pointer;
+  transition: transform var(--qa-fast) var(--qa-ease);
 }
 
 .questing-adventurer-panel__opacity-slider::-moz-range-thumb {
   width: 12px;
   height: 12px;
-  background: #fff;
+  background: #f1f5f9;
   border: none;
   border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
   cursor: pointer;
 }
+
+.questing-adventurer-panel__opacity-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+/* --- Active trigger list ------------------------------------------------- */
 
 .questing-adventurer-panel__list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  /* No flex gap: the 1px nesting rail on indented move rows must connect
+     from one row to the next, and a gap would break it into dashes. Row
+     rhythm comes from the rows' own padding instead. */
+  gap: 0;
 }
 
+/* Trigger row = the "container" for its attached moves: a tinted card with a
+   3px accent edge. Move rows below stay transparent, so the band is what
+   reads as the grouping, not another outline. */
 .questing-adventurer-panel__trigger {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 6px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  /* Subtle blue-tinted background + a left accent bar to visually distinguish
-     triggers from the moves attached to them. The move rows below stay
-     transparent so the trigger's tinted band reads as a "container" for its
-     attached moves. */
-  background: rgba(110, 160, 220, 0.12);
-  border-left: 2px solid rgba(110, 160, 220, 0.6);
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid rgba(147, 184, 224, 0.20);
+  border-left: 3px solid rgba(147, 184, 224, 0.72);
+  border-radius: var(--qa-r-item);
+  background:
+    linear-gradient(180deg, rgba(147, 184, 224, 0.16), rgba(147, 184, 224, 0.09));
   position: relative;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__list > .questing-adventurer-panel__trigger:first-child {
+  margin-top: 0;
+}
+
+.questing-adventurer-panel__trigger:hover {
+  border-color: rgba(147, 184, 224, 0.34);
+  background:
+    linear-gradient(180deg, rgba(147, 184, 224, 0.22), rgba(147, 184, 224, 0.13));
 }
 
 .questing-adventurer-panel__trigger-name {
-  font-weight: bold;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: clamp(13px, 3.6cqi, 15px);
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  line-height: 1.35;
+  color: var(--qa-text);
   cursor: pointer;
   border-radius: 3px;
-  padding: 1px 2px;
   word-break: break-word;
 }
 
-.questing-adventurer-panel__trigger-name:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
+/* Move rows are subordinate: no fill, a 1px rail instead of a border box, and
+   the text one weight lighter than the trigger name above it. The rail is a
+   border (not ::before) because the drop indicators own both pseudo-elements. */
 .questing-adventurer-panel__move {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 0;
+  padding: 3px 4px 3px 8px;
+  border-radius: 0 var(--qa-r-ctl) var(--qa-r-ctl) 0;
   position: relative;
+  transition: background-color var(--qa-fast) var(--qa-ease);
 }
 
+/* Indented exactly one drag-handle column: the child's handle sits under the
+   parent's name, which is what makes the nesting read at a glance. The rail is
+   a border rather than a pseudo-element because the drop indicators own both
+   pseudo-elements on these rows. */
 .questing-adventurer-panel__move--indented {
-  padding-left: 16px;
+  margin-left: 24px;
+  padding-left: 7px;
+  border-left: 1px solid rgba(255, 255, 255, 0.20);
+}
+
+.questing-adventurer-panel__move:hover {
+  background-color: rgba(255, 255, 255, 0.07);
 }
 
 .questing-adventurer-panel__move-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: clamp(13px, 3.6cqi, 15px);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--qa-text-2);
   cursor: pointer;
   border-radius: 3px;
-  padding: 1px 2px;
   word-break: break-word;
 }
 
-.questing-adventurer-panel__move-text:hover {
-  background: rgba(255, 255, 255, 0.1);
+.questing-adventurer-panel__move:hover .questing-adventurer-panel__move-text {
+  color: var(--qa-text);
 }
 
+/* Row controls: quiet until the row is hovered, then fully opaque. They stay
+   fully visible on touch (no hover) so nothing becomes unreachable. */
 .questing-adventurer-panel__controls {
   display: flex;
-  gap: 4px;
-  margin-left: 8px;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
   flex-shrink: 0;
+  opacity: 0.65;
+  transition: opacity var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__trigger:hover .questing-adventurer-panel__controls,
+.questing-adventurer-panel__move:hover .questing-adventurer-panel__controls,
+.questing-adventurer-panel__controls:focus-within {
+  opacity: 1;
 }
 
 .questing-adventurer-panel__controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Hit area grows with the panel: 24px is the WCAG 2.2 minimum and the right
+     density on a 360px overlay, but at 500px+ a fixed 24px button next to 15px
+     text starts to look like a speck. Same clamp rationale as the row text. */
+  width: clamp(24px, 4.6cqi, 28px);
+  height: clamp(24px, 4.6cqi, 28px);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
   background: transparent;
-  border: none;
-  color: #fff;
+  color: var(--qa-text-2);
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
-  border-radius: 3px;
+  font: inherit;
+  font-size: 13px;
   line-height: 1;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    color var(--qa-fast) var(--qa-ease), border-color var(--qa-fast) var(--qa-ease);
 }
 
-.questing-adventurer-panel__controls button:hover {
-  background: rgba(255, 255, 255, 0.15);
+.questing-adventurer-panel__controls button:hover:not([disabled]) {
+  background: var(--qa-surface-hover);
+  border-color: var(--qa-line);
+  color: var(--qa-text);
 }
 
 .questing-adventurer-panel__controls button[disabled] {
@@ -279,51 +542,71 @@
   cursor: not-allowed;
 }
 
-.questing-adventurer-panel__controls button[data-action="delete-trigger"]:hover,
-.questing-adventurer-panel__controls button[data-action="delete-move"]:hover {
-  color: #ff6b6b;
-  background: rgba(255, 0, 0, 0.1);
+.questing-adventurer-panel__controls button[data-action="add-move-into"]:hover:not([disabled]) {
+  color: var(--qa-accent);
+  border-color: rgba(147, 184, 224, 0.35);
+  background: var(--qa-accent-tint);
 }
 
+.questing-adventurer-panel__controls button[data-action="delete-trigger"]:hover,
+.questing-adventurer-panel__controls button[data-action="delete-move"]:hover,
+.questing-adventurer-panel__controls button[data-action="deactivate-trigger"]:hover {
+  color: var(--qa-danger);
+  border-color: rgba(255, 157, 157, 0.35);
+  background: rgba(255, 90, 90, 0.16);
+}
+
+/* --- Drag affordances ---------------------------------------------------- */
+
 .questing-adventurer-panel__drag-handle {
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  min-height: var(--qa-ctl);
+  padding: 0;
   border: none;
-  color: #fff;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--qa-text-3);
   cursor: grab;
-  font-size: 14px;
+  font: inherit;
+  font-size: 12px;
   line-height: 1;
-  padding: 0 4px;
-  border-radius: 3px;
-  opacity: 0.45;
+  letter-spacing: -2px;
+  opacity: 0.5;
   flex-shrink: 0;
   -webkit-user-select: none;
   user-select: none;
   touch-action: none;
-  min-width: 22px;
-  min-height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  letter-spacing: -2px;
+  transition: opacity var(--qa-fast) var(--qa-ease),
+    background-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__trigger:hover .questing-adventurer-panel__drag-handle,
+.questing-adventurer-panel__move:hover .questing-adventurer-panel__drag-handle {
+  opacity: 0.85;
+  color: var(--qa-text-2);
 }
 
 .questing-adventurer-panel__drag-handle:hover,
 .questing-adventurer-panel__drag-handle:focus-visible {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--qa-text);
+  background: var(--qa-surface-hover);
 }
 
 .questing-adventurer-panel__drag-handle:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.6);
+  outline: 1px solid var(--qa-accent-soft);
   outline-offset: 1px;
-}
-
-.questing-adventurer-panel__row--editing .questing-adventurer-panel__drag-handle {
-  display: none;
 }
 
 .questing-adventurer-panel__drag-handle:active {
   cursor: grabbing;
+}
+
+.questing-adventurer-panel__row--editing .questing-adventurer-panel__drag-handle {
+  display: none;
 }
 
 .questing-adventurer-panel__row--dragging-source {
@@ -337,136 +620,201 @@
   left: var(--qa-indent, 0);
   right: 4px;
   height: 2px;
-  background: #6ee7ff;
-  border-radius: 1px;
+  background: var(--qa-accent);
+  border-radius: 2px;
   pointer-events: none;
   z-index: 2;
 }
 
 .questing-adventurer-panel__row--drop-before::before {
-  top: -1px;
+  top: -2px;
 }
 
 .questing-adventurer-panel__row--drop-after::after {
-  bottom: -1px;
+  bottom: -2px;
 }
 
 .questing-adventurer-panel__drag-ghost {
   position: fixed;
   z-index: 10000;
   pointer-events: none;
-  opacity: 0.92;
-  background: rgba(0, 0, 0, 0.85);
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 13px;
+  opacity: 0.95;
+  background: rgba(13, 16, 21, 0.95);
+  color: var(--qa-text, #f1f5f9);
+  padding: 5px 9px;
+  border-radius: var(--qa-r-card, 8px);
+  font-size: 12.5px;
   max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  font-family: sans-serif;
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(147, 184, 224, 0.28);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
 }
 
-.questing-adventurer-panel__penalty-button,
-.questing-adventurer-panel__reward-button {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: sans-serif;
-  letter-spacing: 0.2px;
-  padding: 0 6px;
-}
+/* --- Completion button ---------------------------------------------------
+   The button renders a hollow circle (○) when the move is open and a check
+   (✓) once it is done. The button itself draws the ring, so the open-state
+   glyph is painted transparent — otherwise a glyph circle and a border circle
+   would sit inside each other. The selector is deliberately compound: the
+   generic `.…__controls button` rule (class + element) outranks a bare
+   `.__complete-button` class, which is how this control silently lost its
+   radius and border before. */
 
-.questing-adventurer-panel__penalty-button:not([disabled]):hover {
-  color: #ffb86b;
-  background: rgba(255, 140, 60, 0.18);
-}
-
-.questing-adventurer-panel__reward-button:not([disabled]):hover {
-  color: #8eff8e;
-  background: rgba(80, 220, 100, 0.18);
-}
-
-/* Add-controls toggle — expands the hidden footer (input + Add buttons).
-   Appended directly to the panel (not inside the header) between the list
-   and the footer, so it sits at the bottom-center of the panel via
-   align-self: center on the panel's flex column. */
-.questing-adventurer-panel__add-toggle-button {
-  font-size: 16px;
-  font-weight: bold;
-  padding: 0 5px;
-  line-height: 1;
-  align-self: center;
-  margin-top: 4px;
+.questing-adventurer-panel__controls .questing-adventurer-panel__complete-button {
+  width: clamp(22px, 4.2cqi, 26px);
+  height: clamp(22px, 4.2cqi, 26px);
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.questing-adventurer-panel__add-toggle-button[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-/* Bottom-toggles row. Wraps the + (add) and ≡ (manual) buttons so they
-   share a single centered row at the bottom of the panel. Using flexbox
-   with gap keeps them visually grouped and equally spaced. */
-.questing-adventurer-panel__bottom-toggles {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  flex-shrink: 0;
-}
-
-/* Manual-selection toggle. Same shape as the add-toggle (round, 28×28,
-   semi-transparent), but the symbol is the equivalent-to (≡) glyph to
-   signal "list / library" rather than "add new". The aria-expanded
-   state is mirrored on the button so the active state is visible (the
-   same way the add-toggle shows its expanded state). */
-.questing-adventurer-panel__manual-toggle-button {
-  font-size: 16px;
-  font-weight: bold;
-  padding: 0 5px;
+  background: transparent;
+  color: transparent;
+  font-size: 0;
   line-height: 1;
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
   cursor: pointer;
-  font-family: sans-serif;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
 }
 
-.questing-adventurer-panel__manual-toggle-button:hover {
-  background: rgba(255, 255, 255, 0.18);
+.questing-adventurer-panel__controls .questing-adventurer-panel__complete-button:hover:not([disabled]) {
+  border-color: rgba(143, 224, 160, 0.7);
+  background: rgba(143, 224, 160, 0.14);
 }
 
-.questing-adventurer-panel__manual-toggle-button[aria-expanded="true"] {
-  background: rgba(110, 160, 220, 0.25);
-  border-color: rgba(110, 160, 220, 0.6);
+.questing-adventurer-panel__controls .questing-adventurer-panel__complete-button--done {
+  border-color: rgba(143, 224, 160, 0.55);
+  background: rgba(143, 224, 160, 0.16);
+  color: var(--qa-ok);
+  font-size: 10px;
+  cursor: default;
 }
 
-/* Library (manual-selection) section. Rendered between the active-trigger
-   list and the bottom-toggles row when the ≡ button is on. Uses a
-   subtle blue-tinted background to distinguish it from the active
-   triggers above (which have their own blue-tinted background per row)
-   — the user sees two related-but-different "blue surfaces" stacked,
-   signalling the library is a control surface for the active list. */
+/* --- Empty state --------------------------------------------------------- */
+
+.questing-adventurer-panel__empty {
+  color: var(--qa-text-3);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.5;
+  padding: 12px 4px;
+}
+
+/* --- Quest log ----------------------------------------------------------- */
+
+.questing-adventurer-panel__quest-log {
+  margin: 8px 0 0;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--qa-line-soft);
+  border-radius: var(--qa-r-card);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--qa-text);
+  font-size: 11.5px;
+}
+
+.questing-adventurer-panel__quest-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qa-text-3);
+}
+
+.questing-adventurer-panel__quest-log-end {
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--qa-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--qa-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__quest-log-end:hover {
+  background: var(--qa-surface-hover);
+  border-color: var(--qa-line);
+  color: var(--qa-text);
+}
+
+/* Metrics read as label-over-value pairs instead of one sentence, so the
+   numbers (the only thing the user scans) get weight and tabular alignment. */
+.questing-adventurer-panel__quest-log-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.questing-adventurer-panel__quest-log-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.questing-adventurer-panel__quest-log-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qa-text-3);
+}
+
+.questing-adventurer-panel__quest-log-value {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--qa-text);
+}
+
+.questing-adventurer-panel__quest-log-sep {
+  color: var(--qa-text-3);
+  opacity: 0.6;
+}
+
+.questing-adventurer-panel__quest-log-current {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--qa-text-2);
+}
+
+.questing-adventurer-panel__quest-log-recent {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--qa-line-soft);
+}
+
+.questing-adventurer-panel__quest-log-row {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--qa-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Manual selection (library) ----------------------------------------- */
+
 .questing-adventurer-panel__library {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: rgba(110, 160, 220, 0.08);
-  border: 1px solid rgba(110, 160, 220, 0.25);
-  border-radius: 4px;
+  margin-top: 8px;
+  padding: 8px 10px 10px;
+  border: 1px solid rgba(147, 184, 224, 0.18);
+  border-radius: var(--qa-r-card);
+  background: var(--qa-accent-wash);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex-shrink: 0;
   /* Keep the library from ballooning the panel when there are many
      items. The active list above scrolls when needed; the library
@@ -476,91 +824,112 @@
 }
 
 .questing-adventurer-panel__library-header {
-  font-size: 11px;
+  margin-bottom: 4px;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 2px;
+  color: var(--qa-accent);
+  opacity: 0.85;
 }
 
 .questing-adventurer-panel__library-subheader {
-  font-size: 11px;
+  margin: 6px 0 2px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--qa-line-soft);
+  font-size: 10px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  margin-top: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding-bottom: 1px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qa-text-3);
 }
 
 .questing-adventurer-panel__library-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 2px;
-  border-radius: 3px;
+  gap: 8px;
   min-width: 0;
+  min-height: 24px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  transition: background-color var(--qa-fast) var(--qa-ease);
 }
 
 .questing-adventurer-panel__library-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .questing-adventurer-panel__library-item-text {
   flex: 1 1 auto;
-  font-size: 13px;
-  word-break: break-word;
   min-width: 0;
+  font-size: clamp(12.5px, 3.4cqi, 14px);
+  color: var(--qa-text-2);
+  word-break: break-word;
 }
 
 .questing-adventurer-panel__library-item-meta {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  font-style: italic;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--qa-text-3);
 }
 
 .questing-adventurer-panel__library-item button {
-  background: transparent;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 0 4px;
-  border-radius: 3px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  width: clamp(24px, 4.6cqi, 28px);
+  height: clamp(24px, 4.6cqi, 28px);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--qa-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
 }
 
 .questing-adventurer-panel__library-item button:hover {
-  background: rgba(110, 160, 220, 0.25);
-  color: #8eff8e;
+  border-color: rgba(143, 224, 160, 0.35);
+  background: rgba(143, 224, 160, 0.14);
+  color: var(--qa-ok);
 }
 
-/* Trigger picker for the "Attach Move" subsection. Native <select>
-   styled to match the panel's dark theme. flex: 1 so it takes the
-   remaining width after the move text and any meta indicator. */
+/* Trigger picker for the "Attach Move" subsection. Native <select> (kept
+   native on purpose — the platform popup is the accessible one) styled to
+   match the panel rather than the app's default form controls. */
 .questing-adventurer-panel__library-trigger-picker {
   flex: 1 1 0;
   min-width: 0;
-  max-width: 60%;
-  padding: 2px 4px;
-  font-size: 12px;
-  font-family: sans-serif;
-  background: rgba(0, 0, 0, 0.4);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 3px;
+  max-width: 58%;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--qa-line);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--qa-text);
   cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.questing-adventurer-panel__library-trigger-picker:hover {
+  border-color: rgba(147, 184, 224, 0.45);
 }
 
 .questing-adventurer-panel__library-trigger-picker:focus-visible {
-  outline: 1px solid rgba(110, 160, 220, 0.7);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--qa-accent-soft);
+  box-shadow: 0 0 0 3px rgba(147, 184, 224, 0.16);
 }
 
 .questing-adventurer-panel__library-trigger-picker option {
-  background: #1a1a1a;
-  color: #fff;
+  background: #1a1d23;
+  color: #f1f5f9;
 }
 
 .questing-adventurer-panel__library-trigger-picker option:disabled {
@@ -569,11 +938,63 @@
 }
 
 .questing-adventurer-panel__library-empty {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
-  font-style: italic;
-  padding: 2px 0;
+  padding: 4px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--qa-text-3);
 }
+
+/* --- Bottom toggles (+ / ≡) --------------------------------------------- */
+
+/* Bottom-toggles row. Wraps the + (add) and ≡ (manual) buttons so they
+   share a single centered row at the bottom of the panel. */
+.questing-adventurer-panel__bottom-toggles {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+
+/* Same shape for both: a quiet 28px disc that turns accent-tinted when the
+   surface it reveals is open (mirrored on aria-expanded). */
+.questing-adventurer-panel__add-toggle-button,
+.questing-adventurer-panel__manual-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--qa-line);
+  border-radius: 50%;
+  background: var(--qa-surface);
+  color: var(--qa-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__add-toggle-button:hover,
+.questing-adventurer-panel__manual-toggle-button:hover {
+  background: var(--qa-surface-hover);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--qa-text);
+}
+
+.questing-adventurer-panel__add-toggle-button[aria-expanded="true"],
+.questing-adventurer-panel__manual-toggle-button[aria-expanded="true"] {
+  border-color: rgba(147, 184, 224, 0.45);
+  background: var(--qa-accent-tint);
+  color: var(--qa-accent);
+}
+
+/* --- Footer (add controls) ---------------------------------------------- */
 
 /* Footer (input + Add buttons) hidden by default; revealed by the add-toggle.
    Layout properties (gap, flex-wrap, etc.) live here so they apply when the
@@ -584,17 +1005,188 @@
   flex-wrap: wrap;
   align-items: center;
   flex-shrink: 0;
-  margin-top: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--qa-line-soft);
 }
 
 .questing-adventurer-panel--show-add-controls .questing-adventurer-panel__footer {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  flex-shrink: 0;
-  margin-top: 8px;
 }
+
+.questing-adventurer-panel__footer input {
+  flex: 1 1 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--qa-line);
+  border-radius: var(--qa-r-ctl);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--qa-text);
+  font: inherit;
+  font-size: clamp(13px, 3.6cqi, 14px);
+  text-shadow: none;
+  transition: border-color var(--qa-fast) var(--qa-ease),
+    box-shadow var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__footer input::placeholder {
+  color: var(--qa-text-3);
+}
+
+.questing-adventurer-panel__footer input:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.questing-adventurer-panel__footer input:focus {
+  outline: none;
+  border-color: var(--qa-accent-soft);
+  box-shadow: 0 0 0 3px rgba(147, 184, 224, 0.16);
+}
+
+.questing-adventurer-panel__footer button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--qa-line);
+  border-radius: var(--qa-r-ctl);
+  background: var(--qa-surface);
+  color: var(--qa-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__footer button:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.questing-adventurer-panel__footer button:focus-visible {
+  outline: none;
+  border-color: var(--qa-accent-soft);
+  box-shadow: 0 0 0 3px rgba(147, 184, 224, 0.16);
+}
+
+.questing-adventurer-panel__footer button[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* --- Inline edit ------------------------------------------------------- */
+
+.questing-adventurer-panel__edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 1px solid var(--qa-accent-soft);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--qa-text);
+  font: inherit;
+  font-size: 13px;
+  text-shadow: none;
+}
+
+.questing-adventurer-panel__edit-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(147, 184, 224, 0.16);
+}
+
+/* --- Scene marker prompt ------------------------------------------------ */
+
+.questing-adventurer-panel__prompt {
+  margin: 8px 0 0;
+  padding: 9px 10px 10px 12px;
+  border: 1px solid rgba(242, 201, 123, 0.38);
+  border-left: 3px solid var(--qa-warn);
+  border-radius: var(--qa-r-card);
+  background: rgba(38, 30, 12, 0.82);
+  color: var(--qa-text);
+  font-size: 12px;
+}
+
+.questing-adventurer-panel__prompt-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qa-text);
+}
+
+/* Only the fixed word "Prompt" is set as a micro-label — marker titles can be
+   long and reading them in caps is tiring. */
+.questing-adventurer-panel__prompt-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qa-warn);
+}
+
+.questing-adventurer-panel__prompt-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.questing-adventurer-panel__prompt-copy {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--qa-text-2);
+}
+
+.questing-adventurer-panel__prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.questing-adventurer-panel__prompt-actions button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--qa-line);
+  border-radius: var(--qa-r-ctl);
+  background: transparent;
+  color: var(--qa-text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background-color var(--qa-fast) var(--qa-ease),
+    border-color var(--qa-fast) var(--qa-ease), color var(--qa-fast) var(--qa-ease);
+}
+
+.questing-adventurer-panel__prompt-actions button:hover {
+  background: rgba(255, 255, 255, 0.10);
+  color: var(--qa-text);
+}
+
+/* Accept is the only filled button in the overlay — it is the one decision
+   the user has to make in a marker prompt. */
+.questing-adventurer-panel__prompt-actions button[data-action="accept-marker-prompt"] {
+  border-color: rgba(242, 201, 123, 0.55);
+  background: rgba(242, 201, 123, 0.18);
+  color: #ffdca2;
+}
+
+.questing-adventurer-panel__prompt-actions button[data-action="accept-marker-prompt"]:hover {
+  border-color: rgba(242, 201, 123, 0.8);
+  background: rgba(242, 201, 123, 0.28);
+  color: #fff1d4;
+}
+
+/* --- Manual resize ----------------------------------------------------- */
 
 /* Manual resize: the panel can be resized by dragging any of its four
    edges (top/right/bottom/left). The gesture itself is detected by a
@@ -627,10 +1219,12 @@
   /* No background — the strip is invisible until the user hovers. The cursor
      alone signals the edge is grabbable. */
 }
+
 .questing-adventurer-panel__resize-handle:hover,
 .questing-adventurer-panel__resize-handle:active {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(147, 184, 224, 0.30);
 }
+
 .questing-adventurer-panel__resize-handle--top {
   top: 0;
   left: 0;
@@ -638,6 +1232,7 @@
   height: 4px;
   cursor: ns-resize;
 }
+
 .questing-adventurer-panel__resize-handle--right {
   top: 0;
   right: 0;
@@ -645,6 +1240,7 @@
   width: 4px;
   cursor: ew-resize;
 }
+
 .questing-adventurer-panel__resize-handle--bottom {
   bottom: 0;
   left: 0;
@@ -652,6 +1248,7 @@
   height: 4px;
   cursor: ns-resize;
 }
+
 .questing-adventurer-panel__resize-handle--left {
   top: 0;
   left: 0;
@@ -661,19 +1258,72 @@
 }
 
 /* Container queries: the panel is a "size container" so its descendants can
-   style themselves based on the panel's actual width. The font-size and
-   padding scale smoothly with the panel's width using `cqi` units (1% of
-   the container's inline size). The clamp() gives both a min (so text
-   doesn't get too tiny) and a max (so it doesn't get comically large on a
-   wide panel). */
+   style themselves based on the panel's actual width. Row text uses cqi units
+   (1% of the container inline size) inside clamp() so it scales with the
+   box the user dragged, with a 13px floor for legibility and a 15px ceiling
+   so a wide panel doesn't turn into a poster. */
 .questing-adventurer-panel {
   container-type: inline-size;
 }
 
+/* Narrow panel: drop the header label before anything else gives way, so
+   Penalty / Reward / opacity / close never crowd or wrap. */
+@container (max-width: 320px) {
+  .questing-adventurer-panel__header-title-wrap {
+    display: none;
+  }
+
+  /* Not enough room for "move name + trigger picker" side by side — the
+     native select clips its own placeholder to a single arrow. Stack instead. */
+  .questing-adventurer-panel__library-item {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .questing-adventurer-panel__library-trigger-picker {
+    flex: 1 1 100%;
+    max-width: none;
+    height: 24px;
+  }
+
+  .questing-adventurer-panel__header-controls {
+    gap: 3px;
+  }
+
+  .questing-adventurer-panel__header button {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .questing-adventurer-panel__quest-log,
+  .questing-adventurer-panel__library {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+/* Comfortable width: give the header label its tracking back and let the
+   action buttons sit a little further apart. */
+@container (min-width: 420px) {
+  .questing-adventurer-panel__header {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+  }
+
+  .questing-adventurer-panel__header-controls {
+    gap: 6px;
+  }
+
+  .questing-adventurer-panel__header button {
+    padding: 0 9px;
+    font-size: 12px;
+  }
+}
+
 /* Collapsed-panel size override — MUST come after the `.questing-adventurer-panel`
    rules above (the base min-width/min-height/container-type are declared in two
-   earlier blocks at lines ~573 and ~630). Same specificity (one class), so source
-   order decides: this later rule wins.
+   earlier blocks). Same specificity (one class), so source order decides: this
+   later rule wins.
 
    The base rule sets `container-type: inline-size`, which applies size
    containment — under size containment the element's inline-size does NOT
@@ -688,231 +1338,87 @@
   max-width: 360px;
   width: fit-content;
   container-type: normal;
+  border-radius: 10px;
 }
 
-@container (max-width: 360px) {
-  .questing-adventurer-panel__header {
-    font-size: 14px;
+/* --- Touch / coarse pointers -------------------------------------------
+   Overlays get used on tablets too. Hit areas grow rather than shrinking
+   the tap target, and hover-only states (the quiet row controls) become
+   permanently visible. */
+@media (pointer: coarse) {
+  .questing-adventurer-panel {
+    --qa-ctl: 30px;
   }
-  .questing-adventurer-panel__chip {
-    font-size: 14px;
+
+  .questing-adventurer-panel__controls button,
+  .questing-adventurer-panel__library-item button {
+    width: 28px;
+    height: 28px;
   }
+
+  .questing-adventurer-panel__controls {
+    opacity: 1;
+  }
+
+  .questing-adventurer-panel__drag-handle {
+    min-width: 22px;
+    min-height: 28px;
+    opacity: 0.8;
+  }
+
+  .questing-adventurer-panel__complete-button {
+    width: 22px;
+    height: 22px;
+  }
+
   .questing-adventurer-panel__footer input {
-    font-size: 14px;
+    height: 34px;
   }
+
   .questing-adventurer-panel__footer button {
-    font-size: 13px;
-  }
-  .questing-adventurer-panel__trigger-name,
-  .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text,
-  .questing-adventurer-panel__library-item-text {
-    font-size: 14px;
-  }
-  .questing-adventurer-panel__library-trigger-picker {
-    font-size: 12px;
+    height: 32px;
   }
 }
 
-@container (min-width: 361px) and (max-width: 540px) {
-  .questing-adventurer-panel__header {
-    font-size: 15px;
-  }
-  .questing-adventurer-panel__chip {
-    font-size: 15px;
-  }
-  .questing-adventurer-panel__footer input {
-    font-size: 15px;
-  }
-  .questing-adventurer-panel__footer button {
-    font-size: 14px;
-  }
-  .questing-adventurer-panel__trigger-name,
-  .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text,
-  .questing-adventurer-panel__library-item-text {
-    font-size: 15px;
-  }
-  .questing-adventurer-panel__library-trigger-picker {
-    font-size: 13px;
-  }
+/* --- Scrollbars --------------------------------------------------------- */
+
+.questing-adventurer-panel,
+.questing-adventurer-panel__list,
+.questing-adventurer-panel__library {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
 
-@container (min-width: 541px) {
-  .questing-adventurer-panel__header {
-    font-size: 16px;
-  }
-  .questing-adventurer-panel__chip {
-    font-size: 16px;
-  }
-  .questing-adventurer-panel__footer input {
-    font-size: 16px;
-  }
-  .questing-adventurer-panel__footer button {
-    font-size: 15px;
-  }
-  .questing-adventurer-panel__trigger-name,
-  .questing-adventurer-panel__move-text,
-  .questing-adventurer-panel__move-library-text,
-  .questing-adventurer-panel__library-item-text {
-    font-size: 16px;
-  }
-  .questing-adventurer-panel__library-trigger-picker {
-    font-size: 14px;
-  }
+.questing-adventurer-panel::-webkit-scrollbar,
+.questing-adventurer-panel__list::-webkit-scrollbar,
+.questing-adventurer-panel__library::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
-.questing-adventurer-panel__empty {
-  color: rgba(255, 255, 255, 0.6);
-  font-style: italic;
-  padding: 8px 0;
-}
-
-.questing-adventurer-panel__footer input {
-  flex: 1 1 100%;
-  padding: 4px 6px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: rgba(0, 0, 0, 0.4);
-  color: #fff;
-  font-size: 14px;
-  font-family: sans-serif;
-}
-
-.questing-adventurer-panel__footer input::placeholder {
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.questing-adventurer-panel__footer button {
-  flex: 1;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.15);
-  border: none;
-  border-radius: 3px;
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  font-family: sans-serif;
-}
-
-.questing-adventurer-panel__footer button:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-.questing-adventurer-panel__footer button[disabled] {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.questing-adventurer-panel__edit-input {
-  background: rgba(0, 0, 0, 0.8);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 14px;
-  font-family: sans-serif;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* Quest Log */
-.questing-adventurer-panel__quest-log {
-  margin: 6px 8px 4px;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  color: #fff;
-  font-family: sans-serif;
-  font-size: 12px;
-}
-
-.questing-adventurer-panel__quest-log-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.questing-adventurer-panel__quest-log-end {
-  padding: 1px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.questing-adventurer-panel__quest-log-summary,
-.questing-adventurer-panel__quest-log-current {
-  opacity: 0.9;
-  margin-top: 2px;
-}
-
-.questing-adventurer-panel__quest-log-recent {
-  margin-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  padding-top: 4px;
-}
-
-.questing-adventurer-panel__quest-log-row {
-  opacity: 0.7;
-  font-size: 11px;
-  margin-top: 2px;
-}
-
-.questing-adventurer-panel__complete-button {
-  padding: 0 4px;
+.questing-adventurer-panel::-webkit-scrollbar-track,
+.questing-adventurer-panel__list::-webkit-scrollbar-track,
+.questing-adventurer-panel__library::-webkit-scrollbar-track {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 50%;
-  color: #fff;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 16px;
-  width: 18px;
-  height: 18px;
 }
 
-.questing-adventurer-panel__complete-button--done {
-  border-color: rgba(120, 220, 140, 0.8);
-  color: rgb(120, 220, 140);
-  cursor: default;
+.questing-adventurer-panel::-webkit-scrollbar-thumb,
+.questing-adventurer-panel__list::-webkit-scrollbar-thumb,
+.questing-adventurer-panel__library::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  background-clip: content-box;
 }
 
-/* Scene marker prompt */
-.questing-adventurer-panel__prompt {
-  margin: 6px 8px;
-  padding: 8px;
-  border: 1px solid rgba(255, 220, 120, 0.6);
-  border-radius: 4px;
-  background: rgba(40, 32, 8, 0.9);
-  color: #fff;
-  font-family: sans-serif;
-  font-size: 12px;
-}
+/* --- Reduced motion ---------------------------------------------------- */
 
-.questing-adventurer-panel__prompt-title {
-  font-weight: 600;
-  margin-bottom: 3px;
-}
-
-.questing-adventurer-panel__prompt-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.questing-adventurer-panel__prompt-actions button {
-  padding: 2px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  cursor: pointer;
-  font-size: 11px;
+@media (prefers-reduced-motion: reduce) {
+  .questing-adventurer-panel,
+  .questing-adventurer-panel *,
+  .questing-adventurer-panel *::before,
+  .questing-adventurer-panel *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

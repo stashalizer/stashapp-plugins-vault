@@ -340,12 +340,36 @@
     }
     box.appendChild(header);
 
+    // Metrics are laid out as label + value pairs rather than one sentence:
+    // the numbers are the only thing the user scans here, so they get the
+    // weight and the tabular alignment while the labels recede. The wording
+    // is unchanged ("Today: 4 done · Streak: 2 days").
     const summary = document.createElement("div");
     summary.className = "questing-adventurer-panel__quest-log-summary";
-    summary.textContent =
-      "Today: " + stats.todayCompleted +
-      " done · Streak: " + stats.streak +
-      " day" + (stats.streak === 1 ? "" : "s");
+    const metrics = [
+      ["Today", stats.todayCompleted + " done"],
+      ["Streak", stats.streak + " day" + (stats.streak === 1 ? "" : "s")],
+    ];
+    metrics.forEach(function (metric, index) {
+      if (index > 0) {
+        const sep = document.createElement("span");
+        sep.className = "questing-adventurer-panel__quest-log-sep";
+        sep.setAttribute("aria-hidden", "true");
+        sep.textContent = "\u00b7";
+        summary.appendChild(sep);
+      }
+      const pair = document.createElement("span");
+      pair.className = "questing-adventurer-panel__quest-log-metric";
+      const label = document.createElement("span");
+      label.className = "questing-adventurer-panel__quest-log-label";
+      label.textContent = metric[0];
+      const value = document.createElement("span");
+      value.className = "questing-adventurer-panel__quest-log-value";
+      value.textContent = metric[1];
+      pair.appendChild(label);
+      pair.appendChild(value);
+      summary.appendChild(pair);
+    });
     box.appendChild(summary);
 
     const completedNow = currentSession
@@ -460,7 +484,16 @@
     box.className = "questing-adventurer-panel__prompt";
     const title = document.createElement("div");
     title.className = "questing-adventurer-panel__prompt-title";
-    title.textContent = "Prompt · " + (marker.title || trigger.name);
+    // "PROMPT" stays a micro-label; the marker title keeps sentence case
+    // (marker titles are often long, and all-caps them reads as shouting).
+    const titleLabel = document.createElement("span");
+    titleLabel.className = "questing-adventurer-panel__prompt-label";
+    titleLabel.textContent = "Prompt";
+    const titleName = document.createElement("span");
+    titleName.className = "questing-adventurer-panel__prompt-name";
+    titleName.textContent = marker.title || trigger.name;
+    title.appendChild(titleLabel);
+    title.appendChild(titleName);
     box.appendChild(title);
     const copy = document.createElement("div");
     copy.className = "questing-adventurer-panel__prompt-copy";
@@ -1266,7 +1299,26 @@
       chip.dataset.action = "toggle-collapse";
       chip.dataset.dragThreshold = "true";
       chip.title = "Click to expand · Drag to move";
-      chip.textContent = "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + ")";
+      chip.setAttribute(
+        "aria-label",
+        "\ud83d\uddfa\ufe0f Triggers (" + getActiveTriggerCount() + "). Click to expand, drag to move."
+      );
+      // Icon / label / count as separate spans so the count can be set in
+      // tabular figures on an accent pill instead of sitting inside a run of
+      // text. Same words as before ("🗺️ Triggers (N)"), same meaning.
+      const chipIcon = document.createElement("span");
+      chipIcon.className = "questing-adventurer-panel__chip-icon";
+      chipIcon.setAttribute("aria-hidden", "true");
+      chipIcon.textContent = "\ud83d\uddfa\ufe0f";
+      const chipLabel = document.createElement("span");
+      chipLabel.className = "questing-adventurer-panel__chip-label";
+      chipLabel.textContent = "Triggers";
+      const chipCount = document.createElement("span");
+      chipCount.className = "questing-adventurer-panel__chip-count";
+      chipCount.textContent = String(getActiveTriggerCount());
+      chip.appendChild(chipIcon);
+      chip.appendChild(chipLabel);
+      chip.appendChild(chipCount);
       // The collapsed chip doubles as a drag handle: pointerdown starts a
       // threshold-gated panel drag (the panel only moves after 5px of
       // movement; a sub-threshold release is a click that toggles
@@ -1286,10 +1338,23 @@
     const header = document.createElement("div");
     header.className = "questing-adventurer-panel__header";
     header.addEventListener("pointerdown", startPanelDrag);
-    // The header used to have a 'Triggers' title element on the left, but
-    // the controls (add-toggle, penalty, reward, opacity, close) are
-    // self-explanatory. The title was visual noise that ate horizontal
-    // space on a 360px max-width panel. Removed.
+    // A compact micro-label plus the active count. Three anonymous buttons in
+    // a row have no subject; "TRIGGERS (3)" names the panel and surfaces the
+    // count that the collapsed chip already shows. The label is hidden by a
+    // container query below 320px so the controls never crowd (see CSS).
+    const titleWrap = document.createElement("span");
+    titleWrap.className = "questing-adventurer-panel__header-title-wrap";
+    const titleEl = document.createElement("span");
+    titleEl.className = "questing-adventurer-panel__header-title";
+    titleEl.textContent = "Triggers";
+    const titleCount = document.createElement("span");
+    titleCount.className = "questing-adventurer-panel__header-count";
+    titleCount.textContent = String(getActiveTriggerCount());
+    titleCount.title = getActiveTriggerCount() + " active trigger(s)";
+    titleWrap.appendChild(titleEl);
+    titleWrap.appendChild(titleCount);
+    header.appendChild(titleWrap);
+
     const controls = document.createElement("span");
     controls.className = "questing-adventurer-panel__header-controls";
 
@@ -1650,7 +1715,7 @@
     row.dataset.id = move.id;
     row.dataset.rowType = "move";
     row.dataset.parentTrigger = parentTriggerId || "";
-    row.style.setProperty("--qa-indent", indented ? "16px" : "0px");
+    row.style.setProperty("--qa-indent", indented ? "24px" : "0px");
 
     const handle = document.createElement("button");
     handle.type = "button";
