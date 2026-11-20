@@ -5,6 +5,10 @@
  * outside the Settings page's plugin-config snapshot. When Suite Data is not
  * installed, every call falls back to the plugin's existing csLib config so
  * the plugin keeps working exactly as before.
+ *
+ * Suite Data is optional and must stay undeclared as a dependency: presence is
+ * confirmed with a `plugins` query before the first runPluginOperation call,
+ * because Stash panics when the mutation is sent an id that is not loaded.
  */
 (function () {
   "use strict";
@@ -35,7 +39,7 @@
 
   function suiteOp(args) {
     return graphql(
-      'mutation ($args: Map) { runPluginOperation(plugin_id: "SuiteData", args: $args) }',
+      'mutation ($args: Map) { runPluginOperation(plugin_id: "' + SUITE_ID + '", args: $args) }',
       { args: args }
     ).then(function (data) {
       if (!data || typeof data.runPluginOperation !== "object" || data.runPluginOperation === null) {
@@ -45,8 +49,28 @@
     });
   }
 
+  // Stash's runPluginOperation panics on an unknown plugin id, so confirm the
+  // plugin is installed and enabled before sending the first operation. The ID
+  // comparison is exact on purpose: Stash matches plugin IDs case-sensitively.
+  async function suiteInstalled() {
+    try {
+      var data = await graphql("query { plugins { id enabled } }");
+      var list = (data && data.plugins) || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === SUITE_ID) return list[i].enabled !== false;
+      }
+    } catch (err) {
+      return false;
+    }
+    return false;
+  }
+
   async function ping() {
     if (suiteAvailable !== null) return suiteAvailable;
+    if (!(await suiteInstalled())) {
+      suiteAvailable = false;
+      return suiteAvailable;
+    }
     try {
       var result = await suiteOp({ mode: "ping" });
       suiteAvailable = !!(result && result.ok);

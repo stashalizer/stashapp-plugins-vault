@@ -30,6 +30,16 @@ Cross-plugin invariants worth stating once:
   `<config>/plugin-data/<PluginId>/<key>.json` with revision checks; otherwise
   the helper falls back to the old `csLib` config. SceneVersions has no plugin
   config key and does not need this migration.
+  **Suite Data is a soft dependency: never declare it in `ui.requires` or in the
+  `# requires:` comment.** `ui.requires` only fixes JS/CSS load order and is
+  treated as mandatory, so a missing or disabled entry would stop the dependent
+  plugin's scripts from being injected at all and the csLib fallback would never
+  run; `# requires:` feeds `index.yml` and only auto-installs plugins from the
+  same index, so it cannot resolve Suite Data anyway. Each helper therefore
+  confirms presence with a `plugins { id enabled }` query before its first
+  `runPluginOperation` call, using the exact ID string the mutation sends —
+  Stash matches plugin IDs case-sensitively and panics (nil pointer in
+  `buildPluginInput`) when the mutation names an unloaded ID.
 - **Player overlays are vanilla JS on `window.csLib`; settings pages and tab
   injections are React on `window.PluginApi`.** Do not add a bundler or a
   second runtime just for a storage helper.
