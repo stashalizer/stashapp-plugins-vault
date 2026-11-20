@@ -108,7 +108,14 @@ AGENTS.md                   # architecture + conventions (this file)
 ## Plugin manifest gotchas
 
 - **Plugin id = directory name = yml basename.** Renaming the directory means renaming the yml and the asset list inside it.
-- `build_site.sh` parses the yml with `grep -E '^(name|description|version):'`. The published `version` becomes `<ymlVersion>-<gitShortHash>` in `index.yml`.
+- `build_site.sh` reads `name` / `description` / `version` from the first matching line of the yml with `manifestValue` (which strips one layer of YAML quoting), then prints `name` and `description` back through `yamlScalar` as **double-quoted** scalars. The published `version` becomes `<ymlVersion>-<gitShortHash>` in `index.yml`.
+- **Quote every manifest value that contains `: ` (or starts with `"` / `'`).** `description: Audio Support` style plain scalars are fine, but a plain scalar cannot contain `: ` — `yaml.v2` reads the second colon as a new mapping key. `description: ... Optional: install SuiteData ...` therefore made three manifests unparseable (Stash logs `Error loading plugin`) *and* made the published `index.yml` invalid, so adding the source under **Available Plugins** failed with:
+
+  ```
+  listing remote packages: reading package list: yaml: line 4: mapping values are not allowed in this context
+  ```
+
+  Quote the value (`description: "… Optional: …"`, escaping inner `"` as `\"`) and keep it on one line. `build_site.sh` re-quotes what it emits, so the index itself tolerates a hostile description, but Stash parses the manifest independently — the source of truth has to be valid YAML on its own.
 - **Dependencies are read from a comment line, not from `ui.requires`.** Keep `# requires: PluginA, PluginB` (comma-separated) at the bottom of the yml in sync with `ui.requires`. See `QuestingAdventurer.yml:7,14`. The two locations must agree.
 - `ui.javascript` / `ui.css` entries are paths relative to the plugin directory.
 - **Runtime globals are not bundled.** The plugin expects `window.csLib` and `window.PluginApi` to be provided by Stash; users must install **CommunityScriptsUILibrary** first (declared in `ui.requires`).

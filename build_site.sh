@@ -16,6 +16,44 @@ fi
 rm -rf "$outdir"
 mkdir -p "$outdir"
 
+# Read the first "<key>: value" line of a manifest and print the value with one
+# layer of YAML quoting removed. Plain values are printed verbatim.
+manifestValue()
+{
+    file=$1
+    key=$2
+    value=$(grep -m1 "^$key:" "$file" | sed -e 's/\r$//' -e "s/^$key:[[:space:]]*//")
+
+    case $value in
+    \"*\")
+        value=${value#\"}
+        value=${value%\"}
+        value=${value//\\\"/\"}
+        value=${value//\\\\/\\}
+        ;;
+    \'*\')
+        value=${value#\'}
+        value=${value%\'}
+        value=${value//\'\'/\'}
+        ;;
+    esac
+
+    printf '%s' "$value"
+}
+
+# Print a value as a double-quoted YAML scalar. The index is machine generated,
+# so it must not rely on the manifest happening to be quote-safe: an unquoted
+# description containing ": " (e.g. "Optional: install SuiteData ...") makes
+# Stash reject the whole package list with
+# "yaml: line N: mapping values are not allowed in this context".
+yamlScalar()
+{
+    value=$(manifestValue "$1" "$2")
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    printf '"%s"' "$value"
+}
+
 buildPlugin() 
 {
     f=$1
@@ -39,11 +77,11 @@ buildPlugin()
     zip -r "$zipfile" . -x "*.md" > /dev/null
     popd > /dev/null
 
-    name=$(grep "^name:" "$f" | head -n 1 | cut -d' ' -f2- | sed -e 's/\r//' -e 's/^"\(.*\)"$/\1/')
-    description=$(grep "^description:" "$f" | head -n 1 | cut -d' ' -f2- | sed -e 's/\r//' -e 's/^"\(.*\)"$/\1/')
-    ymlVersion=$(grep "^version:" "$f" | head -n 1 | cut -d' ' -f2- | sed -e 's/\r//' -e 's/^"\(.*\)"$/\1/')
+    name=$(yamlScalar "$f" name)
+    description=$(yamlScalar "$f" description)
+    ymlVersion=$(manifestValue "$f" version)
     version="$ymlVersion-$version"
-    IFS=$'\n' dep=$(grep "^# requires:" "$f" | cut -c 12- | sed -e 's/\r//')
+    IFS=$'\n' dep=$(grep "^# requires:" "$f" | sed -e 's/^#[[:space:]]*requires:[[:space:]]*//' -e 's/\r$//')
 
     # write to spec index
     echo "- id: $plugin_id
