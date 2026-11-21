@@ -746,6 +746,81 @@
     preload();
   }
 
+  // ── Filters-panel guard ─────────────────────────────────────────────
+  //
+  // Stash's SceneVideoFilterPanel picks its target with
+  // getElementsByTagName("canvas") and only falls back to <video> when there is
+  // no canvas at all. Any plugin that leaves a canvas inside #VideoJsPlayer —
+  // including a 0x0 one it created and never finished drawing — therefore
+  // receives every Filters transform: rotate, scale, aspect ratio, brightness,
+  // contrast. The sliders look completely dead and nothing in the UI says why.
+  //
+  // An invisible canvas cannot be the thing painting the video, so moving it to
+  // the player's parent is safe: the element stays connected, whoever owns it
+  // keeps its reference and its data, it is simply no longer inside the subtree
+  // the panel scans. The alternative — leaving it and telling the user to go
+  // patch some other plugin — is what this plugin's own README used to say.
+  var FILTERS_GUARD = true;
+  var guardedCanvases = new WeakSet(); // already reported
+  var firstSeenEmpty = new WeakMap(); // canvas -> when it was first seen at 0x0
+  // A canvas that is 0x0 for less than this is probably still initialising;
+  // only something that stays invisible gets moved, so a plugin that sizes its
+  // canvas right after appending is never disturbed.
+  var EMPTY_CANVAS_GRACE_MS = 700;
+
+  function describeNode(node) {
+    var classes = node.className ? "." + String(node.className).trim().split(/\s+/).join(".") : "";
+    var name = node.id ? "#" + node.id : classes || " (no class)";
+    return "<canvas" + name + " " + (node.width || 0) + "x" + (node.height || 0) + ">";
+  }
+
+  function guardFiltersPanel() {
+    if (!FILTERS_GUARD) return 0;
+    var player = getPlayer();
+    if (!player || !player.parentElement) return 0;
+    var canvases = player.getElementsByTagName("canvas");
+    if (!canvases.length) return 0;
+    var now = Date.now();
+    var moved = 0;
+    // Backwards: moving a canvas out mutates the live collection.
+    for (var i = canvases.length - 1; i >= 0; i--) {
+      var canvas = canvases[i];
+      // A canvas with a layout box may be doing something visible; it is not
+      // this plugin's business to move it.
+      if (canvas.clientWidth || canvas.clientHeight) {
+        firstSeenEmpty.delete(canvas);
+        continue;
+      }
+      var since = firstSeenEmpty.get(canvas);
+      if (since === undefined) {
+        firstSeenEmpty.set(canvas, now);
+        continue;
+      }
+      if (now - since < EMPTY_CANVAS_GRACE_MS) continue;
+      firstSeenEmpty.delete(canvas);
+      // Take it out of the parent's layout flow as well: a 0x0 element promoted
+      // to a flex/grid item can still add a gap and shift the player by a few
+      // pixels, which would get blamed on this plugin.
+      if (window.getComputedStyle(canvas).position === "static") {
+        canvas.style.position = "absolute";
+      }
+      player.parentElement.appendChild(canvas);
+      moved++;
+      if (!guardedCanvases.has(canvas)) {
+        guardedCanvases.add(canvas);
+        console.warn(
+          "SceneRotation: moved " + describeNode(canvas) + " out of #VideoJsPlayer. " +
+            "Stash's Filters panel sends every rotate/scale/brightness/contrast " +
+            "change to the first canvas it finds, so as long as that canvas was " +
+            "inside the player the sliders had no visible effect. The canvas is " +
+            "still on the page, just outside the player. Run " +
+            "SceneRotation.filtersGuard(false) to disable this check."
+        );
+      }
+    }
+    return moved;
+  }
+
   // ── Controls ────────────────────────────────────────────────────────
 
   // Where the cluster sits, as a fraction of the player box so it survives a
@@ -1148,6 +1223,9 @@
       return;
     }
     ensurePositioned(player);
+    // Before anything else: if a stray canvas is parked in the player, every
+    // Filters transform is going into it, and that has nothing to do with us.
+    guardFiltersPanel();
     if (!bar) mountBar(player);
     else placeBar();
     bindVideo();
@@ -1264,6 +1342,14 @@
     sync: sync,
     // Re-run the decoration pass by hand (after a stylesheet change, say).
     decorate: decorate,
+    // Run the Filters-panel guard now; returns how many canvases it moved.
+    unstick: guardFiltersPanel,
+    // Turn the guard off (or back on). Off = leave other plugins' canvases
+    // alone, at the cost of Stash's Filters tab targeting them again.
+    filtersGuard: function (enabled) {
+      FILTERS_GUARD = enabled !== false;
+      return FILTERS_GUARD;
+    },
     // Put the control cluster back in the top-right corner.
     resetBar: resetBarPos,
     // Reload the index of rotated scenes.
