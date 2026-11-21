@@ -1,6 +1,6 @@
 name: Scene Rotation
 description: "Per-scene playback rotation. Rotate a scene 90/180/270 degrees clockwise or counter-clockwise and have Stash remember it — the angle lives in the scene's custom_fields, so it survives reloads, other browsers and other devices. The cover image is rotated to match, so thumbnails point the same way. Playback uses a CSS transform: the video file is never re-encoded and no extra files appear in the library."
-version: 0.2.0
+version: 0.3.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:

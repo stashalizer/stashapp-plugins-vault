@@ -62,6 +62,11 @@
   // change). One pass is a getElementById plus two regexes — cheap.
   var TICK_MS = 1000;
   var COVER_JPEG_QUALITY = 0.92;
+  // Rotation is decided by clicking, and getting to 180 means two clicks. The
+  // picture follows every click, but the write waits for the clicks to stop, so
+  // 0 -> 180 costs one cover re-encode instead of two (and 0 -> 180 -> 0 costs
+  // none at all).
+  var SAVE_DEBOUNCE_MS = 500;
 
   var state = { sceneId: null, deg: 0 };
   // sceneId -> { rotation, cover, screenshot }
@@ -71,18 +76,23 @@
   //   screenshot  paths.screenshot, the source for rebuilding the cover
   var cache = Object.create(null);
   var inflight = Object.create(null); // sceneId -> Promise<record>
+  // { sceneId, target, timer, waiters } — one pending write, latest angle wins
+  var pendingSave = null;
   var bar = null;
   var boundVideo = null;
   var syncQueued = false;
 
   // ── Data layer ──────────────────────────────────────────────────────
 
-  function graphql(query, variables) {
+  function graphql(query, variables, options) {
     return fetch("/graphql", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: query, variables: variables || {} }),
+      // Only used by the unload path for the tiny rotation mutation; a cover
+      // payload would blow past the 64 KB keepalive budget.
+      keepalive: !!(options && options.keepalive),
     })
       .then(function (response) {
         if (!response.ok) throw new Error("GraphQL HTTP " + response.status);
@@ -144,7 +154,7 @@
     return request;
   }
 
-  function writeRotation(sceneId, deg) {
+  function writeRotation(sceneId, deg, keepalive) {
     var record = cache[sceneId];
     if (record) record.rotation = deg;
     var input = deg
@@ -153,7 +163,8 @@
     if (deg) input.custom_fields.partial[FIELD_KEY] = deg;
     return graphql(
       "mutation ($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
-      { input: input }
+      { input: input },
+      { keepalive: keepalive }
     )
       .then(function () {
         return true;
@@ -491,6 +502,9 @@
   }
 
   function unmount() {
+    // The player is gone, so a pending click would never be committed by the
+    // debounce timer running against a live scene — commit it now.
+    flushSave();
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
     bar = null;
     boundVideo = null;
@@ -500,18 +514,67 @@
 
   // ── Public setter (also used by the console / other plugins) ────────
 
+  // Debounced write. The angle on screen is always the latest one; what is
+  // coalesced is the persistence: reaching 180 by two clicks writes once, and
+  // 0 -> 180 -> 0 writes nothing, so the cover is re-encoded at most once per
+  // settled decision instead of once per click.
+  function scheduleSave(sceneId, target) {
+    // The queue belongs to a scene: an angle left pending on the previous scene
+    // has to be committed before this one starts, or it is lost.
+    if (pendingSave && pendingSave.sceneId !== sceneId) flushSave();
+    if (!pendingSave) {
+      pendingSave = { sceneId: sceneId, target: target, timer: 0, waiters: [] };
+    }
+    pendingSave.target = target;
+    if (pendingSave.timer) window.clearTimeout(pendingSave.timer);
+    var settled = new Promise(function (resolve) {
+      pendingSave.waiters.push(resolve);
+    });
+    pendingSave.timer = window.setTimeout(function () {
+      flushSave();
+    }, SAVE_DEBOUNCE_MS);
+    return settled;
+  }
+
+  // Commit whatever is pending right now. Called by the debounce timer, and
+  // eagerly whenever the pending write is about to be lost: scene change,
+  // player teardown, page unload.
+  function flushSave(options) {
+    var pending = pendingSave;
+    if (!pending) return Promise.resolve(false);
+    pendingSave = null;
+    if (pending.timer) window.clearTimeout(pending.timer);
+
+    // Clicking back to the angle the scene already has (0 -> 90 -> 0) leaves
+    // nothing to write: skip both requests instead of sending a no-op mutation.
+    var record = cache[pending.sceneId];
+    var unchanged = !!record && record.rotation === pending.target;
+
+    var settled = unchanged
+      ? Promise.resolve(true)
+      : writeRotation(pending.sceneId, pending.target, options && options.keepalive);
+    if (!unchanged) {
+      // Fire and forget: a cover that cannot be rebuilt (no screenshot, tainted
+      // canvas) must never block or fail the rotation itself.
+      syncCover(pending.sceneId, pending.target);
+    }
+    settled.then(function (ok) {
+      pending.waiters.forEach(function (resolve) {
+        resolve(ok);
+      });
+    });
+    return settled;
+  }
+
   function set(deg) {
     var sceneId = state.sceneId || currentSceneId();
     if (!sceneId) return Promise.resolve(false);
     state.sceneId = sceneId;
     state.deg = normalize(deg);
+    // Visual feedback is immediate; only the write is deferred.
     apply();
     renderBar();
-    var saved = writeRotation(sceneId, state.deg);
-    // Fire and forget: a cover that cannot be rebuilt (no screenshot, tainted
-    // canvas) must never block or fail the rotation itself.
-    syncCover(sceneId, state.deg);
-    return saved;
+    return scheduleSave(sceneId, state.deg);
   }
 
   // ── Reconciliation ──────────────────────────────────────────────────
@@ -539,6 +602,9 @@
     if (!sceneId) return;
 
     if (sceneId !== state.sceneId) {
+      // Commit an angle still inside the debounce window for the scene we are
+      // leaving before switching scenes, otherwise those clicks are dropped.
+      flushSave();
       // New scene: drop the old angle immediately rather than showing the
       // previous scene's rotation until the query resolves.
       state.sceneId = sceneId;
@@ -592,10 +658,20 @@
   window.addEventListener("resize", scheduleSync);
   window.setInterval(sync, TICK_MS);
 
+  // Closing or reloading inside the debounce window must not drop the click.
+  // The rotation mutation is a few hundred bytes, so it can go out with
+  // keepalive; the cover write cannot (its payload exceeds the keepalive
+  // budget) and is repaired by syncCover() if it never lands.
+  window.addEventListener("pagehide", function () {
+    flushSave({ keepalive: true });
+  });
+
   window.SceneRotation = {
     set: set,
     get: function () { return state.deg; },
     cycle: function () { return set((state.deg + 90) % 360); },
+    // Commit a pending (debounced) write immediately.
+    flush: function () { return flushSave(); },
     sceneId: currentSceneId,
     sync: sync,
     // Repair a cover that predates cover sync, or that was regenerated after

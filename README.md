@@ -173,8 +173,8 @@ Rotates the picture at playback time for scenes that were encoded sideways, and 
 
 ### Features
 
-- **Per-scene memory.** Three buttons in the player's top-right corner — rotate left, rotate right, clear — with the current angle on a badge. The value is written to the scene as soon as you click it.
-- **The cover rotates with it.** The scene's cover image is rotated by the same angle so the card grid and detail header point the same way as playback, instead of showing the same frame sideways.
+- **Per-scene memory.** Three buttons in the player's top-right corner — rotate left, rotate right, clear — with the current angle on a badge. The picture follows every click; the write waits until you stop clicking (half a second), so reaching 180° by two clicks is one save, and 0 → 180 → 0 saves nothing at all.
+- **The cover rotates with it.** The scene's cover image is rotated by the same angle so the card grid and detail header point the same way as playback, instead of showing the same frame sideways. Because the cover is only redrawn once per settled angle, picking 180° directly costs one re-encode rather than two.
 - **Lossless for the video, file-free.** Playback uses a CSS transform on the video element; the media file is never re-encoded and no extra files appear in the library. (The cover *image* is rewritten in place, so that one is a re-encode — see the limitations.)
 - **Fits instead of crops.** After a 90/270 turn the picture is scaled so the whole rotated frame fits the player, instead of being zoomed to fill and losing the edges.
 - **Coexists with the built-in Filters tab.** The plugin only owns `transform` on the video element and re-asserts it if anything else rewrites that element's inline style.
@@ -184,14 +184,15 @@ Rotates the picture at playback time for scenes that were encoded sideways, and 
 
 1. Open a scene that plays sideways.
 2. Top-right of the player: `⟳` rotates 90° clockwise, `⟲` 90° counter-clockwise, the badge shows the saved angle, `✕` clears it. The cluster is translucent until you hover it.
-3. The angle is saved immediately, and the scene's cover is rotated in step so it looks right on the scene wall too. Reopening the scene — in this browser, another browser, or another device — restores both.
+3. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second), and the scene's cover is rotated in step so it looks right on the scene wall too. Reopening the scene — in this browser, another browser, or another device — restores both.
 
-For scripted use there is a small console API: `SceneRotation.set(180)`, `SceneRotation.cycle()`, `SceneRotation.get()`, `SceneRotation.syncCover()` (re-aligns the cover after a manual cover change), `SceneRotation.cover()` (angle already baked into the cover).
+For scripted use there is a small console API: `SceneRotation.set(180)` (resolves once the debounced save lands), `SceneRotation.flush()` (commit a pending save immediately), `SceneRotation.cycle()`, `SceneRotation.get()`, `SceneRotation.syncCover()` (re-aligns the cover after a manual cover change), `SceneRotation.cover()` (angle already baked into the cover).
 
 ### Known limitations
 
 - Only 0 / 90 / 180 / 270. The value is an integer custom field, so no arbitrary angles.
-- **The cover is re-encoded once per angle change** (JPEG, quality 0.92) because Stash has no "rotate this cover" API — the plugin renders the current cover into a canvas and writes the result back as the scene's cover. Setting an angle once is lossless for the video but costs one JPEG generation on the cover; cycling through angles repeatedly will slowly soften the cover. The original cover is not kept.
+- **The cover is re-encoded once per settled angle change** (JPEG, quality 0.92) because Stash has no "rotate this cover" API — the plugin renders the current cover into a canvas and writes the result back as the scene's cover. The video file is never re-encoded; the cover pays one JPEG generation per decided angle, so cycling back and forth across separate decisions will slowly soften it. The original cover is not kept.
+- A pending save is committed on scene change, on leaving the scene page, and on page unload, so a click followed by immediate navigation is not lost. If the browser kills the page before the request leaves, `SceneRotation.syncCover()` re-aligns the cover later.
 - If a cover predates this feature, or was regenerated after the rotation was set, the two can drift apart. Opening such a scene logs a note; run `SceneRotation.syncCover()` to rotate the cover into line (it rotates by the difference only). Opening a scene never writes to it by itself.
 - A scene with no cover image is left alone: the rotation is still saved, the cover is skipped with a warning in the console.
 - The scene's own **Filters** tab still forgets its brightness/contrast/scale on navigation — only rotation is persisted here. If you use both, a panel edit that rewrites the video's inline style is repaired on the next sync pass (about a second, or immediately on any player event).
