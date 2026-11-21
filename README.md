@@ -9,7 +9,7 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 - **[Questing Adventurer](#questing-adventurer)** — turns scene playback into a quest: respond to on-screen cues by performing the moves attached to your active triggers.
 - **[Mosaic Filter](#mosaic-filter)** — a movable, resizable blur rectangle (or ellipse) over any region of a scene, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
 - **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene bidirectionally, with a suggest-from-folder helper.
-- **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene (cover image included), so it opens correctly on every device without re-encoding the file.
+- **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene and applied to the player, the card preview and the cover, without re-encoding the file or writing anything to disk.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
 
 ## Requirements (all plugins)
@@ -43,7 +43,7 @@ Add this repository as a plugin source in Stash:
 3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, **Scene Rotation**, and/or **Audio Support** from the list.
 4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it (Audio Support's overlay and settings page both require it).
 
-QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner (no settings page).
+QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner and rotates scene media wherever it appears — player, card preview, cover (no settings page).
 
 ---
 
@@ -169,30 +169,48 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 
 ## Scene Rotation
 
-Rotates the picture at playback time for scenes that were encoded sideways, and remembers the angle. The angle is stored on the scene itself (`custom_fields`) rather than in the file or in the browser, so there is no re-encode, no `_rotate` copy of the video sitting in the library, and the scene opens the right way up on every device. The scene's cover image is rotated by the same angle, so thumbnails match playback.
+Rotates a scene in the player for videos that were encoded sideways, and remembers the angle. The angle is stored on the scene itself (`custom_fields`) rather than in the file or in the browser, so it survives reloads, other browsers and other devices — and **nothing is written to disk**. No re-encode, no `_rotate` copy in the library, no regenerated preview or cover.
+
+The rotation is a CSS transform applied to everything that shows the scene, not just the player: the **hover preview clip** on the scene card, the **cover** on the card grid and scene wall, and the player itself all turn together.
 
 ### Features
 
 - **Per-scene memory.** Three buttons in the player's top-right corner — rotate left, rotate right, clear — with the current angle on a badge. The picture follows every click; the write waits until you stop clicking (half a second), so reaching 180° by two clicks is one save, and 0 → 180 → 0 saves nothing at all.
-- **The cover rotates with it.** The scene's cover image is rotated by the same angle so the card grid and detail header point the same way as playback, instead of showing the same frame sideways. Because the cover is only redrawn once per settled angle, picking 180° directly costs one re-encode rather than two.
-- **Lossless for the video, file-free.** Playback uses a CSS transform on the video element; the media file is never re-encoded and no extra files appear in the library. (The cover *image* is rewritten in place, so that one is a re-encode — see the limitations.)
-- **Fits instead of crops.** After a 90/270 turn the picture is scaled so the whole rotated frame fits the player, instead of being zoomed to fill and losing the edges.
-- **Coexists with the built-in Filters tab.** The plugin only owns `transform` on the video element and re-asserts it if anything else rewrites that element's inline style.
+- **The whole UI follows, not just the player.** The card preview clip and the cover artwork are rotated by the same angle, so the scene wall, the card grid and the detail header point the same way as playback instead of showing the same frame sideways.
+- **Zero writes.** Nothing but the integer in `custom_fields` is stored. The media file is never re-encoded, no copy appears in the library, and no Stash artifact is regenerated — the covers you see are the untouched originals, rotated in the browser.
+- **Fits instead of crops.** After a 90/270 turn the picture is scaled according to the element's own `object-fit`: shrunk so the whole rotated frame fits in the player, grown so a card stays filled the way it was designed to be. Stash anchors card artwork to the top, so that offset is corrected too — the picture does not jump off-centre.
+- **Coexists with the built-in Filters tab.** The plugin only owns `transform` on media elements and re-asserts it if anything else rewrites that element's inline style.
+- **One query, then nothing.** Rotated scenes are indexed once per page load, so a grid of cards needs no lookup per card, and a library where nobody uses the plugin costs a single request that comes back empty.
 - **No dependencies.** Does not need CommunityScriptsUILibrary, PluginApi or a settings page.
 
 ### How to use it
 
 1. Open a scene that plays sideways.
 2. Top-right of the player: `⟳` rotates 90° clockwise, `⟲` 90° counter-clockwise, the badge shows the saved angle, `✕` clears it. The cluster is translucent until you hover it.
-3. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second), and the scene's cover is rotated in step so it looks right on the scene wall too. Reopening the scene — in this browser, another browser, or another device — restores both.
+3. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second). Reopening the scene — in this browser, another browser, or another device — restores it. The card preview and cover follow automatically.
 
-For scripted use there is a small console API: `SceneRotation.set(180)` (resolves once the debounced save lands), `SceneRotation.flush()` (commit a pending save immediately), `SceneRotation.cycle()`, `SceneRotation.get()`, `SceneRotation.syncCover()` (re-aligns the cover after a manual cover change), `SceneRotation.cover()` (angle already baked into the cover), `SceneRotation.resetAll()` (clear every stored angle — see the migration note below).
+For scripted use there is a small console API:
 
-### Rotating at the file level (when previews must match too)
+| Call | What it does |
+|---|---|
+| `SceneRotation.set(180)` | set the angle; resolves once the debounced save lands |
+| `SceneRotation.flush()` | commit a pending save immediately |
+| `SceneRotation.cycle()` / `.get()` | step by 90° / read the current angle |
+| `SceneRotation.angle(id?)` | angle the UI is applying to a scene (the CSS side) |
+| `SceneRotation.cover()` | angle already baked into the cover image, `null` if never |
+| `SceneRotation.decorate()` | force a redraw pass (after a stylesheet change, say) |
+| `SceneRotation.reload()` | reload the index of rotated scenes |
+| `SceneRotation.resetAll()` | clear every stored angle (see below) |
+| `SceneRotation.bakeCover()` | opt-in, **writes**: burn the angle into the cover image |
 
-This plugin only turns the **player**. Stash's generated artifacts — the wall preview clip, the scrubber sprites, and every cover produced by a Generate task — are made server-side by ffmpeg, from the file. The generator passes no `-noautorotate`, so ffmpeg's autorotate is on: **if the rotation is written into the file's display matrix, every artifact comes out right**. If the angle only lives in `custom_fields`, ffmpeg never sees it and those artifacts stay sideways.
+### What this cannot fix
 
-Rewriting the matrix is lossless and creates no new file — `-c copy` only rewrites the container header, in milliseconds:
+Two things stay sideways, and neither can be rotated from the browser:
+
+- **The scrubber sprites.** The frame grid under the seek bar (and on the card's hover scrubber) is one sprite-sheet image cropped by CSS. Rotating the element would rotate the crop window with it and break the frame mapping, so it is left alone.
+- **Anything that reads the files directly.** Transcodes, other applications, a media player pointed at the same folder. They see the video exactly as encoded.
+
+If you want those right too, the angle has to live in the file's display matrix. That is lossless and creates no new file — `-c copy` only rewrites the container header — but it *is* a write:
 
 ```bash
 # overwrite in place: same path, same scene, no re-encode
@@ -200,26 +218,19 @@ ffmpeg -v error -display_rotation -90 -i "clip.mp4" -map 0 -c copy -movflags +fa
 move /y "clip.tmp.mp4" "clip.mp4"        # Windows; use mv on POSIX
 ```
 
-`-display_rotation` is **counter-clockwise degrees** and is *absolute*, not cumulative: clockwise 90° is `-90`, and re-running is idempotent. Needs ffmpeg 7.1+ to override an existing matrix. Works for MP4/MOV (tkhd matrix) and MKV (`TAG:ROTATE`); WebM and AVI have no rotation field and need a real re-encode.
+`-display_rotation` is **counter-clockwise degrees** and is *absolute*, not cumulative: clockwise 90° is `-90`, and re-running is idempotent. Needs ffmpeg 7.1+ to override an existing matrix. Works for MP4/MOV (tkhd matrix) and MKV (`TAG:ROTATE`); WebM and AVI have no rotation field and need a real re-encode. Afterwards, rescan the scenes and run **Settings → Tasks → Generate** with *Overwrite* so previews, sprites and covers are rebuilt from the rotated file.
 
-**The two mechanisms are mutually exclusive.** Once the file carries a matrix, the browser rotates the picture on its own, so a stored angle would rotate it a second time — and there is no reliable way for the frontend to detect that (Chrome reports post-rotation dimensions, which are exactly the dimensions Stash scanned either way). So after rewriting files:
-
-1. Rescan the scenes so Stash picks up the corrected dimensions.
-2. Run **Settings → Tasks → Generate** with *Overwrite* for those scenes, so previews, sprites and covers are rebuilt from the rotated file.
-3. In the browser console, run `SceneRotation.resetAll()` — it clears `SceneRotation` / `SceneRotationCover` on every scene that has one, so the plugin stops touching the player.
-
-`SceneRotation.resetAll()` returns the number of scenes it cleared.
+Then run `SceneRotation.resetAll()`. Once the file carries a matrix the browser rotates the picture on its own, so a stored angle would rotate it a second time — and there is no reliable way for the frontend to tell (Chrome reports post-rotation dimensions, which are exactly the dimensions Stash scanned either way). The two mechanisms are mutually exclusive, so the plugin has to be told to stand down. `resetAll()` clears `SceneRotation` / `SceneRotationCover` on every scene that has one and returns how many it cleared.
 
 ### Known limitations
 
 - Only 0 / 90 / 180 / 270. The value is an integer custom field, so no arbitrary angles.
-- **Player-only.** Stash's generated preview clip, scrubber sprites and Generate-task covers are produced by server-side ffmpeg and are not affected by this plugin — see [Rotating at the file level](#rotating-at-the-file-level-when-previews-must-match-too) for the lossless way to fix those.
-- **The cover is re-encoded once per settled angle change** (JPEG, quality 0.92) because Stash has no "rotate this cover" API — the plugin renders the current cover into a canvas and writes the result back as the scene's cover. The video file is never re-encoded; the cover pays one JPEG generation per decided angle, so cycling back and forth across separate decisions will slowly soften it. The original cover is not kept.
-- A pending save is committed on scene change, on leaving the scene page, and on page unload, so a click followed by immediate navigation is not lost. If the browser kills the page before the request leaves, `SceneRotation.syncCover()` re-aligns the cover later.
-- If a cover predates this feature, or was regenerated after the rotation was set, the two can drift apart. Opening such a scene logs a note; run `SceneRotation.syncCover()` to rotate the cover into line (it rotates by the difference only). Opening a scene never writes to it by itself.
-- A scene with no cover image is left alone: the rotation is still saved, the cover is skipped with a warning in the console.
+- **Sprites and third-party clients stay sideways** — see [What this cannot fix](#what-this-cannot-fix).
+- Cover artwork is rotated with CSS, so with `object-fit: cover` (landscape cards) a 90° turn shows a zoomed centre crop rather than the whole frame; with `object-fit: contain` (portrait cards — which is what a sideways recording produces) it fills the card exactly.
+- A cover already baked by an earlier version of this plugin (0.2–0.4) keeps its baked angle: the CSS angle is `rotation - cover`, so those scenes are not rotated twice. If the cover was regenerated since (Generate task, rescrape), that marker is stale and the card is off by the difference — `SceneRotation.bakeCover()` realigns it, and that one writes.
 - The scene's own **Filters** tab still forgets its brightness/contrast/scale on navigation — only rotation is persisted here. If you use both, a panel edit that rewrites the video's inline style is repaired on the next sync pass (about a second, or immediately on any player event).
-- Only the main `#VideoJsPlayer` is handled; multi-player surfaces (Stash TV, grid/multi-screen plugins) are not rotated.
+- Only the main `#VideoJsPlayer` plus scene media elsewhere on the page is handled; multi-player surfaces (Stash TV, grid plugins) are not rotated.
+- A pending save is committed on scene change, on leaving the scene page, and on page unload (`keepalive`), so a click followed by immediate navigation is not lost.
 - Stash versions without `custom_fields` play the scene unrotated and log a warning instead of failing.
 
 ---

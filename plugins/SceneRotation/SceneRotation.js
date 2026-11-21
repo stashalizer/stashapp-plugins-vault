@@ -18,14 +18,23 @@
  *   Only scalar values are allowed in custom_fields (see
  *   pkg/sqlite/custom_fields.go); an int is exactly what we need.
  *
- * - The cover image is rotated with the video, because the cover is what the
- *   scene wall and the card grid show; leaving it sideways defeats the point.
- *   `sceneUpdate(cover_image:)` takes a base64 data URL, so the browser can
- *   render the current cover into a canvas, rotate it and write it back — no
- *   backend hook, no ImageMagick. The applied angle is tracked in
- *   custom_fields["SceneRotationCover"] so only the delta is re-encoded on each
- *   change; the cover is the only thing this plugin writes that is lossy, and
- *   the media file itself is never touched.
+ * - Nothing is written to disk. Not the media file (no re-encode, no copy), and
+ *   not Stash's generated artifacts either: the rotation is a CSS transform on
+ *   whatever element is showing the scene, so the preview clip on the scene
+ *   card and the cover on the card/scene wall are rotated the same way the
+ *   player is. The only write this plugin ever performs is the integer in
+ *   custom_fields.
+ *
+ *   The consequence is that Stash's own derivations (preview file, sprite
+ *   sheet, generated cover) stay sideways on disk — they are simply never shown
+ *   unrotated by this UI. Anything that reads the files directly (another app,
+ *   a different client) still sees them as encoded.
+ *
+ * - The cover angle has to be split into "already baked" and "still to apply".
+ *   custom_fields["SceneRotationCover"] records an angle that an older version
+ *   of this plugin wrote into the cover image itself, so the CSS angle is
+ *   rotation - cover. Scenes that were never baked have cover = null and get the
+ *   full angle; scenes baked by 0.2/0.3 get 0 and are not rotated twice.
  *
  * - We style the `<video>` element itself, never `#VideoJsPlayer`, and we write
  *   ONLY `transform` / `transform-origin`. Stash's SceneVideoFilterPanel
@@ -40,10 +49,17 @@
  *   silently swallows every panel filter. The controls here are divs/buttons
  *   only.
  *
- * - Rotation is "contain", not "cover": after rotating, the footprint becomes
- *   h x w, and the scale factor is min(boxW / contentH, boxH / contentW). That
- *   fits the whole (now rotated) picture inside the player instead of cropping
- *   it, which is what you want when the content itself is what was sideways.
+ * - The scale factor mirrors the element's own `object-fit`. A 90/270 turn
+ *   swaps the footprint, so the picture no longer fills the box: with
+ *   `contain` (what the player and portrait cards use) it is shrunk by
+ *   min(boxW / h, boxH / w) so the whole rotated frame fits; with `cover`
+ *   (what landscape cards use) it is grown by max(...) so the box stays filled
+ *   the way the card expects. Cropping or letterboxing therefore stays exactly
+ *   as intentional as it was before the rotation.
+ *
+ *   `object-position` matters as well: Stash aligns card artwork to `top`, so
+ *   the picture is not centred in its box and the transform has to translate it
+ *   back to the centre after rotating, otherwise 90° leaves it visibly offset.
  *
  * - No csLib / PluginApi dependency: plain DOM plus `fetch("/graphql")`, the
  *   same helper shape used by the other vanilla overlays in this repo. The
@@ -57,6 +73,14 @@
   // only has to rotate by the delta instead of re-rotating from scratch.
   var COVER_FIELD_KEY = "SceneRotationCover";
   var PLAYER_ID = "VideoJsPlayer";
+  // Scene-bound media in the DOM: the player stream, the hover preview clip on
+  // a scene card, the animated-webp variant of that preview, and the cover
+  // (card artwork, scene wall, detail header). Sprite sheets and VTT files are
+  // deliberately absent — see the note on non-rotatable artifacts.
+  var SCENE_MEDIA_RE = /\/scene\/(\d+)\/(screenshot|preview|stream|webp)(?:[?#/]|$)/i;
+  // Any element showing scene media. Narrow enough to be cheap on image-heavy
+  // pages (a gallery grid would otherwise match every thumbnail).
+  var MEDIA_SELECTOR = 'video[src*="/scene/"], img[src*="/scene/"]';
   // Safety net for SPA transitions that fire neither popstate nor
   // `stash:location` (the player element can be swapped without a route
   // change). One pass is a getElementById plus two regexes — cheap.
@@ -76,10 +100,17 @@
   //   screenshot  paths.screenshot, the source for rebuilding the cover
   var cache = Object.create(null);
   var inflight = Object.create(null); // sceneId -> Promise<record>
+  // The card grid needs the angle of every scene it shows, and asking per card
+  // would be dozens of requests. One query loads every scene that carries the
+  // field; after that, "not in cache" means "not rotated" and needs no lookup.
+  var indexLoaded = false;
+  var indexRequest = null;
+  var NOT_ROTATED = { rotation: 0, cover: null, screenshot: "" };
   // { sceneId, target, timer, waiters } — one pending write, latest angle wins
   var pendingSave = null;
   var bar = null;
   var boundVideo = null;
+  var boundMedia = new WeakSet(); // media elements already listening for load
   var syncQueued = false;
 
   // ── Data layer ──────────────────────────────────────────────────────
@@ -113,28 +144,51 @@
     return ((Math.round(n / 90) * 90) % 360 + 360) % 360;
   }
 
+  function recordFrom(scene) {
+    var fields = (scene && scene.custom_fields) || {};
+    return {
+      rotation: normalize(fields[FIELD_KEY]),
+      // null rather than 0: "never rotated" and "rotated back to 0" need to be
+      // distinguishable, otherwise a scene whose cover was already baked by an
+      // older plugin version would have that rotation applied a second time.
+      cover:
+        fields[COVER_FIELD_KEY] === undefined || fields[COVER_FIELD_KEY] === null
+          ? null
+          : normalize(fields[COVER_FIELD_KEY]),
+      screenshot: (scene && scene.paths && scene.paths.screenshot) || "",
+    };
+  }
+
+  // Get a mutable record for a scene, creating it if the index said "not
+  // rotated" (or nothing is known about it yet).
+  function remember(sceneId) {
+    var record = cache[sceneId];
+    if (!record) {
+      record = { rotation: 0, cover: null, screenshot: "" };
+      cache[sceneId] = record;
+    }
+    return record;
+  }
+
+  // Synchronous lookup for the render pass: null means "not known yet, ask".
+  function recordFor(sceneId) {
+    var record = cache[sceneId];
+    if (record) return record;
+    return indexLoaded ? NOT_ROTATED : null;
+  }
+
   function readScene(sceneId) {
     if (sceneId in cache) return Promise.resolve(cache[sceneId]);
     if (inflight[sceneId]) return inflight[sceneId];
+    // The index is authoritative: a scene missing from it carries no angle, so
+    // navigating between scenes costs no request at all.
+    if (indexLoaded) return Promise.resolve(NOT_ROTATED);
     var request = graphql(
       "query ($id: ID!) { findScene(id: $id) { id custom_fields paths { screenshot } } }",
       { id: String(sceneId) }
     )
       .then(function (data) {
-        var scene = data && data.findScene;
-        var fields = (scene && scene.custom_fields) || {};
-        var record = {
-          rotation: normalize(fields[FIELD_KEY]),
-          // null rather than 0: "never rotated" and "rotated back to 0" need
-          // to be distinguishable, otherwise a scene that already carries a
-          // rotation from an older plugin version would have its cover
-          // rotated twice.
-          cover:
-            fields[COVER_FIELD_KEY] === undefined || fields[COVER_FIELD_KEY] === null
-              ? null
-              : normalize(fields[COVER_FIELD_KEY]),
-          screenshot: (scene && scene.paths && scene.paths.screenshot) || "",
-        };
+        var record = recordFrom(data && data.findScene);
         cache[sceneId] = record;
         return record;
       })
@@ -142,9 +196,8 @@
         // A scene without custom_fields support (older Stash) must not break
         // playback; degrade to "no rotation stored".
         console.warn("SceneRotation: could not read custom_fields", err);
-        var fallback = { rotation: 0, cover: null, screenshot: "" };
-        cache[sceneId] = fallback;
-        return fallback;
+        cache[sceneId] = NOT_ROTATED;
+        return NOT_ROTATED;
       })
       .then(function (record) {
         delete inflight[sceneId];
@@ -154,9 +207,45 @@
     return request;
   }
 
+  // One query for every rotated scene in the library. A library where nobody
+  // uses the plugin costs one request returning an empty list; a library where
+  // a few hundred scenes are rotated costs one request returning a few hundred
+  // {id, custom_fields} rows. Either way the card grid then renders without a
+  // lookup per card.
+  function preload() {
+    if (indexLoaded) return Promise.resolve(true);
+    if (indexRequest) return indexRequest;
+    indexRequest = graphql(
+      "query ($filter: SceneFilterType) { findScenes(scene_filter: $filter, filter: { per_page: -1 }) { scenes { id custom_fields paths { screenshot } } } }",
+      { filter: { custom_fields: [{ field: FIELD_KEY, modifier: "NOT_NULL" }] } }
+    )
+      .then(function (data) {
+        var scenes = (data && data.findScenes && data.findScenes.scenes) || [];
+        scenes.forEach(function (scene) {
+          if (!scene || scene.id === undefined) return;
+          cache[String(scene.id)] = recordFrom(scene);
+        });
+        indexLoaded = true;
+        return true;
+      })
+      .catch(function (err) {
+        // Older Stash, or a filter shape this version does not accept: fall
+        // back to a lookup per scene instead of failing the whole feature.
+        console.warn(
+          "SceneRotation: bulk index unavailable, falling back to per-scene lookups",
+          err
+        );
+        return false;
+      })
+      .then(function (ok) {
+        indexRequest = null;
+        return ok;
+      });
+    return indexRequest;
+  }
+
   function writeRotation(sceneId, deg, keepalive) {
-    var record = cache[sceneId];
-    if (record) record.rotation = deg;
+    remember(sceneId).rotation = deg;
     var input = deg
       ? { id: String(sceneId), custom_fields: { partial: {} } }
       : { id: String(sceneId), custom_fields: { remove: [FIELD_KEY] } };
@@ -212,52 +301,147 @@
 
   // ── Geometry ────────────────────────────────────────────────────────
 
-  // Displayed size of the picture inside the (object-fit: contain) video box.
-  function containSize(boxW, boxH, videoW, videoH) {
-    var aspect = videoW / videoH;
-    var width = boxW;
-    var height = boxW / aspect;
-    if (height > boxH) {
-      height = boxH;
-      width = boxH * aspect;
+  // Resolve a computed `object-position` (normalised by the browser to
+  // percentages, e.g. "50% 0%") into a 0..1 pair of anchors.
+  function parsePosition(value) {
+    var parts = String(value || "50% 50%").trim().split(/\s+/);
+    function anchor(token) {
+      if (!token) return 0.5;
+      if (token === "left" || token === "top") return 0;
+      if (token === "right" || token === "bottom") return 1;
+      if (token === "center") return 0.5;
+      if (/%$/.test(token)) return parseFloat(token) / 100;
+      return 0; // absolute offsets: treated as top/left
     }
-    return { width: width, height: height };
+    return { x: anchor(parts[0]), y: anchor(parts[1]) };
   }
 
-  function transformFor(deg, video, player) {
-    var boxW = player.clientWidth;
-    var boxH = player.clientHeight;
+  // Where the picture actually sits inside the element box, and how the box
+  // behaves when the picture has to be stretched back over it.
+  //   covers -> the picture is clipped to the box, so the visible area IS the
+  //             box and only the box aspect matters
+  //   fits   -> the picture is letterboxed and may be anchored off-centre
+  function pictureBox(el, boxW, boxH, fixW, fixH) {
+    var style = window.getComputedStyle(el);
+    var fit = style.objectFit || "contain";
+    // The UA never stretches a <video> even when the computed value says fill.
+    if (el.tagName === "VIDEO" && fit === "fill") fit = "contain";
+    if (fit === "cover" || fit === "fill") {
+      return { width: boxW, height: boxH, offsetX: 0, offsetY: 0, covers: true };
+    }
+    var scale = fit === "none"
+      ? 1
+      : fit === "scale-down"
+        ? Math.min(1, Math.min(boxW / fixW, boxH / fixH))
+        : Math.min(boxW / fixW, boxH / fixH);
+    var width = fixW * scale;
+    var height = fixH * scale;
+    var anchor = parsePosition(style.objectPosition);
+    return {
+      width: width,
+      height: height,
+      offsetX: (boxW - width) * anchor.x,
+      offsetY: (boxH - height) * anchor.y,
+      covers: false,
+    };
+  }
+
+  // Rotation + the scale/translate that puts the rotated picture back in the
+  // box. Returns "" when the element has no layout yet.
+  function transformFor(el, deg) {
+    var boxW = el.clientWidth;
+    var boxH = el.clientHeight;
     if (!boxW || !boxH) return "";
     if (deg % 180 === 0) return "rotate(" + deg + "deg)";
-    var videoW = video.videoWidth || boxW;
-    var videoH = video.videoHeight || boxH;
-    var size = containSize(boxW, boxH, videoW, videoH);
-    // A 90/270 turn swaps the footprint: contentW x contentH becomes
-    // contentH x contentW, so the fitting scale is min(boxW/h, boxH/w).
-    var scale = Math.min(boxW / size.height, boxH / size.width);
+
+    var fixW = el.naturalWidth || el.videoWidth || 0;
+    var fixH = el.naturalHeight || el.videoHeight || 0;
+    // Not decoded yet (image still loading, video without metadata): the scale
+    // would be a guess. Leave whatever is there and pick it up next pass — the
+    // intrinsic size is part of the cache key, so the next pass will not skip.
+    if (!fixW || !fixH) return "";
+
+    var box = pictureBox(el, boxW, boxH, fixW, fixH);
+    // A 90/270 turn swaps the footprint: width x height becomes height x width.
+    var footprintW = box.height;
+    var footprintH = box.width;
+    var scale = box.covers
+      ? Math.max(boxW / footprintW, boxH / footprintH)
+      : Math.min(boxW / footprintW, boxH / footprintH);
     if (!isFinite(scale) || scale <= 0) return "";
-    return "rotate(" + deg + "deg) scale(" + scale + ")";
+
+    // The picture is not necessarily centred in the box (Stash anchors card
+    // artwork to the top), and a rotation happens about the box centre, so the
+    // offset has to be undone in the rotated frame.
+    var dx = box.offsetX + box.width / 2 - boxW / 2;
+    var dy = box.offsetY + box.height / 2 - boxH / 2;
+    var rad = (deg * Math.PI) / 180;
+    var cos = Math.cos(rad);
+    var sin = Math.sin(rad);
+    var tx = -scale * (dx * cos - dy * sin);
+    var ty = -scale * (dx * sin + dy * cos);
+
+    return (
+      "translate(" + tx.toFixed(2) + "px, " + ty.toFixed(2) + "px) " +
+      "rotate(" + deg + "deg) scale(" + scale.toFixed(4) + ")"
+    );
   }
 
-  // ── Cover rotation ──────────────────────────────────────────────────
+  // Apply or clear the rotation on one element. Only `transform` and
+  // `transform-origin` are ever written, so this composes with anything else
+  // styling the same element (notably the Filters panel, which owns filter).
+  function applyTo(el, deg) {
+    if (!deg) {
+      if (el.dataset.sceneRotation) {
+        el.style.removeProperty("transform");
+        el.style.removeProperty("transform-origin");
+        delete el.dataset.sceneRotation;
+        delete el.dataset.sceneRotationKey;
+        delete el.dataset.sceneRotationTransform;
+      }
+      return;
+    }
+    // clientWidth/Height and the intrinsic size are the only inputs, so an
+    // unchanged key plus an intact transform means there is nothing to redo.
+    var key =
+      deg +
+      "|" + el.clientWidth + "x" + el.clientHeight +
+      "|" + (el.naturalWidth || el.videoWidth || 0) +
+      "x" + (el.naturalHeight || el.videoHeight || 0);
+    if (
+      el.dataset.sceneRotationKey === key &&
+      el.style.transform === el.dataset.sceneRotationTransform
+    ) {
+      return;
+    }
+    var transform = transformFor(el, deg);
+    if (!transform) return;
+    el.style.transformOrigin = "center center";
+    el.style.transform = transform;
+    el.dataset.sceneRotation = String(deg);
+    el.dataset.sceneRotationKey = key;
+    // Read the value back: the browser normalises what it serialises, and
+    // comparing the raw string against `style.transform` would never match,
+    // turning the early-out above into dead code.
+    el.dataset.sceneRotationTransform = el.style.transform;
+  }
+
+  // ── Optional: baking the cover into the scene ──────────────────────
   //
-  // Rotating only the playing video leaves every thumbnail sideways: the cover
-  // is what the scene wall, the card grid and the detail header show, so it has
-  // to match the playback direction.
+  // Not used by the plugin itself any more. Covers on the card grid, the scene
+  // wall and the detail header are rotated by the same CSS transform as the
+  // player (see `decorate`), which needs no write at all.
   //
-  // `sceneUpdate(cover_image:)` accepts a base64 data URL (the same path the UI
-  // uses when you paste a cover), so this needs no backend hook and no
-  // ImageMagick — the browser renders the current cover into a canvas and
-  // writes the rotated result back as the scene's cover blob.
+  // This path is kept because it is the only way to make the cover correct for
+  // something that reads Stash's files without this plugin. It writes: the
+  // browser renders the current cover into a canvas and sends the rotated
+  // result back through `sceneUpdate(cover_image:)`, which Stash stores as the
+  // scene's cover blob. Every call costs one generation of JPEG quality, so it
+  // is never automatic — `SceneRotation.bakeCover()` is the explicit opt-in.
   //
-  // Two consequences are deliberate:
-  //  - The write is a re-encode, so each angle change costs one generation of
-  //    JPEG quality. That is why the already-applied angle is tracked in
-  //    custom_fields["SceneRotationCover"] and only the delta is rotated; a
-  //    change that does not move the angle writes nothing.
-  //  - A cover that cannot be rebuilt (missing screenshot, tainted canvas)
-  //    leaves the marker untouched so a later attempt retries, and never
-  //    blocks saving the rotation itself.
+  // The angle already baked in is tracked in custom_fields["SceneRotationCover"]
+  // so only the difference is ever applied: that keeps the CSS angle
+  // (rotation - cover) at zero for baked scenes instead of rotating them twice.
   //
   // The canvas here is created detached and never appended anywhere in the
   // document: a <canvas> inside #VideoJsPlayer hijacks Stash's Filters panel
@@ -330,7 +514,10 @@
   // Rotate only by the difference to what is already baked in.
   function applyCoverTarget(id, target) {
     return readScene(id)
-      .then(function (record) {
+      .then(function () {
+        // `remember` rather than the resolved record: nothing is known about
+        // most scenes beyond "not rotated", and that record is shared.
+        var record = remember(id);
         var applied = record.cover === null ? 0 : record.cover;
         if (applied === target) return false;
         var delta = ((target - applied) % 360 + 360) % 360;
@@ -431,29 +618,67 @@
 
   // ── Applying ────────────────────────────────────────────────────────
 
+  // The main player. Re-asserted on every sync pass because the Filters panel
+  // rewrites the whole inline style attribute of its target, which can drop the
+  // transform; `applyTo` repairs that and does nothing when it is intact.
   function apply() {
     var video = getVideo();
+    if (!video) return;
+    applyTo(video, state.deg);
+  }
+
+  // Angle still to be applied with CSS: what the scene stores minus whatever a
+  // previous version already baked into the cover image.
+  function cssAngleFor(record) {
+    var baked = record.cover === null || record.cover === undefined ? 0 : record.cover;
+    return ((record.rotation - baked) % 360 + 360) % 360;
+  }
+
+  // Scene id and kind of a media element, from its URL. Stash serves scene
+  // media at /scene/<id>/{stream,preview,webp,screenshot}.
+  function mediaTarget(el) {
+    var src = el.currentSrc || el.getAttribute("src") || "";
+    var match = src.match(SCENE_MEDIA_RE);
+    if (!match) return null;
+    return { sceneId: match[1], kind: match[2].toLowerCase() };
+  }
+
+  // Rotate everything on the page that shows a scene: the hover preview clip
+  // and the cover on every card, the cover in the detail header, and whatever
+  // else renders scene media. This is what makes the library look consistent
+  // without touching a single file on disk.
+  //
+  // Runs on every sync pass (mutation, resize, navigation, 1s tick); each
+  // element bails out early when neither its box nor its angle changed.
+  function decorate() {
     var player = getPlayer();
-    if (!video || !player) return;
-
-    if (!state.deg) {
-      // Only clear a transform this plugin is responsible for.
-      if (video.dataset.sceneRotation) {
-        video.style.removeProperty("transform");
-        delete video.dataset.sceneRotation;
+    var nodes = document.querySelectorAll(MEDIA_SELECTOR);
+    var unknown = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      // The player is handled by apply(), which owns the angle of the scene
+      // being watched rather than the one baked into the DOM at the time.
+      if (player && player.contains(el)) continue;
+      var target = mediaTarget(el);
+      if (!target) continue;
+      // The scale needs the intrinsic size, which arrives with the media. One
+      // listener per element, so a cover does not sit sideways until the next
+      // one-second tick.
+      if (!boundMedia.has(el)) {
+        boundMedia.add(el);
+        el.addEventListener(el.tagName === "VIDEO" ? "loadedmetadata" : "load", scheduleSync);
       }
-      return;
+      var record = recordFor(target.sceneId);
+      if (!record) {
+        (unknown || (unknown = [])).push(target.sceneId);
+        continue;
+      }
+      applyTo(el, cssAngleFor(record));
     }
-
-    var transform = transformFor(state.deg, video, player);
-    if (!transform) return;
-    if (video.style.transform !== transform) {
-      // Re-asserted every sync pass: the Filters panel rewrites the whole
-      // style attribute, so this also repairs a clobbered rotation.
-      video.style.transformOrigin = "center center";
-      video.style.transform = transform;
-    }
-    video.dataset.sceneRotation = String(state.deg);
+    if (!unknown || indexLoaded || indexRequest) return;
+    // Nothing indexed yet (first paint of a card grid): one bulk query, then
+    // the next pass has every angle it needs.
+    preload();
   }
 
   // ── Controls ────────────────────────────────────────────────────────
@@ -553,15 +778,14 @@
     var settled = unchanged
       ? Promise.resolve(true)
       : writeRotation(pending.sceneId, pending.target, options && options.keepalive);
-    if (!unchanged) {
-      // Fire and forget: a cover that cannot be rebuilt (no screenshot, tainted
-      // canvas) must never block or fail the rotation itself.
-      syncCover(pending.sceneId, pending.target);
-    }
+    // Nothing else to do on commit: the covers and previews on screen follow
+    // the angle through the CSS pass, not through a write.
     settled.then(function (ok) {
       pending.waiters.forEach(function (resolve) {
         resolve(ok);
       });
+      // The angle came from a guess until now; redraw whatever is on screen.
+      decorate();
     });
     return settled;
   }
@@ -613,14 +837,17 @@
           cache = Object.create(null);
           inflight = Object.create(null);
           coverQueue = Object.create(null);
+          indexLoaded = false;
           state.deg = 0;
           apply();
+          decorate();
           renderBar();
           console.info(
             "SceneRotation: cleared the stored angle on " +
               ids.length +
-              " scene(s). Regenerate covers/sprites/previews so those follow " +
-              "the file's rotation metadata."
+              " scene(s). Nothing is rotated in the UI any more. If you baked " +
+              "the angle into the files instead, regenerate previews, sprites " +
+              "and covers so those follow the file's own metadata."
           );
           return ids.length;
         });
@@ -646,6 +873,9 @@
     var player = getPlayer();
     if (!player) {
       unmount();
+      // Card grids, walls and the detail header have no player but still show
+      // scene media, so the decoration pass runs either way.
+      decorate();
       return;
     }
     ensurePositioned(player);
@@ -653,7 +883,10 @@
     bindVideo();
 
     var sceneId = currentSceneId();
-    if (!sceneId) return;
+    if (!sceneId) {
+      decorate();
+      return;
+    }
 
     if (sceneId !== state.sceneId) {
       // Commit an angle still inside the debounce window for the scene we are
@@ -670,21 +903,27 @@
         state.deg = record.rotation;
         apply();
         renderBar();
-        // A mismatch means the cover predates cover sync, or was regenerated
-        // after the rotation was set. Reported, never written here: opening a
-        // scene must not mutate it.
-        var appliedCover = record.cover === null ? 0 : record.cover;
-        if (record.rotation !== appliedCover) {
+        // The stored angle says nothing about what is baked into the cover; a
+        // cover regenerated after the angle was set (or one baked by an older
+        // version) is off by exactly this difference. Reported, never written:
+        // opening a scene must not mutate it.
+        if (record.rotation !== (record.cover === null ? 0 : record.cover)) {
           console.info(
-            "SceneRotation: cover is not in sync with the rotation — run " +
-              "SceneRotation.syncCover() to fix it"
+            "SceneRotation: the cover already baked " +
+              (record.cover === null ? 0 : record.cover) +
+              "\u00b0, so the on-screen angle is " +
+              cssAngleFor(record) +
+              "\u00b0. Run SceneRotation.bakeCover() if you want it baked into " +
+              "the image instead (that one writes to disk)."
           );
         }
       });
+      decorate();
       return;
     }
 
     apply();
+    decorate();
   }
 
   function scheduleSync() {
@@ -713,9 +952,8 @@
   window.setInterval(sync, TICK_MS);
 
   // Closing or reloading inside the debounce window must not drop the click.
-  // The rotation mutation is a few hundred bytes, so it can go out with
-  // keepalive; the cover write cannot (its payload exceeds the keepalive
-  // budget) and is repaired by syncCover() if it never lands.
+  // The mutation is a few hundred bytes, so it can go out with keepalive. It is
+  // also the only write this plugin performs.
   window.addEventListener("pagehide", function () {
     flushSave({ keepalive: true });
   });
@@ -731,18 +969,45 @@
     resetAll: resetAll,
     sceneId: currentSceneId,
     sync: sync,
-    // Repair a cover that predates cover sync, or that was regenerated after
-    // the rotation was set. Rotates by the difference only.
+    // Re-run the decoration pass by hand (after a stylesheet change, say).
+    decorate: decorate,
+    // Reload the index of rotated scenes.
+    reload: function () {
+      indexLoaded = false;
+      cache = Object.create(null);
+      return preload().then(function () {
+        decorate();
+        return true;
+      });
+    },
+    // OPT-IN AND WRITEY: bake the current angle into the cover image so that
+    // Stash's stored cover no longer shows the card rotated by CSS. Rotates by
+    // the difference only, so calling it twice is harmless.
+    bakeCover: function () {
+      return syncCover(state.sceneId || currentSceneId(), state.deg);
+    },
+    // Kept as an alias for the old name.
     syncCover: function () {
       return syncCover(state.sceneId || currentSceneId(), state.deg);
     },
-    // Angle currently baked into the cover: null when this plugin has not
-    // touched it, otherwise 0 / 90 / 180 / 270.
+    // Angle currently baked into the cover image: null when nothing has been
+    // baked, otherwise 0 / 90 / 180 / 270.
     cover: function () {
       var record = state.sceneId ? cache[state.sceneId] : null;
       return record ? record.cover : null;
     },
+    // Angle the UI is currently applying with CSS.
+    angle: function (sceneId) {
+      var record = recordFor(sceneId || state.sceneId || currentSceneId());
+      return record ? cssAngleFor(record) : 0;
+    },
   };
+
+  // Load the rotated-scene index up front so the first card grid paints with
+  // the right angles instead of flashing sideways thumbnails.
+  preload().then(function (ok) {
+    if (ok) scheduleSync();
+  });
 
   sync();
 })();
