@@ -287,18 +287,24 @@
   overflow: hidden;
 }
 
-.mosaic-filter-rectangle__pixel-canvas {
+/* Host of the pixelation canvas. The canvas itself lives in a shadow root
+   (see buildRect in MosaicFilter.js) so that Stash's Filters panel keeps
+   targeting <video>: SceneVideoFilterPanel resolves its target with
+   getElementsByTagName("canvas") before falling back to <video>, so any
+   light-DOM canvas inside #VideoJsPlayer silently disables every filter
+   transform (rotate, scale, brightness, contrast). Do not move the canvas back
+   out of the shadow tree. Visibility is toggled on this host because a
+   stylesheet cannot select inside the shadow tree. */
+.mosaic-filter-rectangle__pixel-surface {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: none;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
   pointer-events: none;
 }
 
-.mosaic-filter-rectangle--fill-pixelate .mosaic-filter-rectangle__pixel-canvas {
+.mosaic-filter-rectangle--fill-pixelate .mosaic-filter-rectangle__pixel-surface {
   display: block;
 }
 

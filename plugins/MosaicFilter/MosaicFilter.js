@@ -222,10 +222,34 @@
     r.dataset.action = "rect-drag";
     r.setAttribute("data-mosaic-filter-ui", "true");
 
+    // The pixelation canvas is wrapped in a shadow root ON PURPOSE.
+    //
+    // Stash's SceneVideoFilterPanel resolves the element it styles with
+    // `container.getElementsByTagName("canvas")` and only falls back to
+    // <video> when that returns nothing. A light-DOM canvas anywhere inside
+    // #VideoJsPlayer therefore swallows every Filters-panel transform
+    // (rotate, scale, brightness, contrast...): the panel writes its inline
+    // `style` to this hidden 0x0 canvas instead of the video, so the panel
+    // looks completely broken even though the video is untouched.
+    //
+    // getElementsByTagName does not cross shadow boundaries, so keeping the
+    // canvas in a shadow tree keeps the panel working while the canvas still
+    // renders, paints and measures normally. Do not "simplify" this back to a
+    // direct child of the rectangle.
+    const surface = document.createElement("div");
+    surface.className = "mosaic-filter-rectangle__pixel-surface";
+    const shadow = surface.attachShadow({ mode: "open" });
     const canvas = document.createElement("canvas");
     canvas.className = "mosaic-filter-rectangle__pixel-canvas";
     canvas.setAttribute("aria-hidden", "true");
-    r.appendChild(canvas);
+    // Inline: the plugin stylesheet cannot reach into the shadow tree.
+    canvas.style.cssText =
+      "display:block;width:100%;height:100%;image-rendering:pixelated;" +
+      "image-rendering:crisp-edges;";
+    shadow.appendChild(canvas);
+    r.appendChild(surface);
+
+    pixelCanvasEl = canvas;
 
     const h = document.createElement("div");
     h.className = "mosaic-filter-rectangle__resize";
@@ -487,21 +511,16 @@
     return pixelVideoEl;
   }
 
-  // The pixel canvas lives inside `rect`, which is rebuilt on every mount and
-  // dropped on teardown — so the reference is resolved once there and reused
-  // here. Returns the cached context too, since `getContext` is not free.
+  // The pixel canvas is created by `buildRect` and lives inside a shadow root,
+  // so it can no longer be found through `rect.querySelector` — the reference
+  // is captured at build time instead. `isConnected` walks the shadow-including
+  // tree, so it still detects a canvas dropped with its host on teardown.
   function getPixelCanvas() {
     if (pixelCanvasEl && !pixelCanvasEl.isConnected) {
       pixelCanvasEl = null;
       pixelCanvasCtx = null;
     }
-    if (pixelCanvasEl) return pixelCanvasEl;
-    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
-    if (canvas) {
-      pixelCanvasEl = canvas;
-      pixelCanvasCtx = null;
-    }
-    return canvas || null;
+    return pixelCanvasEl;
   }
 
   function stopPixelLoop() {
@@ -829,8 +848,8 @@
     if (!rect) {
       rect = buildRect();
       resizeHandle = rect.querySelector(".mosaic-filter-rectangle__resize");
-      pixelCanvasEl = rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
-      pixelCanvasCtx = null;
+      // pixelCanvasEl was captured by buildRect; the canvas is in a shadow
+      // root, so it is neither re-queried here nor reachable from `rect`.
       player.appendChild(rect);
       attachRectPointerListeners();
     }
