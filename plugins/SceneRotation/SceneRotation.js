@@ -577,6 +577,60 @@
     return scheduleSave(sceneId, state.deg);
   }
 
+  // ── Migration off stored angles ─────────────────────────────────────
+  //
+  // Baking the angle into the file's display matrix is the only way to make
+  // Stash's own artifacts (preview, sprite, cover, transcodes) come out the
+  // right way up: the generator runs plain ffmpeg with autorotate on, so it
+  // honours the file's matrix and knows nothing about our custom field.
+  //
+  // But once a file carries that matrix the browser rotates the picture too,
+  // and a remaining stored angle would rotate it a second time — and the
+  // frontend cannot tell the two cases apart (Chrome reports post-rotation
+  // dimensions, which is exactly what Stash scanned into the DB either way).
+  // So the two mechanisms are mutually exclusive, and this is the switch that
+  // retires the stored angles after the files have been rewritten.
+  function resetAll() {
+    return graphql(
+      "query ($filter: SceneFilterType) { findScenes(scene_filter: $filter, filter: { per_page: -1 }) { scenes { id } } }",
+      { filter: { custom_fields: [{ field: FIELD_KEY, modifier: "NOT_NULL" }] } }
+    )
+      .then(function (data) {
+        var scenes = (data && data.findScenes && data.findScenes.scenes) || [];
+        var ids = scenes.map(function (scene) {
+          return scene.id;
+        });
+        if (!ids.length) return 0;
+        return graphql(
+          "mutation ($input: BulkSceneUpdateInput!) { bulkSceneUpdate(input: $input) { id } }",
+          {
+            input: {
+              ids: ids,
+              custom_fields: { remove: [FIELD_KEY, COVER_FIELD_KEY] },
+            },
+          }
+        ).then(function () {
+          cache = Object.create(null);
+          inflight = Object.create(null);
+          coverQueue = Object.create(null);
+          state.deg = 0;
+          apply();
+          renderBar();
+          console.info(
+            "SceneRotation: cleared the stored angle on " +
+              ids.length +
+              " scene(s). Regenerate covers/sprites/previews so those follow " +
+              "the file's rotation metadata."
+          );
+          return ids.length;
+        });
+      })
+      .catch(function (err) {
+        console.error("SceneRotation: reset failed", err);
+        return 0;
+      });
+  }
+
   // ── Reconciliation ──────────────────────────────────────────────────
 
   function bindVideo() {
@@ -672,6 +726,9 @@
     cycle: function () { return set((state.deg + 90) % 360); },
     // Commit a pending (debounced) write immediately.
     flush: function () { return flushSave(); },
+    // Retire every stored angle, e.g. after the rotation has been written into
+    // the files themselves (see the migration note in the source).
+    resetAll: resetAll,
     sceneId: currentSceneId,
     sync: sync,
     // Repair a cover that predates cover sync, or that was regenerated after

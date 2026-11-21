@@ -186,11 +186,34 @@ Rotates the picture at playback time for scenes that were encoded sideways, and 
 2. Top-right of the player: `⟳` rotates 90° clockwise, `⟲` 90° counter-clockwise, the badge shows the saved angle, `✕` clears it. The cluster is translucent until you hover it.
 3. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second), and the scene's cover is rotated in step so it looks right on the scene wall too. Reopening the scene — in this browser, another browser, or another device — restores both.
 
-For scripted use there is a small console API: `SceneRotation.set(180)` (resolves once the debounced save lands), `SceneRotation.flush()` (commit a pending save immediately), `SceneRotation.cycle()`, `SceneRotation.get()`, `SceneRotation.syncCover()` (re-aligns the cover after a manual cover change), `SceneRotation.cover()` (angle already baked into the cover).
+For scripted use there is a small console API: `SceneRotation.set(180)` (resolves once the debounced save lands), `SceneRotation.flush()` (commit a pending save immediately), `SceneRotation.cycle()`, `SceneRotation.get()`, `SceneRotation.syncCover()` (re-aligns the cover after a manual cover change), `SceneRotation.cover()` (angle already baked into the cover), `SceneRotation.resetAll()` (clear every stored angle — see the migration note below).
+
+### Rotating at the file level (when previews must match too)
+
+This plugin only turns the **player**. Stash's generated artifacts — the wall preview clip, the scrubber sprites, and every cover produced by a Generate task — are made server-side by ffmpeg, from the file. The generator passes no `-noautorotate`, so ffmpeg's autorotate is on: **if the rotation is written into the file's display matrix, every artifact comes out right**. If the angle only lives in `custom_fields`, ffmpeg never sees it and those artifacts stay sideways.
+
+Rewriting the matrix is lossless and creates no new file — `-c copy` only rewrites the container header, in milliseconds:
+
+```bash
+# overwrite in place: same path, same scene, no re-encode
+ffmpeg -v error -display_rotation -90 -i "clip.mp4" -map 0 -c copy -movflags +faststart "clip.tmp.mp4"
+move /y "clip.tmp.mp4" "clip.mp4"        # Windows; use mv on POSIX
+```
+
+`-display_rotation` is **counter-clockwise degrees** and is *absolute*, not cumulative: clockwise 90° is `-90`, and re-running is idempotent. Needs ffmpeg 7.1+ to override an existing matrix. Works for MP4/MOV (tkhd matrix) and MKV (`TAG:ROTATE`); WebM and AVI have no rotation field and need a real re-encode.
+
+**The two mechanisms are mutually exclusive.** Once the file carries a matrix, the browser rotates the picture on its own, so a stored angle would rotate it a second time — and there is no reliable way for the frontend to detect that (Chrome reports post-rotation dimensions, which are exactly the dimensions Stash scanned either way). So after rewriting files:
+
+1. Rescan the scenes so Stash picks up the corrected dimensions.
+2. Run **Settings → Tasks → Generate** with *Overwrite* for those scenes, so previews, sprites and covers are rebuilt from the rotated file.
+3. In the browser console, run `SceneRotation.resetAll()` — it clears `SceneRotation` / `SceneRotationCover` on every scene that has one, so the plugin stops touching the player.
+
+`SceneRotation.resetAll()` returns the number of scenes it cleared.
 
 ### Known limitations
 
 - Only 0 / 90 / 180 / 270. The value is an integer custom field, so no arbitrary angles.
+- **Player-only.** Stash's generated preview clip, scrubber sprites and Generate-task covers are produced by server-side ffmpeg and are not affected by this plugin — see [Rotating at the file level](#rotating-at-the-file-level-when-previews-must-match-too) for the lossless way to fix those.
 - **The cover is re-encoded once per settled angle change** (JPEG, quality 0.92) because Stash has no "rotate this cover" API — the plugin renders the current cover into a canvas and writes the result back as the scene's cover. The video file is never re-encoded; the cover pays one JPEG generation per decided angle, so cycling back and forth across separate decisions will slowly soften it. The original cover is not kept.
 - A pending save is committed on scene change, on leaving the scene page, and on page unload, so a click followed by immediate navigation is not lost. If the browser kills the page before the request leaves, `SceneRotation.syncCover()` re-aligns the cover later.
 - If a cover predates this feature, or was regenerated after the rotation was set, the two can drift apart. Opening such a scene logs a note; run `SceneRotation.syncCover()` to rotate the cover into line (it rotates by the difference only). Opening a scene never writes to it by itself.
