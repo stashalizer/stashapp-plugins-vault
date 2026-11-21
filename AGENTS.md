@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships four plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, and **AudioSupport**.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships five plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, **SceneRotation**, and **AudioSupport**.
 
 ## Architecture
 
@@ -268,6 +268,18 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Tab-label count badge is live.** `RelatedScenesTabLabel` does its own `readRelatedIds` on mount (so the count shows before the tab is opened) and subscribes to a module-level pub/sub (`onCountChange` / `emitCountChange`, keyed by scene id) that the tab body emits on every edit-state change. The in-tab duplicate header was removed in 0.4.0 — don't re-add it.
 - **Files**: `SceneVersions.yml` (manifest, no `ui.requires`) · `SceneVersions.js` (tab + badge + protection + comparison + pHash) · `SceneVersions.css`.
 
+## SceneRotation
+
+- **What it solves.** Some videos are encoded sideways and the scene page's Filters tab (Stash's own `SceneVideoFilterPanel`) forgets its transform on every reload. This plugin rotates at playback time and remembers the angle, instead of writing a rotated copy of the file into the library.
+- **Storage**: `custom_fields["SceneRotation"]`, an integer in `{0, 90, 180, 270}` (degrees clockwise). Written with `custom_fields: { partial: {...} }` so other plugins' keys survive; clearing the rotation writes `custom_fields: { remove: ["SceneRotation"] }` rather than storing `0`, so an unrotated scene carries no field at all. Writes happen only on a button click — never per frame.
+- **Transform, not layout.** The plugin sets `transform` / `transform-origin` on `video.vjs-tech` and nothing else. Two consequences: (a) the videojs control bar stays upright, which is what a rotated view wants; (b) Stash's Filters panel, which rewrites the *whole* inline `style` attribute of the element it targets, can clobber the rotation — so `apply()` re-asserts the transform on every sync pass instead of trusting it to stay put.
+- **Never add a `<canvas>` inside `#VideoJsPlayer` here either.** See the MosaicFilter note: `SceneVideoFilterPanel.getVideoElement()` prefers `getElementsByTagName("canvas")` and would then write its transforms into our markup.
+- **Geometry is "contain", not "cover".** After a 90/270 turn the footprint becomes `contentH x contentW`, so the fitted scale is `min(boxW / contentH, boxH / contentW)`. The rotation must not crop the picture — the *content* is what was sideways. The content size itself comes from `object-fit: contain` maths on `video.videoWidth/videoHeight` vs `player.clientWidth/clientHeight`, not from `getBoundingClientRect()` (which reports the element box, not the picture inside it).
+- **Sync loop.** `sync()` reconciles player element, scene id and angle. Triggers: `MutationObserver` on `<body>` (the player element is created/destroyed by React on navigation, so there is no stable node to observe), coalesced to one pass per frame; `popstate`; Stash's own `stash:location`; `fullscreenchange`; `resize`; and a 1 s `setInterval` safety net for SPA transitions that fire neither of the two navigation events. Angle reads are cached per scene id; a scene switch resets to 0° immediately rather than showing the previous scene's rotation while the query is in flight.
+- **Scene id source**: `location.pathname` first, falling back to the stream URL (`/scene/<id>/stream`) because the route updates slightly *after* the player source switches during queue playback.
+- **No `ui.requires`.** Vanilla overlay, no `csLib`, no `PluginApi` (data goes through `fetch("/graphql")` with `credentials: "same-origin"`, same helper shape as QuestingAdventurer). Nothing to install first; a scene whose Stash lacks `custom_fields` degrades to "no rotation stored" instead of breaking playback.
+- **Files**: `SceneRotation.yml` (manifest, no `ui.requires`) · `SceneRotation.js` (overlay + persistence + geometry) · `SceneRotation.css` (control cluster, mobile media query).
+
 ## AudioSupport
 
 - **Audio-as-scene hack.** Stash has no native audio support as of v0.32.0, the newest release when this was written — the scanner rejects audio extensions, there is no Audio content type, and the `VideoFile` schema is video-shaped (`width: Int!`, `height: Int!`, `video_codec: String!` are non-nullable; re-checked at the v0.32.0 tag). The plugin works around this by having the user add audio extensions (mp3, flac, m4a, ogg, opus, wav) to the `VideoExtensions` config via the Setup wizard. Audio files are then ingested as scenes with `VideoFile{Width:0, Height:0, VideoCodec:""}`. GraphQL serves these without error. Designed to migrate to the native Audio type once [PR #6824](https://github.com/stashapp/stash/pull/6824) lands — it was still open as of v0.32.0, so re-check it before assuming this section is current. The Setup wizard writes the config with a **partial** `ConfigureGeneral({ videoExtensions })` input, which is why the config fields v0.32.0 removed (`dangerous_allow_public_without_auth`, `security_tripwire_accessed_from_public_internet`) are irrelevant here — keep it partial.
@@ -389,6 +401,7 @@ use a top-level component name:
 - `QuestingAdventurer` — the QuestingAdventurer plugin
 - `MosaicFilter` — the MosaicFilter plugin
 - `SceneVersions` — the SceneVersions plugin
+- `SceneRotation` — the SceneRotation plugin
 - `AudioSupport` — the AudioSupport plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish

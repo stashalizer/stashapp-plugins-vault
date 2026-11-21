@@ -1,0 +1,97 @@
+/* SceneRotation — player control cluster.
+ *
+ * Mounted inside #VideoJsPlayer so it survives fullscreen (the browser only
+ * renders the fullscreen element's subtree). Only divs and buttons: a <canvas>
+ * here would hijack every Filters-panel transform on the scene page.
+ *
+ * Positioned top-right, opposite the videojs control bar at the bottom, and
+ * kept translucent until hover so it does not cover the picture. */
+
+.scene-rotation-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font: 500 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.scene-rotation-bar:hover,
+.scene-rotation-bar:focus-within {
+  opacity: 1;
+}
+
+.scene-rotation-bar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.scene-rotation-bar__button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.scene-rotation-bar__button:focus-visible {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 1px;
+}
+
+.scene-rotation-bar__button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.scene-rotation-bar__button:disabled:hover {
+  background: transparent;
+}
+
+.scene-rotation-bar__value {
+  min-width: 30px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+/* Touch targets shrink the available width on phones, and a 22px hit area is
+   below the 44px guideline, so grow the buttons rather than just shrinking the
+   cluster. */
+@media (max-width: 640px) {
+  .scene-rotation-bar {
+    top: 4px;
+    right: 4px;
+    padding: 3px;
+  }
+
+  .scene-rotation-bar__button {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .scene-rotation-bar__value {
+    min-width: 34px;
+    font-size: 13px;
+  }
+}

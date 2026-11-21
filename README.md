@@ -9,12 +9,13 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 - **[Questing Adventurer](#questing-adventurer)** — turns scene playback into a quest: respond to on-screen cues by performing the moves attached to your active triggers.
 - **[Mosaic Filter](#mosaic-filter)** — a movable, resizable blur rectangle (or ellipse) over any region of a scene, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
 - **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene bidirectionally, with a suggest-from-folder helper.
+- **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene, so it opens correctly on every device without re-encoding the file.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
 
 ## Requirements (all plugins)
 
 - [Stash](https://github.com/stashapp/stash) (functionally tested against the v0.31.x line; see [Tested environment](#tested-environment) for the v0.32.0 status).
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions is standalone and does not require csLib.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions and SceneRotation are standalone and do not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
 
 ## Tested environment
@@ -39,10 +40,10 @@ Add this repository as a plugin source in Stash:
    ```
    https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
    ```
-3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, and/or **Audio Support** from the list.
+3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, **Scene Rotation**, and/or **Audio Support** from the list.
 4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it (Audio Support's overlay and settings page both require it).
 
-QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page).
+QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner (no settings page).
 
 ---
 
@@ -166,6 +167,35 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 
 ---
 
+## Scene Rotation
+
+Rotates the picture at playback time for scenes that were encoded sideways, and remembers the angle. The angle is stored on the scene itself (`custom_fields`) rather than in the file or in the browser, so there is no re-encode, no `_rotate` copy of the video sitting in the library, and the scene opens the right way up on every device.
+
+### Features
+
+- **Per-scene memory.** Three buttons in the player's top-right corner — rotate left, rotate right, clear — with the current angle on a badge. The value is written to the scene as soon as you click it.
+- **Lossless and file-free.** The player applies a CSS transform to the video element; nothing is written to the media file. No quality loss, no extra files, no library rescan.
+- **Fits instead of crops.** After a 90/270 turn the picture is scaled so the whole rotated frame fits the player, instead of being zoomed to fill and losing the edges.
+- **Coexists with the built-in Filters tab.** The plugin only owns `transform` on the video element and re-asserts it if anything else rewrites that element's inline style.
+- **No dependencies.** Does not need CommunityScriptsUILibrary, PluginApi or a settings page.
+
+### How to use it
+
+1. Open a scene that plays sideways.
+2. Top-right of the player: `⟳` rotates 90° clockwise, `⟲` 90° counter-clockwise, the badge shows the saved angle, `✕` clears it. The cluster is translucent until you hover it.
+3. The angle is saved immediately. Reopening the scene — in this browser, another browser, or another device — restores it automatically.
+
+For scripted use there is a small console API: `SceneRotation.set(180)`, `SceneRotation.cycle()`, `SceneRotation.get()`.
+
+### Known limitations
+
+- Only 0 / 90 / 180 / 270. The value is an integer custom field, so no arbitrary angles.
+- The player's own **Filters** tab still forgets its brightness/contrast/scale on navigation — only rotation is persisted here. If you use both, a panel edit that rewrites the video's inline style is repaired on the next sync pass (about a second, or immediately on any player event).
+- Only the main `#VideoJsPlayer` is handled; multi-player surfaces (Stash TV, grid/multi-screen plugins) are not rotated.
+- Stash versions without `custom_fields` play the scene unrotated and log a warning instead of failing.
+
+---
+
 ## Audio Support
 
 Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash has no native audio type (verified up to v0.32.0 — [PR #6824](https://github.com/stashapp/stash/pull/6824) is still open), the plugin works around this by treating audio files as scenes (the Setup wizard adds audio extensions to Stash's video-extension list). A dedicated audio overlay replaces the video player for audio-only scenes, with synced LRC lyrics, a play queue with auto-advance, and a browse page for navigating your audio library.
@@ -228,6 +258,7 @@ plugins/                    # one subdirectory per plugin
   QuestingAdventurer/       # manifest + JS/CSS assets
   MosaicFilter/             # manifest + JS/CSS assets
   SceneVersions/            # manifest + JS/CSS assets
+  SceneRotation/            # manifest + JS/CSS assets
   AudioSupport/             # manifest + JS/CSS assets + backend hook
 build_site.sh               # zips each plugin and generates index.yml
 scripts/sync_labels.py      # creates/updates issue labels from .github/labels.json
