@@ -109,6 +109,34 @@
   opacity: 0.9;
 }
 
+/* Inside Stash's Filters tab. This is the default placement: an in-flow row
+ * under the panel's own rotate/scale buttons, so the controls only appear while
+ * the tab is open and never sit on top of the picture. */
+.scene-rotation-bar--panel {
+  position: static;
+  left: auto;
+  top: auto;
+  width: fit-content;
+  margin: 0 0 0.75rem;
+  padding: 4px 6px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.scene-rotation-bar--panel .scene-rotation-bar__button:hover {
+  background: rgba(128, 128, 128, 0.25);
+}
+
+.scene-rotation-bar__title {
+  margin: 0 6px 0 2px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
 /* Touch targets shrink the available width on phones, and a 22px hit area is
    below the 44px guideline, so grow the buttons rather than just shrinking the
    cluster. The grip grows too — a 14px drag target is unusable on a phone. */

@@ -108,6 +108,13 @@
   // (top-right) position.
   var BAR_POS_KEY = "SceneRotation.barPos";
   var BAR_INSET = 8;
+  // Where the controls live: inside Stash's Filters tab (default — it is a rare
+  // operation and should not sit on top of the picture), floating on the player,
+  // or nowhere.
+  var PLACEMENT_KEY = "SceneRotation.placement";
+  // If the Filters panel never shows up, fall back to the floating cluster
+  // rather than leaving the feature unreachable.
+  var PANEL_FALLBACK_MS = 6000;
 
   // Individual transform properties (`rotate`, `scale`) compose with a
   // `transform` written by somebody else, which is the whole reason this plugin
@@ -142,6 +149,9 @@
   // { sceneId, target, timer, waiters } — one pending write, latest angle wins
   var pendingSave = null;
   var bar = null;
+  var barMode = null; // "panel" (inside the Filters tab) or "overlay" (on the player)
+  var placement = loadPlacement();
+  var panelMissingSince = 0;
   // Position of the control cluster: { x, y } as fractions of the player box,
   // loaded from localStorage so it survives Stash rebuilding the player on
   // every navigation. null = "never moved", which means top-right.
@@ -827,6 +837,24 @@
 
   // ── Controls ────────────────────────────────────────────────────────
 
+  function loadPlacement() {
+    try {
+      var raw = window.localStorage.getItem(PLACEMENT_KEY);
+      if (raw === "overlay" || raw === "off" || raw === "filters") return raw;
+    } catch (err) {
+      // Storage disabled: fall through to the default.
+    }
+    return "filters";
+  }
+
+  function savePlacement() {
+    try {
+      window.localStorage.setItem(PLACEMENT_KEY, placement);
+    } catch (err) {
+      // Non-fatal.
+    }
+  }
+
   // Where the cluster sits, as a fraction of the player box so it survives a
   // resize, a fullscreen switch and the next scene. Kept in localStorage (a few
   // dozen bytes in the browser profile — never on the Stash side, which is what
@@ -875,7 +903,7 @@
   // reads for an unchanged box every frame is exactly how a plugin gets blamed
   // for jank.
   function placeBar() {
-    if (!bar) return;
+    if (!bar || barMode !== "overlay") return;
     var player = getPlayer();
     if (!player) return;
     // A drag writes left/top directly; letting this run mid-drag would snap the
@@ -1016,42 +1044,116 @@
     set(next);
   }
 
-  function mountBar(player) {
+  var CONTROLS_MARKUP =
+    '<button type="button" class="scene-rotation-bar__button" data-action="ccw"' +
+    ' title="Rotate 90° counter-clockwise" aria-label="Rotate 90 degrees counter-clockwise">⟲</button>' +
+    '<span class="scene-rotation-bar__value" aria-live="polite">0°</span>' +
+    '<button type="button" class="scene-rotation-bar__button" data-action="cw"' +
+    ' title="Rotate 90° clockwise" aria-label="Rotate 90 degrees clockwise">⟳</button>' +
+    '<button type="button" class="scene-rotation-bar__button scene-rotation-bar__button--reset"' +
+    ' data-action="reset" title="Clear rotation for this scene" aria-label="Clear rotation">✕</button>';
+
+  function buildBar(mode) {
     // A fresh element starts with no inline position, so the placement cache
     // from the previous player must not short-circuit the first placement.
     placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
     bar = document.createElement("div");
-    bar.className = "scene-rotation-bar";
+    bar.className = "scene-rotation-bar" + (mode === "panel" ? " scene-rotation-bar--panel" : "");
     bar.setAttribute("data-scene-rotation-ui", "true");
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", "Playback rotation");
-    bar.innerHTML =
-      '<span class="scene-rotation-bar__grip" aria-hidden="true"' +
-      ' title="Drag to move · double-click to reset the position">⠿</span>' +
-      '<button type="button" class="scene-rotation-bar__button" data-action="ccw"' +
-      ' title="Rotate 90° counter-clockwise" aria-label="Rotate 90 degrees counter-clockwise">⟲</button>' +
-      '<span class="scene-rotation-bar__value" aria-live="polite">0°</span>' +
-      '<button type="button" class="scene-rotation-bar__button" data-action="cw"' +
-      ' title="Rotate 90° clockwise" aria-label="Rotate 90 degrees clockwise">⟳</button>' +
-      '<button type="button" class="scene-rotation-bar__button scene-rotation-bar__button--reset"' +
-      ' data-action="reset" title="Clear rotation for this scene" aria-label="Clear rotation">✕</button>';
-    bar.addEventListener("click", onBarClick);
-
-    var grip = bar.querySelector(".scene-rotation-bar__grip");
-    if (grip) {
-      grip.addEventListener("pointerdown", onGripDown);
-      grip.addEventListener("dblclick", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        resetBarPos();
-      });
+    if (mode === "panel") {
+      bar.innerHTML =
+        '<span class="scene-rotation-bar__title" title="Remembered for this scene">Rotation</span>' +
+        CONTROLS_MARKUP;
+    } else {
+      bar.innerHTML =
+        '<span class="scene-rotation-bar__grip" aria-hidden="true"' +
+        ' title="Drag to move · double-click to reset the position">⠿</span>' + CONTROLS_MARKUP;
+      var grip = bar.querySelector(".scene-rotation-bar__grip");
+      if (grip) {
+        grip.addEventListener("pointerdown", onGripDown);
+        grip.addEventListener("dblclick", function (event) {
+          event.preventDefault();
+          event.stopPropagation();
+          resetBarPos();
+        });
+      }
+      bar.addEventListener("pointermove", onGripMove);
+      bar.addEventListener("pointerup", onGripUp);
+      bar.addEventListener("pointercancel", onGripUp);
     }
-    bar.addEventListener("pointermove", onGripMove);
-    bar.addEventListener("pointerup", onGripUp);
-    bar.addEventListener("pointercancel", onGripUp);
+    bar.addEventListener("click", onBarClick);
+    barMode = mode;
+  }
 
+  // The Filters tab, when Stash has one. Its rotate/scale sliders are the
+  // closest thing to a home for this, and it is only on screen while the tab is
+  // open — which is exactly the "rare operation" behaviour wanted here.
+  function panelMountPoint() {
+    var container = document.getElementById("video-filter-container");
+    if (!container || !container.parentElement) return null;
+    return { pane: container.parentElement, before: container };
+  }
+
+  function attachPanel(mount) {
+    if (!bar || !mount) return;
+    mount.pane.insertBefore(bar, mount.before);
+  }
+
+  function attachOverlay(player) {
+    if (!bar || !player) return;
     player.appendChild(bar);
-    renderBar();
+    placeBar();
+  }
+
+  // Pick where the controls live and keep them there. Called from every sync
+  // pass: React owns the pane, so a re-render can move or drop our node.
+  function syncBar(player) {
+    if (placement === "off") {
+      if (bar) destroyBar();
+      return;
+    }
+    var mount = placement === "filters" ? panelMountPoint() : null;
+
+    // Filters placement, but this Stash has no Filters panel (or its panes are
+    // mounted lazily): after a grace period, put the cluster back on the player
+    // rather than leaving the feature unreachable.
+    if (!mount && placement === "filters" && !panelMissingSince) {
+      panelMissingSince = Date.now();
+    }
+    if (mount) panelMissingSince = 0;
+    var giveUpOnPanel =
+      !mount && placement === "filters" && panelMissingSince &&
+      Date.now() - panelMissingSince > PANEL_FALLBACK_MS;
+    var mode = mount ? "panel" : "overlay";
+    if (placement === "filters" && !mount && !giveUpOnPanel) {
+      // Waiting for a panel that may yet appear: no controls at all is correct.
+      if (bar) destroyBar();
+      return;
+    }
+    if (bar && barMode !== mode) destroyBar();
+    if (!bar) {
+      buildBar(mode);
+      if (mode === "panel") attachPanel(mount);
+      else attachOverlay(player);
+      renderBar();
+      return;
+    }
+    if (mode === "panel") {
+      if (bar.parentElement !== mount.pane || bar.nextSibling !== mount.before) {
+        attachPanel(mount);
+      }
+    } else {
+      placeBar();
+    }
+  }
+
+  function destroyBar() {
+    if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
+    bar = null;
+    barMode = null;
+    placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
   }
 
   function unmount() {
@@ -1063,8 +1165,7 @@
       styleWatcher.disconnect();
       styleWatcher = null;
     }
-    if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
-    bar = null;
+    destroyBar();
     boundVideo = null;
     state.sceneId = null;
     state.deg = 0;
@@ -1230,8 +1331,7 @@
     // Before anything else: if a stray canvas is parked in the player, every
     // Filters transform is going into it, and that has nothing to do with us.
     guardFiltersPanel();
-    if (!bar) mountBar(player);
-    else placeBar();
+    syncBar(player);
     bindVideo();
 
     var sceneId = currentSceneId();
@@ -1356,6 +1456,17 @@
     },
     // Put the control cluster back in the top-right corner.
     resetBar: resetBarPos,
+    // Where the controls live: "filters" (inside Stash's Filters tab, default),
+    // "overlay" (floating on the player, draggable) or "off" (console only).
+    placement: function (mode) {
+      if (mode === undefined) return placement;
+      placement = mode === "overlay" || mode === "off" ? mode : "filters";
+      savePlacement();
+      destroyBar();
+      panelMissingSince = 0;
+      sync();
+      return placement;
+    },
     // Reload the index of rotated scenes.
     reload: function () {
       indexLoaded = false;
