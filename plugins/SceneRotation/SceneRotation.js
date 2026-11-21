@@ -49,6 +49,13 @@
  *   silently swallows every panel filter. The controls here are divs/buttons
  *   only.
  *
+ * - The control cluster is draggable so it can step out of the way of other
+ *   plugins' overlays. Its position is stored as a fraction of the player box
+ *   in localStorage (a few dozen bytes in the browser profile, never on the
+ *   Stash side), clamped so it cannot be dragged out of reach, and applied on
+ *   every resize and fullscreen switch. Double-clicking the grip puts it back
+ *   in the corner.
+ *
  * - The scale factor mirrors the element's own `object-fit`. A 90/270 turn
  *   swaps the footprint, so the picture no longer fills the box: with
  *   `contain` (what the player and portrait cards use) it is shrunk by
@@ -91,6 +98,10 @@
   // 0 -> 180 costs one cover re-encode instead of two (and 0 -> 180 -> 0 costs
   // none at all).
   var SAVE_DEBOUNCE_MS = 500;
+  // Control cluster: where it was last dragged to, and the inset of the default
+  // (top-right) position.
+  var BAR_POS_KEY = "SceneRotation.barPos";
+  var BAR_INSET = 8;
 
   var state = { sceneId: null, deg: 0 };
   // sceneId -> { rotation, cover, screenshot }
@@ -109,6 +120,17 @@
   // { sceneId, target, timer, waiters } — one pending write, latest angle wins
   var pendingSave = null;
   var bar = null;
+  // Position of the control cluster: { x, y } as fractions of the player box,
+  // loaded from localStorage so it survives Stash rebuilding the player on
+  // every navigation. null = "never moved", which means top-right.
+  var barPos = loadBarPos();
+  var drag = null; // { id, grabX, grabY, moved, captured } while the grip is held
+  // Timestamp until which clicks are swallowed: the click that ends a drag
+  // would otherwise land on the player and toggle playback.
+  var swallowClickUntil = 0;
+  // Last box the cluster was placed for, so an idle sync pass does no layout
+  // reads and no style writes at all.
+  var placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
   var boundVideo = null;
   var boundMedia = new WeakSet(); // media elements already listening for load
   var syncQueued = false;
@@ -683,20 +705,185 @@
 
   // ── Controls ────────────────────────────────────────────────────────
 
+  // Where the cluster sits, as a fraction of the player box so it survives a
+  // resize, a fullscreen switch and the next scene. Kept in localStorage (a few
+  // dozen bytes in the browser profile — never on the Stash side, which is what
+  // this plugin promises) because Stash rebuilds the player on every
+  // navigation and the position would otherwise reset constantly.
+  function loadBarPos() {
+    try {
+      var raw = window.localStorage.getItem(BAR_POS_KEY);
+      var parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed) return null;
+      var x = Number(parsed.x);
+      var y = Number(parsed.y);
+      if (!isFinite(x) || !isFinite(y)) return null;
+      return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+    } catch (err) {
+      // Storage disabled or full: the cluster just starts at the default spot.
+      return null;
+    }
+  }
+
+  function saveBarPos() {
+    try {
+      if (barPos) window.localStorage.setItem(BAR_POS_KEY, JSON.stringify(barPos));
+      else window.localStorage.removeItem(BAR_POS_KEY);
+    } catch (err) {
+      // Non-fatal: the position simply does not survive the next navigation.
+    }
+  }
+
+  // Top-right with a small inset, opposite the videojs control bar.
+  function defaultBarPos() {
+    var player = getPlayer();
+    if (!player) return { x: 1, y: 0 };
+    var width = player.clientWidth || 1;
+    var height = player.clientHeight || 1;
+    var barW = bar ? bar.offsetWidth : 96;
+    var barH = bar ? bar.offsetHeight : 28;
+    return {
+      x: Math.max(0, Math.min(1, (width - barW - BAR_INSET) / width)),
+      y: Math.max(0, Math.min(1, BAR_INSET / height)),
+    };
+  }
+
+  // Clamp into the player and write left/top. Cheap enough to run on every sync
+  // pass, but guarded: on a busy page sync runs per frame, and forcing layout
+  // reads for an unchanged box every frame is exactly how a plugin gets blamed
+  // for jank.
+  function placeBar() {
+    if (!bar) return;
+    var player = getPlayer();
+    if (!player) return;
+    // A drag writes left/top directly; letting this run mid-drag would snap the
+    // cluster back to the committed position under the pointer.
+    if (drag) return;
+    var width = player.clientWidth;
+    var height = player.clientHeight;
+    if (!width || !height) return;
+    var barW = bar.offsetWidth;
+    var barH = bar.offsetHeight;
+    if (
+      placedFor.width === width &&
+      placedFor.height === height &&
+      placedFor.barW === barW &&
+      placedFor.barH === barH
+    ) {
+      return;
+    }
+    placedFor = { width: width, height: height, barW: barW, barH: barH };
+
+    var pos = barPos || defaultBarPos();
+    var maxLeft = Math.max(0, width - barW);
+    var maxTop = Math.max(0, height - barH);
+    var left = Math.min(Math.max(0, Math.round(pos.x * width)), maxLeft);
+    var top = Math.min(Math.max(0, Math.round(pos.y * height)), maxTop);
+    bar.style.left = left + "px";
+    bar.style.top = top + "px";
+  }
+
+  function onGripDown(event) {
+    if (event.button && event.button !== 0) return;
+    var player = getPlayer();
+    if (!player || !bar) return;
+    // Keep the gesture away from videojs: the player scrubs/pauses on pointer
+    // events, and a drag across the picture must not seek. `preventDefault` is
+    // deliberately *not* called — it suppresses the compatibility mouse events
+    // and takes `dblclick` (reset position) down with it.
+    event.stopPropagation();
+    var barBox = bar.getBoundingClientRect();
+    drag = {
+      id: event.pointerId,
+      grabX: event.clientX - barBox.left,
+      grabY: event.clientY - barBox.top,
+      moved: false,
+      captured: false,
+    };
+    bar.classList.add("scene-rotation-bar--dragging");
+  }
+
+  function onGripMove(event) {
+    if (!drag || event.pointerId !== drag.id) return;
+    var player = getPlayer();
+    if (!player || !bar) return;
+    // Capture on the first movement rather than on pointerdown: while capture
+    // is active the click/dblclick retarget to the capturing element, and a
+    // plain click on the grip has to stay a click.
+    if (!drag.captured) {
+      drag.captured = true;
+      try {
+        bar.setPointerCapture(event.pointerId);
+      } catch (err) {
+        // Older engines: the window-level pointerup still ends the drag.
+      }
+    }
+    event.preventDefault();
+    var box = player.getBoundingClientRect();
+    var maxLeft = Math.max(0, player.clientWidth - bar.offsetWidth);
+    var maxTop = Math.max(0, player.clientHeight - bar.offsetHeight);
+    var left = Math.min(Math.max(0, event.clientX - box.left - drag.grabX), maxLeft);
+    var top = Math.min(Math.max(0, event.clientY - box.top - drag.grabY), maxTop);
+    bar.style.left = Math.round(left) + "px";
+    bar.style.top = Math.round(top) + "px";
+    drag.moved = true;
+  }
+
+  function onGripUp(event) {
+    if (!drag) return;
+    if (event && event.pointerId !== undefined && event.pointerId !== drag.id) return;
+    var player = getPlayer();
+    var moved = drag.moved;
+    var captured = drag.captured;
+    if (captured) {
+      try {
+        bar.releasePointerCapture(drag.id);
+      } catch (err) {
+        // Already released.
+      }
+    }
+    drag = null;
+    if (bar) bar.classList.remove("scene-rotation-bar--dragging");
+    if (!moved || !player || !bar) return;
+    // The drag ends over the picture, so the click that follows would hit the
+    // player and toggle playback. Swallow it for a moment.
+    swallowClickUntil = Date.now() + 400;
+    // Store what the drag actually produced (already clamped), so the next
+    // player of the same size puts the cluster exactly here.
+    barPos = {
+      x: parseFloat(bar.style.left) / (player.clientWidth || 1),
+      y: parseFloat(bar.style.top) / (player.clientHeight || 1),
+    };
+    placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
+    saveBarPos();
+  }
+
+  function resetBarPos() {
+    barPos = null;
+    saveBarPos();
+    placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
+    placeBar();
+  }
+
   function renderBar() {
     if (!bar) return;
     var value = bar.querySelector(".scene-rotation-bar__value");
     if (value) value.textContent = state.deg + "\u00b0";
     var reset = bar.querySelector('[data-action="reset"]');
     if (reset) reset.disabled = !state.deg;
+    // The badge grows from "0°" to "270°", so the cluster can grow past the
+    // right edge of a narrow player; re-clamping here keeps it reachable.
+    placeBar();
   }
 
   function onBarClick(event) {
+    // Everything inside the cluster belongs to the cluster, not to the player:
+    // videojs toggles playback on click, and without this a click on the badge
+    // or on the drag handle would pause the scene.
+    event.stopPropagation();
     var button = event.target.closest("button[data-action]");
     if (!button) return;
-    // Keep the click away from videojs: the player toggles play/pause on click.
     event.preventDefault();
-    event.stopPropagation();
     var action = button.getAttribute("data-action");
     var next =
       action === "reset"
@@ -708,12 +895,17 @@
   }
 
   function mountBar(player) {
+    // A fresh element starts with no inline position, so the placement cache
+    // from the previous player must not short-circuit the first placement.
+    placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
     bar = document.createElement("div");
     bar.className = "scene-rotation-bar";
     bar.setAttribute("data-scene-rotation-ui", "true");
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", "Playback rotation");
     bar.innerHTML =
+      '<span class="scene-rotation-bar__grip" aria-hidden="true"' +
+      ' title="Drag to move · double-click to reset the position">⠿</span>' +
       '<button type="button" class="scene-rotation-bar__button" data-action="ccw"' +
       ' title="Rotate 90° counter-clockwise" aria-label="Rotate 90 degrees counter-clockwise">⟲</button>' +
       '<span class="scene-rotation-bar__value" aria-live="polite">0°</span>' +
@@ -722,6 +914,20 @@
       '<button type="button" class="scene-rotation-bar__button scene-rotation-bar__button--reset"' +
       ' data-action="reset" title="Clear rotation for this scene" aria-label="Clear rotation">✕</button>';
     bar.addEventListener("click", onBarClick);
+
+    var grip = bar.querySelector(".scene-rotation-bar__grip");
+    if (grip) {
+      grip.addEventListener("pointerdown", onGripDown);
+      grip.addEventListener("dblclick", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        resetBarPos();
+      });
+    }
+    bar.addEventListener("pointermove", onGripMove);
+    bar.addEventListener("pointerup", onGripUp);
+    bar.addEventListener("pointercancel", onGripUp);
+
     player.appendChild(bar);
     renderBar();
   }
@@ -730,6 +936,7 @@
     // The player is gone, so a pending click would never be committed by the
     // debounce timer running against a live scene — commit it now.
     flushSave();
+    drag = null;
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
     bar = null;
     boundVideo = null;
@@ -880,6 +1087,7 @@
     }
     ensurePositioned(player);
     if (!bar) mountBar(player);
+    else placeBar();
     bindVideo();
 
     var sceneId = currentSceneId();
@@ -951,6 +1159,28 @@
   window.addEventListener("resize", scheduleSync);
   window.setInterval(sync, TICK_MS);
 
+  // Safety net for a drag that ends outside the cluster without pointer
+  // capture (released outside the window, or an engine without capture): the
+  // move must be committed to storage, not left half-applied.
+  window.addEventListener("pointerup", onGripUp);
+  window.addEventListener("pointercancel", onGripUp);
+
+  // Capture phase, so videojs never sees the click that ends a drag. Scoped to
+  // a few hundred ms after the drag instead of a permanent listener so normal
+  // playback clicks keep working, and skipped for clicks on the cluster itself
+  // — hitting "rotate" right after moving it is a perfectly normal thing to do.
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (Date.now() > swallowClickUntil) return;
+      var target = event.target;
+      if (target && target.closest && target.closest(".scene-rotation-bar")) return;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true
+  );
+
   // Closing or reloading inside the debounce window must not drop the click.
   // The mutation is a few hundred bytes, so it can go out with keepalive. It is
   // also the only write this plugin performs.
@@ -971,6 +1201,8 @@
     sync: sync,
     // Re-run the decoration pass by hand (after a stylesheet change, say).
     decorate: decorate,
+    // Put the control cluster back in the top-right corner.
+    resetBar: resetBarPos,
     // Reload the index of rotated scenes.
     reload: function () {
       indexLoaded = false;

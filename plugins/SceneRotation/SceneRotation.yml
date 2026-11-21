@@ -1,6 +1,6 @@
 name: Scene Rotation
-description: "Per-scene playback rotation. Rotate a scene 90/180/270 degrees and have Stash remember it — the angle lives in the scene's custom_fields, so it survives reloads, other browsers and other devices. The rotation is applied as a CSS transform to everything showing that scene: the player, the hover preview clip and the cover on the card grid, so nothing looks sideways. The media file is never re-encoded, no new file is created, and no Stash artifact is regenerated — the only thing stored is the angle."
-version: 0.5.0
+description: "Per-scene playback rotation. Rotate a scene 90/180/270 degrees and have Stash remember it — the angle lives in the scene's custom_fields, so it survives reloads, other browsers and other devices. The rotation is applied as a CSS transform to everything showing that scene: the player, the hover preview clip and the cover on the card grid, so nothing looks sideways. The control cluster is draggable and remembers where you put it. The media file is never re-encoded, no new file is created, and no Stash artifact is regenerated — the only thing stored is the angle."
+version: 0.6.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:

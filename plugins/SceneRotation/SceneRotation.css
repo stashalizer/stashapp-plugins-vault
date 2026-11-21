@@ -1,16 +1,19 @@
 /* SceneRotation — player control cluster.
  *
  * Mounted inside #VideoJsPlayer so it survives fullscreen (the browser only
- * renders the fullscreen element's subtree). Only divs and buttons: a <canvas>
- * here would hijack every Filters-panel transform on the scene page.
+ * renders the fullscreen element's subtree). Only divs, spans and buttons: a
+ * <canvas> here would hijack every Filters-panel transform on the scene page.
  *
- * Positioned top-right, opposite the videojs control bar at the bottom, and
- * kept translucent until hover so it does not cover the picture. */
+ * left/top are set by SceneRotation.js from the saved position, defaulting to
+ * the top-right corner opposite the videojs control bar. The values below are
+ * only a pre-JS fallback, so they must stay consistent with the script's
+ * defaults (see BAR_INSET). Never set `right` here as well: with a shrink-to-fit
+ * width, left + right would stretch the cluster and splay its buttons out. */
 
 .scene-rotation-bar {
   position: absolute;
+  left: 8px;
   top: 8px;
-  right: 8px;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -28,8 +31,40 @@
 }
 
 .scene-rotation-bar:hover,
-.scene-rotation-bar:focus-within {
+.scene-rotation-bar:focus-within,
+.scene-rotation-bar--dragging {
   opacity: 1;
+}
+
+.scene-rotation-bar--dragging {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+/* Drag handle. Separate from the buttons on purpose: dragging from a button
+ * would make "rotate" and "move" the same gesture. */
+.scene-rotation-bar__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 22px;
+  margin-right: 1px;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  /* Stop the browser from turning the drag into a scroll/zoom on touch. */
+  touch-action: none;
+}
+
+.scene-rotation-bar__grip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.scene-rotation-bar--dragging .scene-rotation-bar__grip {
+  cursor: grabbing;
 }
 
 .scene-rotation-bar__button {
@@ -76,12 +111,16 @@
 
 /* Touch targets shrink the available width on phones, and a 22px hit area is
    below the 44px guideline, so grow the buttons rather than just shrinking the
-   cluster. */
+   cluster. The grip grows too — a 14px drag target is unusable on a phone. */
 @media (max-width: 640px) {
   .scene-rotation-bar {
-    top: 4px;
-    right: 4px;
     padding: 3px;
+  }
+
+  .scene-rotation-bar__grip {
+    width: 20px;
+    height: 32px;
+    font-size: 14px;
   }
 
   .scene-rotation-bar__button {

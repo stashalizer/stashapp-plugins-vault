@@ -176,6 +176,7 @@ The rotation is a CSS transform applied to everything that shows the scene, not 
 ### Features
 
 - **Per-scene memory.** Three buttons in the player's top-right corner — rotate left, rotate right, clear — with the current angle on a badge. The picture follows every click; the write waits until you stop clicking (half a second), so reaching 180° by two clicks is one save, and 0 → 180 → 0 saves nothing at all.
+- **Draggable, and it stays where you put it.** The cluster starts top-right but can be dragged anywhere over the player by its grip (`⠿`), so it does not fight another plugin's overlay. The position is remembered as a fraction of the player box, which means it survives navigation, window resizes and fullscreen — and it is clamped so it can never end up out of reach. Double-click the grip (or call `SceneRotation.resetBar()`) to send it back to the corner.
 - **The whole UI follows, not just the player.** The card preview clip and the cover artwork are rotated by the same angle, so the scene wall, the card grid and the detail header point the same way as playback instead of showing the same frame sideways.
 - **Zero writes.** Nothing but the integer in `custom_fields` is stored. The media file is never re-encoded, no copy appears in the library, and no Stash artifact is regenerated — the covers you see are the untouched originals, rotated in the browser.
 - **Fits instead of crops.** After a 90/270 turn the picture is scaled according to the element's own `object-fit`: shrunk so the whole rotated frame fits in the player, grown so a card stays filled the way it was designed to be. Stash anchors card artwork to the top, so that offset is corrected too — the picture does not jump off-centre.
@@ -187,7 +188,8 @@ The rotation is a CSS transform applied to everything that shows the scene, not 
 
 1. Open a scene that plays sideways.
 2. Top-right of the player: `⟳` rotates 90° clockwise, `⟲` 90° counter-clockwise, the badge shows the saved angle, `✕` clears it. The cluster is translucent until you hover it.
-3. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second). Reopening the scene — in this browser, another browser, or another device — restores it. The card preview and cover follow automatically.
+3. Drag it by the `⠿` grip on its left if it covers something else. The position is saved for every player from then on; double-click the grip to put it back in the top-right corner.
+4. The picture rotates instantly; the angle is saved as soon as you stop clicking (about half a second). Reopening the scene — in this browser, another browser, or another device — restores it. The card preview and cover follow automatically.
 
 For scripted use there is a small console API:
 
@@ -199,6 +201,7 @@ For scripted use there is a small console API:
 | `SceneRotation.angle(id?)` | angle the UI is applying to a scene (the CSS side) |
 | `SceneRotation.cover()` | angle already baked into the cover image, `null` if never |
 | `SceneRotation.decorate()` | force a redraw pass (after a stylesheet change, say) |
+| `SceneRotation.resetBar()` | put the control cluster back in the top-right corner |
 | `SceneRotation.reload()` | reload the index of rotated scenes |
 | `SceneRotation.resetAll()` | clear every stored angle (see below) |
 | `SceneRotation.bakeCover()` | opt-in, **writes**: burn the angle into the cover image |
