@@ -36,12 +36,16 @@
  *   rotation - cover. Scenes that were never baked have cover = null and get the
  *   full angle; scenes baked by 0.2/0.3 get 0 and are not rotated twice.
  *
- * - We style the `<video>` element itself, never `#VideoJsPlayer`, and we write
- *   ONLY `transform` / `transform-origin`. Stash's SceneVideoFilterPanel
- *   rewrites the whole inline `style` attribute of the element it picks, so
- *   sharing an element with it is fine as long as we hold only transform and
- *   it holds only filter/transform — and we re-assert our transform on the
- *   next tick if the panel clobbered it.
+ * - We style the media element itself, never `#VideoJsPlayer`, and we write the
+ *   INDIVIDUAL transform properties (`rotate`, `scale`) plus `transform-origin`
+ *   — not `transform`. Stash's SceneVideoFilterPanel owns `transform` on the
+ *   very same element and replaces the entire inline style attribute on every
+ *   slider move, so sharing the property would mean each side deleting the
+ *   other's work: its Transforms sliders would look dead (our re-assert wins
+ *   within a second) and our rotation would vanish while dragging. Individual
+ *   properties compose instead — the panel's rotation is added to ours, its
+ *   scale multiplied — and the style-attribute watcher puts ours back in the
+ *   same frame the panel wiped them, so neither effect flickers.
  *
  * - We must never insert a `<canvas>` anywhere inside `#VideoJsPlayer`. That
  *   panel resolves its target with `getElementsByTagName("canvas")` before
@@ -65,8 +69,10 @@
  *   as intentional as it was before the rotation.
  *
  *   `object-position` matters as well: Stash aligns card artwork to `top`, so
- *   the picture is not centred in its box and the transform has to translate it
- *   back to the centre after rotating, otherwise 90° leaves it visibly offset.
+ *   the picture is not centred in its box. That is handled by putting
+ *   `transform-origin` on the picture's centre rather than the box's, which
+ *   keeps the rotation in place and — unlike a `translate()` — is expressible
+ *   alongside the individual properties.
  *
  * - No csLib / PluginApi dependency: plain DOM plus `fetch("/graphql")`, the
  *   same helper shape used by the other vanilla overlays in this repo. The
@@ -103,6 +109,22 @@
   var BAR_POS_KEY = "SceneRotation.barPos";
   var BAR_INSET = 8;
 
+  // Individual transform properties (`rotate`, `scale`) compose with a
+  // `transform` written by somebody else, which is the whole reason this plugin
+  // uses them: Stash's Filters panel owns `transform` on the player video and
+  // replaces the entire inline style attribute on every slider move. Anything we
+  // put in `transform` would be clobbered by it and, when re-asserted, clobber it
+  // right back — which is what made its Transforms sliders look broken.
+  // Chrome 104+, Firefox 72+, Safari 14.1+; the fallback keeps old browsers
+  // working, they just lose the composition.
+  var CAN_ROTATE_PROP = (function () {
+    try {
+      return !!(window.CSS && window.CSS.supports && window.CSS.supports("rotate", "90deg"));
+    } catch (err) {
+      return false;
+    }
+  })();
+
   var state = { sceneId: null, deg: 0 };
   // sceneId -> { rotation, cover, screenshot }
   //   rotation    video angle, from custom_fields["SceneRotation"]
@@ -132,6 +154,7 @@
   // reads and no style writes at all.
   var placedFor = { width: 0, height: 0, barW: 0, barH: 0 };
   var boundVideo = null;
+  var styleWatcher = null; // watches the player video's inline style
   var boundMedia = new WeakSet(); // media elements already listening for load
   var syncQueued = false;
 
@@ -368,63 +391,79 @@
     };
   }
 
-  // Rotation + the scale/translate that puts the rotated picture back in the
-  // box. Returns "" when the element has no layout yet.
-  function transformFor(el, deg) {
+  // Angle, scale and pivot for one element. Returns null when the element has
+  // no layout or no decoded picture yet.
+  //
+  // The pivot is the *picture's* centre, not the element's. Stash anchors card
+  // artwork to `top`, so the picture is not centred in its box and rotating
+  // about the box centre would leave it visibly offset. Expressing that as
+  // `transform-origin` instead of a `translate()` also removes the translate
+  // from the transform, which is what makes the individual `rotate`/`scale`
+  // properties usable (they apply in a fixed order, with no translate slot
+  // where a transform needs one).
+  function rotationFor(el, deg) {
     var boxW = el.clientWidth;
     var boxH = el.clientHeight;
-    if (!boxW || !boxH) return "";
-    if (deg % 180 === 0) return "rotate(" + deg + "deg)";
-
+    if (!boxW || !boxH) return null;
     var fixW = el.naturalWidth || el.videoWidth || 0;
     var fixH = el.naturalHeight || el.videoHeight || 0;
     // Not decoded yet (image still loading, video without metadata): the scale
     // would be a guess. Leave whatever is there and pick it up next pass — the
     // intrinsic size is part of the cache key, so the next pass will not skip.
-    if (!fixW || !fixH) return "";
+    if (!fixW || !fixH) return null;
 
     var box = pictureBox(el, boxW, boxH, fixW, fixH);
+    var spec = {
+      deg: deg,
+      scale: 1,
+      originX: Math.round(box.offsetX + box.width / 2),
+      originY: Math.round(box.offsetY + box.height / 2),
+    };
+    // 180 turns the picture inside its own footprint: no re-fit needed, and
+    // rotating about the picture centre flips it in place.
+    if (deg % 180 === 0) return spec;
+
     // A 90/270 turn swaps the footprint: width x height becomes height x width.
     var footprintW = box.height;
     var footprintH = box.width;
-    var scale = box.covers
+    spec.scale = box.covers
       ? Math.max(boxW / footprintW, boxH / footprintH)
       : Math.min(boxW / footprintW, boxH / footprintH);
-    if (!isFinite(scale) || scale <= 0) return "";
-
-    // The picture is not necessarily centred in the box (Stash anchors card
-    // artwork to the top), and a rotation happens about the box centre, so the
-    // offset has to be undone in the rotated frame.
-    var dx = box.offsetX + box.width / 2 - boxW / 2;
-    var dy = box.offsetY + box.height / 2 - boxH / 2;
-    var rad = (deg * Math.PI) / 180;
-    var cos = Math.cos(rad);
-    var sin = Math.sin(rad);
-    var tx = -scale * (dx * cos - dy * sin);
-    var ty = -scale * (dx * sin + dy * cos);
-
-    return (
-      "translate(" + tx.toFixed(2) + "px, " + ty.toFixed(2) + "px) " +
-      "rotate(" + deg + "deg) scale(" + scale.toFixed(4) + ")"
-    );
+    if (!isFinite(spec.scale) || spec.scale <= 0) return null;
+    spec.scale = Number(spec.scale.toFixed(4));
+    return spec;
   }
 
-  // Apply or clear the rotation on one element. Only `transform` and
-  // `transform-origin` are ever written, so this composes with anything else
-  // styling the same element (notably the Filters panel, which owns filter).
+  function clearRotation(el) {
+    el.style.removeProperty("transform-origin");
+    if (CAN_ROTATE_PROP) {
+      el.style.removeProperty("rotate");
+      el.style.removeProperty("scale");
+    } else {
+      el.style.removeProperty("transform");
+    }
+    delete el.dataset.sceneRotation;
+    delete el.dataset.sceneRotationKey;
+    delete el.dataset.sceneRotationStyle;
+  }
+
+  // Apply or clear the rotation on one element.
+  //
+  // With the individual properties available this writes `rotate` / `scale` /
+  // `transform-origin` and never touches `transform`, so Stash's Filters panel
+  // (which owns `transform` on the player video, and replaces the whole style
+  // attribute on every slider move) composes with us instead of fighting us:
+  // its rotation is added, its scale multiplied.
+  //
+  // The "did someone clobber us" test is the serialised style attribute we left
+  // behind. A per-property comparison would depend on how the browser
+  // normalises numbers; this only depends on "has anything changed since I last
+  // looked", which is exactly the question being asked.
   function applyTo(el, deg) {
     if (!deg) {
-      if (el.dataset.sceneRotation) {
-        el.style.removeProperty("transform");
-        el.style.removeProperty("transform-origin");
-        delete el.dataset.sceneRotation;
-        delete el.dataset.sceneRotationKey;
-        delete el.dataset.sceneRotationTransform;
-      }
+      if (el.dataset.sceneRotation) clearRotation(el);
       return;
     }
-    // clientWidth/Height and the intrinsic size are the only inputs, so an
-    // unchanged key plus an intact transform means there is nothing to redo.
     var key =
       deg +
       "|" + el.clientWidth + "x" + el.clientHeight +
@@ -432,20 +471,24 @@
       "x" + (el.naturalHeight || el.videoHeight || 0);
     if (
       el.dataset.sceneRotationKey === key &&
-      el.style.transform === el.dataset.sceneRotationTransform
+      el.getAttribute("style") === el.dataset.sceneRotationStyle
     ) {
       return;
     }
-    var transform = transformFor(el, deg);
-    if (!transform) return;
-    el.style.transformOrigin = "center center";
-    el.style.transform = transform;
+    var spec = rotationFor(el, deg);
+    if (!spec) return;
+
+    el.style.transformOrigin = spec.originX + "px " + spec.originY + "px";
+    if (CAN_ROTATE_PROP) {
+      el.style.rotate = spec.deg + "deg";
+      el.style.scale = String(spec.scale);
+    } else {
+      el.style.transform =
+        "rotate(" + spec.deg + "deg) scale(" + spec.scale + ")";
+    }
     el.dataset.sceneRotation = String(deg);
     el.dataset.sceneRotationKey = key;
-    // Read the value back: the browser normalises what it serialises, and
-    // comparing the raw string against `style.transform` would never match,
-    // turning the early-out above into dead code.
-    el.dataset.sceneRotationTransform = el.style.transform;
+    el.dataset.sceneRotationStyle = el.getAttribute("style") || "";
   }
 
   // ── Optional: baking the cover into the scene ──────────────────────
@@ -937,6 +980,10 @@
     // debounce timer running against a live scene — commit it now.
     flushSave();
     drag = null;
+    if (styleWatcher) {
+      styleWatcher.disconnect();
+      styleWatcher = null;
+    }
     if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
     bar = null;
     boundVideo = null;
@@ -1074,6 +1121,21 @@
     // The transform needs the intrinsic size, which is only known once the
     // metadata is in; the safety-net tick would catch it, but this is instant.
     video.addEventListener("loadedmetadata", apply);
+
+    // Stash's Filters panel replaces the whole inline style attribute on every
+    // slider move, which takes our `rotate`/`scale` with it. Re-applying from a
+    // mutation callback puts them back before the browser paints, so the panel's
+    // transform and our rotation are both on screen instead of the picture
+    // snapping back a second later.
+    if (CAN_ROTATE_PROP) {
+      if (styleWatcher) styleWatcher.disconnect();
+      styleWatcher = new MutationObserver(function () {
+        // apply() early-outs when the attribute is the one it wrote, so this
+        // only reacts to somebody else's write — no feedback loop.
+        apply();
+      });
+      styleWatcher.observe(video, { attributes: true, attributeFilter: ["style"] });
+    }
   }
 
   function sync() {
@@ -1112,10 +1174,11 @@
         apply();
         renderBar();
         // The stored angle says nothing about what is baked into the cover; a
-        // cover regenerated after the angle was set (or one baked by an older
-        // version) is off by exactly this difference. Reported, never written:
-        // opening a scene must not mutate it.
-        if (record.rotation !== (record.cover === null ? 0 : record.cover)) {
+        // cover baked by an older version and then regenerated is off by
+        // exactly this difference. Only worth reporting when something WAS
+        // baked (cover === null means nothing was), otherwise every rotated
+        // scene would log this on every open.
+        if (record.cover !== null && record.rotation !== record.cover) {
           console.info(
             "SceneRotation: the cover already baked " +
               (record.cover === null ? 0 : record.cover) +
