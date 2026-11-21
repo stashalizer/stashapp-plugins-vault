@@ -67,6 +67,28 @@
   let pixelLoopActive = false;
   let pixelVideoFrameCallback = null;
 
+  // Cached DOM references and geometry for the pixelation loop. The video
+  // frame callback runs up to 60x/second, and every `querySelector` or
+  // `clientWidth` read in there lands on the main thread — so the canvas,
+  // its 2D context and the video element are resolved once per mount, and
+  // the rect size is derived from state (see `renderRect`) instead of
+  // measured. Nothing in the frame path touches the DOM query API or forces
+  // a layout any more.
+  let pixelCanvasEl = null;
+  let pixelCanvasCtx = null;
+  let pixelVideoEl = null;
+  let rectW = 0;
+  let rectH = 0;
+
+  // Coalesced-render flag. Pointer events arrive faster than the compositor
+  // paints (a 125 Hz mouse delivers several per frame), so renders are
+  // batched into at most one per animation frame.
+  let renderScheduled = false;
+  // Follow mode: the latest cursor position still waiting to be turned into
+  // rect percentages. Resolved inside the scheduled render, not in the event
+  // handler.
+  let pendingFollow = null;
+
   let saving = false;
   let pendingSave = false;
 
@@ -293,16 +315,35 @@
   }
 
   // Position the rectangle based on the current state and player size.
-  // Cheap; safe to call on every pointer move.
+  // All layout reads happen before the first style write, so a render never
+  // forces a synchronous reflow. Pointer handlers do not call this directly —
+  // they go through `scheduleRender` to batch a burst of events into one
+  // render per animation frame. Direct calls are for discrete state changes
+  // (toggle, colour change, resize, mount).
   function renderRect() {
     if (!rect || !player) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
     if (pw === 0 || ph === 0) return;
-    rect.style.left = (state.xPct * pw) + "px";
-    rect.style.top = (state.yPct * ph) + "px";
-    rect.style.width = (state.widthPct * pw) + "px";
-    rect.style.height = (state.heightPct * ph) + "px";
+    // Single layout read at the top: both handlers below reuse these values
+    // instead of re-measuring. Reading after the style writes would force a
+    // synchronous reflow on every pointer move.
+    const left = state.xPct * pw;
+    const top = state.yPct * ph;
+    const w = state.widthPct * pw;
+    const h = state.heightPct * ph;
+    // `.mosaic-filter-rectangle` is `box-sizing: border-box` with a 1px
+    // border, so these run 2px above the real `clientWidth`/`clientHeight`.
+    // That only shifts the canvas backing-store aspect ratio by at most one
+    // cell, and the canvas is stretched to `width/height: 100%` anyway — the
+    // pixels themselves are blocky by design. In exchange the per-frame
+    // pixelation loop never has to read layout.
+    rectW = w;
+    rectH = h;
+    rect.style.left = left + "px";
+    rect.style.top = top + "px";
+    rect.style.width = w + "px";
+    rect.style.height = h + "px";
     player.style.setProperty("--mf-blur", state.blurAmount + "px");
     player.style.setProperty("--mf-fill-color", state.fillColor);
     rect.classList.toggle("mosaic-filter-rectangle--hidden", !state.active);
@@ -310,8 +351,41 @@
     rect.classList.toggle("mosaic-filter-rectangle--reverse", state.mode === 'reverse');
     rect.classList.toggle("mosaic-filter-rectangle--fill-solid", state.fill === 'solid');
     rect.classList.toggle("mosaic-filter-rectangle--fill-pixelate", state.fill === 'pixelate');
-    updateMask();
+    updateMask(pw, ph);
     syncPixelCanvas();
+  }
+
+  // Pointer handlers fire many times per painted frame; collapsing them into
+  // one rAF means one style recalc per frame instead of one per event. The
+  // latest state always wins, so intermediate positions are not worth a
+  // render.
+  function scheduleRender() {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    window.requestAnimationFrame(function () {
+      renderScheduled = false;
+      // Resolve the queued cursor position first: at the top of a rAF
+      // callback the previous frame's styles have already been laid out, so
+      // these reads are cheap. Doing it in the pointer handler instead would
+      // read layout right after our own writes — a forced reflow per event.
+      applyPendingFollow();
+      renderRect();
+    });
+  }
+
+  // Turn the queued cursor position into rect percentages. Runs at the top of
+  // the scheduled render, before any style write in this frame.
+  function applyPendingFollow() {
+    const p = pendingFollow;
+    pendingFollow = null;
+    if (!p || !state.follow || dragState) return;
+    if (!player || !rect) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    const pr = player.getBoundingClientRect();
+    state.xPct = clamp((p.x - pr.left) / pw - state.widthPct / 2, 0, 1 - state.widthPct);
+    state.yPct = clamp((p.y - pr.top) / ph - state.heightPct / 2, 0, 1 - state.heightPct);
   }
 
   // Update the reverse-mode mask layer position, size, and shape to match
@@ -349,10 +423,12 @@
   // is blurred with no clear area and no indicator. The `--hidden` class
   // collapses it to `display: none`, which overrides `--reverse`'s
   // `display: block`.
-  function updateMask() {
+  function updateMask(pw, ph) {
     if (!maskLayer || !player) return;
-    const pw = player.clientWidth;
-    const ph = player.clientHeight;
+    // Resizable callers pass the size they already measured; falling back to
+    // a fresh read only happens for one-off callers.
+    if (pw === undefined) pw = player.clientWidth;
+    if (ph === undefined) ph = player.clientHeight;
     if (pw === 0 || ph === 0) return;
     const leftPx = state.xPct * pw;
     const topPx = state.yPct * ph;
@@ -403,26 +479,54 @@
 
   function getVideoElement() {
     if (!player) return null;
-    return player.querySelector("video");
+    // Reuse the cached node while it is still in the document; a React
+    // re-render that swaps the <video> without swapping the player element
+    // detaches the old one, which `isConnected` catches without a query.
+    if (pixelVideoEl && pixelVideoEl.isConnected) return pixelVideoEl;
+    pixelVideoEl = player.querySelector("video");
+    return pixelVideoEl;
+  }
+
+  // The pixel canvas lives inside `rect`, which is rebuilt on every mount and
+  // dropped on teardown — so the reference is resolved once there and reused
+  // here. Returns the cached context too, since `getContext` is not free.
+  function getPixelCanvas() {
+    if (pixelCanvasEl && !pixelCanvasEl.isConnected) {
+      pixelCanvasEl = null;
+      pixelCanvasCtx = null;
+    }
+    if (pixelCanvasEl) return pixelCanvasEl;
+    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+    if (canvas) {
+      pixelCanvasEl = canvas;
+      pixelCanvasCtx = null;
+    }
+    return canvas || null;
   }
 
   function stopPixelLoop() {
     pixelLoopActive = false;
-    if (pixelVideoFrameCallback && getVideoElement() && getVideoElement().cancelVideoFrameCallback) {
-      try { getVideoElement().cancelVideoFrameCallback(pixelVideoFrameCallback); } catch (_) { /* ignore */ }
+    const video = getVideoElement();
+    if (pixelVideoFrameCallback && video && video.cancelVideoFrameCallback) {
+      try { video.cancelVideoFrameCallback(pixelVideoFrameCallback); } catch (_) { /* ignore */ }
     }
     pixelVideoFrameCallback = null;
   }
 
   function drawPixelFrame() {
-    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+    const canvas = getPixelCanvas();
     const video = getVideoElement();
     if (!canvas || !video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    const width = Math.max(4, Math.floor(rect.clientWidth / Math.max(4, state.pixelSize)));
-    const height = Math.max(4, Math.floor(rect.clientHeight / Math.max(4, state.pixelSize)));
+    // `rectW`/`rectH` are maintained by renderRect, so this no longer reads
+    // layout inside the frame callback.
+    if (rectW <= 0 || rectH <= 0) return;
+    const step = Math.max(4, state.pixelSize);
+    const width = Math.max(4, Math.floor(rectW / step));
+    const height = Math.max(4, Math.floor(rectH / step));
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
-    const ctx = canvas.getContext("2d");
+    if (!pixelCanvasCtx) pixelCanvasCtx = canvas.getContext("2d");
+    const ctx = pixelCanvasCtx;
     if (!ctx) return;
     // Cover-crop the video into the filter region so the pixelated preview
     // does not stretch when the region has a different aspect ratio.
@@ -467,12 +571,23 @@
   }
 
   function syncPixelCanvas() {
-    const canvas = rect && rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+    const canvas = getPixelCanvas();
     if (!canvas) return;
     const on = state.active && state.fill === "pixelate" && state.mode === "normal";
-    canvas.style.display = on ? "block" : "none";
+    // Guarded write: `renderRect` runs up to once per frame while dragging,
+    // and re-assigning an unchanged value still walks the CSSOM.
+    const nextDisplay = on ? "block" : "none";
+    if (canvas.style.display !== nextDisplay) canvas.style.display = nextDisplay;
     if (on) {
-      drawPixelFrame();
+      // The video-frame loop only repaints while the video is actually
+      // presenting frames. `requestVideoFrameCallback` does not fire on a
+      // paused video, and resizing the canvas backing store clears it — so a
+      // drag over a paused video would leave a blank filter region unless we
+      // paint here. Only skip the blit when the loop is guaranteed to
+      // repaint on its own.
+      const video = getVideoElement();
+      const loopWillPaint = pixelLoopActive && video && !video.paused && !video.ended;
+      if (!loopWillPaint) drawPixelFrame();
       startPixelLoop();
     } else {
       stopPixelLoop();
@@ -680,6 +795,12 @@
     bar = null;
     maskLayer = null;
     player = null;
+    pixelCanvasEl = null;
+    pixelCanvasCtx = null;
+    pixelVideoEl = null;
+    rectW = 0;
+    rectH = 0;
+    pendingFollow = null;
     // Note: barCollapsed is NOT reset here. It is re-derived in setupPanel
     // on the next fresh mount based on state.active, so the bar always
     // starts collapsed when the filter is off. The user's manual choice
@@ -708,6 +829,8 @@
     if (!rect) {
       rect = buildRect();
       resizeHandle = rect.querySelector(".mosaic-filter-rectangle__resize");
+      pixelCanvasEl = rect.querySelector(".mosaic-filter-rectangle__pixel-canvas");
+      pixelCanvasCtx = null;
       player.appendChild(rect);
       attachRectPointerListeners();
     }
@@ -824,7 +947,7 @@
       state.widthPct = newW;
       state.heightPct = newH;
     }
-    renderRect();
+    scheduleRender();
   }
 
   function onPointerUp(e) {
@@ -985,16 +1108,9 @@
     if (!state.follow) return;
     if (dragState) return;
     if (!player || !rect) return;
-    const pw = player.clientWidth;
-    const ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return;
-    const pr = player.getBoundingClientRect();
-    const cursorXPct = (e.clientX - pr.left) / pw;
-    const cursorYPct = (e.clientY - pr.top) / ph;
-    state.xPct = clamp(cursorXPct - state.widthPct / 2, 0, 1 - state.widthPct);
-    state.yPct = clamp(cursorYPct - state.heightPct / 2, 0, 1 - state.heightPct);
-    // In-memory only — see the "Write policy" note in the file header.
-    renderRect();
+    // Defer the geometry to the scheduled render — see applyPendingFollow.
+    pendingFollow = lastPointer;
+    scheduleRender();
   }
 
   /** Snap the rectangle to the last known cursor position and persist. */

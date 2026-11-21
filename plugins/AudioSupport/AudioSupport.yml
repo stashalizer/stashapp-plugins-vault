@@ -1,6 +1,6 @@
 name: Audio Support
 description: "Adds audio file support to Stash via the audio-as-scene path — a setup wizard that enables audio ingestion, a Scene.Create.Post hook that tags audio scenes and extracts metadata, an audio player overlay (direct-stream playback, no broken transcodes), an audio browse view with in-place playback and inline tag editing per folder, cover-art extraction, and a generate task that skips audio scenes so preview and sprite generation stops erroring on them. Designed to migrate to the native Audio type once PR #6824 lands. Optional: install SuiteData for versioned per-key storage; without it, data falls back to the plugin config."
-version: 0.9.0
+version: 0.9.1
 url: https://github.com/stashalizer/stashapp-plugins-vault
 interface: js
 exec:

@@ -196,8 +196,11 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Fill modes.** `fill` is `blur` | `solid` | `pixelate`. Solid uses
   `--mf-fill-color` and no backdrop-filter. Pixelate uses a low-resolution
   canvas redrawn with `requestVideoFrameCallback` (or throttled rAF fallback);
-  it is opt-in because it is more expensive than blur. Reverse + pixelate is
-  intentionally not implemented; reverse + solid is.
+  it is opt-in because it is more expensive than blur. `requestVideoFrameCallback`
+  does NOT fire on a paused video, and assigning `canvas.width` clears the
+  bitmap — so `syncPixelCanvas()` only skips its explicit repaint when the video
+  is actually playing. Reverse + pixelate is intentionally not implemented;
+  reverse + solid is.
 - **Screenshot.** The Shot button composites the current video frame into a
   canvas and applies the region effect there (not by screenshotting CSS).
   Clipboard is attempted first; download is the fallback because the Clipboard
@@ -209,6 +212,7 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a Scene-Tools-only launcher card (even-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
 - **Legacy shape migration**: versions ≤ 0.2.x stored `{ defaults: {...}, scenes: { [id]: {...} } }`. On load, `defaults` is used as the flat config and `scenes` is ignored; the next save writes the flat shape. `mergeStored` iterates `Object.keys(FALLBACK_DEFAULTS)` so new fields (e.g. `shape`, `mode`) are safe to add — missing keys fall back to defaults, and `sanitizeState` coerces unknown values.
 - **Write policy — never persist per animation frame.** `csLib.setConfiguration` is called only at user-driven boundaries: toggle buttons (immediate), drag/resize end `pointerup`/`pointercancel` (immediate), blur slider `change` event (slider release — the `input` event updates the visual `--mf-blur` only and must NOT save), and a best-effort `pagehide` write. Follow-cursor position updates are in-memory only.
+- **Render path — batch per frame, never measure in an event handler.** `renderRect()` is invoked directly only for discrete state changes (toggle, colour, slider release, resize, mount). Pointer handlers (drag and follow) go through `scheduleRender()`, which coalesces a burst of events into one render per animation frame — at 125 Hz input that is several events per painted frame. For the same reason `onPlayerPointerMove` does NOT measure layout: it queues the cursor in `pendingFollow`, and `applyPendingFollow()` resolves it at the TOP of the rAF callback, before that frame's style writes, where the previous frame's layout is already clean. Measuring in the handler would read layout right after our own writes and force a reflow per event. `renderRect` also does all its reads before its first write, and derives `rectW`/`rectH` from `state.*Pct * player size` instead of reading `clientWidth` — the rectangle is `box-sizing: border-box`, so the derived value runs 2px above the real `clientWidth` (negligible: the pixel canvas is stretched to 100%). The pixelation loop relies on those derived values, so `drawPixelFrame()` performs no DOM query and no layout read.
 - **Follow-cursor mode**: when `state.follow` is on, a player-level `pointermove` re-centers the rectangle on the cursor; rectangle drag is disabled (resize still works). Toggling Follow on calls `snapRectToPointer()` so the rectangle jumps to the last recorded cursor position immediately (no lag from the saved location).
 - **`shape`** (`'rectangle'` | `'ellipse'`) toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). **`mode`** (`'normal'` | `'reverse'`) transfers the blur to a sibling `.mosaic-filter-mask-layer` that blurs everything EXCEPT the filter area (the rectangle stays clear).
 - **Reverse-mode hole is cut with `clip-path: path()`** built in JS by `updateMask()`. The path uses TWO subpaths separated by `Z M`: an outer clockwise player rect + an inner counter-clockwise hole (rectangle bounding box, or two half-ellipse arcs for ellipse). Under the nonzero fill rule, clockwise-outer + counter-clockwise-inner = frame with a hole. Do NOT switch back to `clip-path: polygon()` (pre-0.4.2 L-shape self-intersection bug) or `mask-image` + `mask-composite: subtract` (pre-0.4.2 ellipse invisible-mask bug — inconsistent browser support made the mask fully transparent).
@@ -283,9 +287,11 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Playback write-back.** `beginActivity()` calls `sceneAddPlay` once per
   playback start; `flushActivity()` calls
   `sceneSaveActivity(resume_time, playDuration)` every 5 seconds and on
-  pause/end/navigation. `maybeResumeFromScene` seeks to `scene.resume_time`
-  when it is more than 5 seconds in and not near the end. Do not use the
-  deprecated direct `play_count` update.
+  pause/end/navigation. A tick is skipped when there is nothing to persist —
+  zero accumulated duration AND an unchanged `resume_time` — so a paused player
+  does not POST for as long as it stays paused. `maybeResumeFromScene` seeks to
+  `scene.resume_time` when it is more than 5 seconds in and not near the end. Do
+  not use the deprecated direct `play_count` update.
 - **Long-form mode.** `scene.scene_markers` is rendered as chapters with
   click-to-seek; the sleep timer fades volume over 30 seconds and then pauses;
   bookmarks are a JSON string in `custom_fields.AudioBookmarks` and must be

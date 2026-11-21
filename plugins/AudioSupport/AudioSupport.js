@@ -253,6 +253,9 @@
     audio: null,
     lastWrite: 0,
     pendingDuration: 0,
+    // Last resume_time actually sent to the server. Used to decide whether a
+    // tick has anything worth persisting (see flushActivity).
+    lastSentResume: null,
     timer: null,
     counted: false,
   };
@@ -267,6 +270,7 @@
     activityState.audio = audio;
     activityState.lastWrite = Date.now();
     activityState.pendingDuration = 0;
+    activityState.lastSentResume = null;
     activityState.counted = true;
     graphqlRequest(
       "mutation ($id: ID!) { sceneAddPlay(id: $id) { count history } }",
@@ -287,11 +291,18 @@
     const audio = activityState.audio;
     const sceneId = activityState.sceneId;
     if (audio.readyState < 1) return;
+    const resume = audio.currentTime || 0;
     const duration = activityState.pendingDuration;
     activityState.pendingDuration = 0;
+    // A paused player accumulates no duration, so if the playhead also did
+    // not move there is nothing to persist. Without this short-circuit the
+    // 5s tick issued one mutation per tick for as long as playback stayed
+    // paused, with a zero duration and an unchanged resume time.
+    if (duration <= 0 && resume === activityState.lastSentResume) return;
+    activityState.lastSentResume = resume;
     graphqlRequest(
       "mutation ($id: ID!, $resume: Float, $duration: Float) { sceneSaveActivity(id: $id, resume_time: $resume, playDuration: $duration) }",
-      { id: sceneId, resume: audio.currentTime || 0, duration: duration }
+      { id: sceneId, resume: resume, duration: duration }
     ).catch(function (err) { console.warn("AudioSupport: sceneSaveActivity failed", err); });
   }
 
