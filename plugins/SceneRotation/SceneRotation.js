@@ -18,6 +18,15 @@
  *   Only scalar values are allowed in custom_fields (see
  *   pkg/sqlite/custom_fields.go); an int is exactly what we need.
  *
+ * - The cover image is rotated with the video, because the cover is what the
+ *   scene wall and the card grid show; leaving it sideways defeats the point.
+ *   `sceneUpdate(cover_image:)` takes a base64 data URL, so the browser can
+ *   render the current cover into a canvas, rotate it and write it back — no
+ *   backend hook, no ImageMagick. The applied angle is tracked in
+ *   custom_fields["SceneRotationCover"] so only the delta is re-encoded on each
+ *   change; the cover is the only thing this plugin writes that is lossy, and
+ *   the media file itself is never touched.
+ *
  * - We style the `<video>` element itself, never `#VideoJsPlayer`, and we write
  *   ONLY `transform` / `transform-origin`. Stash's SceneVideoFilterPanel
  *   rewrites the whole inline `style` attribute of the element it picks, so
@@ -44,15 +53,24 @@
   "use strict";
 
   var FIELD_KEY = "SceneRotation";
+  // Tracks the angle already baked into the cover image, so the next change
+  // only has to rotate by the delta instead of re-rotating from scratch.
+  var COVER_FIELD_KEY = "SceneRotationCover";
   var PLAYER_ID = "VideoJsPlayer";
   // Safety net for SPA transitions that fire neither popstate nor
   // `stash:location` (the player element can be swapped without a route
   // change). One pass is a getElementById plus two regexes — cheap.
   var TICK_MS = 1000;
+  var COVER_JPEG_QUALITY = 0.92;
 
   var state = { sceneId: null, deg: 0 };
-  var cache = Object.create(null); // sceneId -> deg as stored server-side
-  var inflight = Object.create(null); // sceneId -> Promise<deg>
+  // sceneId -> { rotation, cover, screenshot }
+  //   rotation    video angle, from custom_fields["SceneRotation"]
+  //   cover       angle already baked into the cover image; null means this
+  //               plugin has never touched it (which is not the same as 0)
+  //   screenshot  paths.screenshot, the source for rebuilding the cover
+  var cache = Object.create(null);
+  var inflight = Object.create(null); // sceneId -> Promise<record>
   var bar = null;
   var boundVideo = null;
   var syncQueued = false;
@@ -85,36 +103,50 @@
     return ((Math.round(n / 90) * 90) % 360 + 360) % 360;
   }
 
-  function readRotation(sceneId) {
+  function readScene(sceneId) {
     if (sceneId in cache) return Promise.resolve(cache[sceneId]);
     if (inflight[sceneId]) return inflight[sceneId];
     var request = graphql(
-      "query ($id: ID!) { findScene(id: $id) { id custom_fields } }",
+      "query ($id: ID!) { findScene(id: $id) { id custom_fields paths { screenshot } } }",
       { id: String(sceneId) }
     )
       .then(function (data) {
-        var fields = data && data.findScene && data.findScene.custom_fields;
-        var deg = fields ? normalize(fields[FIELD_KEY]) : 0;
-        cache[sceneId] = deg;
-        return deg;
+        var scene = data && data.findScene;
+        var fields = (scene && scene.custom_fields) || {};
+        var record = {
+          rotation: normalize(fields[FIELD_KEY]),
+          // null rather than 0: "never rotated" and "rotated back to 0" need
+          // to be distinguishable, otherwise a scene that already carries a
+          // rotation from an older plugin version would have its cover
+          // rotated twice.
+          cover:
+            fields[COVER_FIELD_KEY] === undefined || fields[COVER_FIELD_KEY] === null
+              ? null
+              : normalize(fields[COVER_FIELD_KEY]),
+          screenshot: (scene && scene.paths && scene.paths.screenshot) || "",
+        };
+        cache[sceneId] = record;
+        return record;
       })
       .catch(function (err) {
         // A scene without custom_fields support (older Stash) must not break
         // playback; degrade to "no rotation stored".
         console.warn("SceneRotation: could not read custom_fields", err);
-        cache[sceneId] = 0;
-        return 0;
+        var fallback = { rotation: 0, cover: null, screenshot: "" };
+        cache[sceneId] = fallback;
+        return fallback;
       })
-      .then(function (deg) {
+      .then(function (record) {
         delete inflight[sceneId];
-        return deg;
+        return record;
       });
     inflight[sceneId] = request;
     return request;
   }
 
   function writeRotation(sceneId, deg) {
-    cache[sceneId] = deg;
+    var record = cache[sceneId];
+    if (record) record.rotation = deg;
     var input = deg
       ? { id: String(sceneId), custom_fields: { partial: {} } }
       : { id: String(sceneId), custom_fields: { remove: [FIELD_KEY] } };
@@ -194,6 +226,196 @@
     var scale = Math.min(boxW / size.height, boxH / size.width);
     if (!isFinite(scale) || scale <= 0) return "";
     return "rotate(" + deg + "deg) scale(" + scale + ")";
+  }
+
+  // ── Cover rotation ──────────────────────────────────────────────────
+  //
+  // Rotating only the playing video leaves every thumbnail sideways: the cover
+  // is what the scene wall, the card grid and the detail header show, so it has
+  // to match the playback direction.
+  //
+  // `sceneUpdate(cover_image:)` accepts a base64 data URL (the same path the UI
+  // uses when you paste a cover), so this needs no backend hook and no
+  // ImageMagick — the browser renders the current cover into a canvas and
+  // writes the rotated result back as the scene's cover blob.
+  //
+  // Two consequences are deliberate:
+  //  - The write is a re-encode, so each angle change costs one generation of
+  //    JPEG quality. That is why the already-applied angle is tracked in
+  //    custom_fields["SceneRotationCover"] and only the delta is rotated; a
+  //    change that does not move the angle writes nothing.
+  //  - A cover that cannot be rebuilt (missing screenshot, tainted canvas)
+  //    leaves the marker untouched so a later attempt retries, and never
+  //    blocks saving the rotation itself.
+  //
+  // The canvas here is created detached and never appended anywhere in the
+  // document: a <canvas> inside #VideoJsPlayer hijacks Stash's Filters panel
+  // (see the MosaicFilter note in AGENTS.md).
+
+  // Fetched as a blob rather than assigned straight to an <img>: after the
+  // cover is replaced, a plain re-assignment can be served from the HTTP cache
+  // and rotate the previous image, and a blob URL keeps the canvas untainted.
+  function loadImage(url) {
+    return fetch(url, { credentials: "same-origin", cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.blob();
+      })
+      .then(function (blob) {
+        return new Promise(function (resolve) {
+          var objectUrl = URL.createObjectURL(blob);
+          var image = new Image();
+          image.onload = function () {
+            URL.revokeObjectURL(objectUrl);
+            resolve(image);
+          };
+          image.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            resolve(null);
+          };
+          image.src = objectUrl;
+        });
+      })
+      .catch(function (err) {
+        console.warn("SceneRotation: cover image could not be loaded", err);
+        return null;
+      });
+  }
+
+  function rotateIntoCanvas(image, deg) {
+    var width = image.naturalWidth;
+    var height = image.naturalHeight;
+    var swap = deg % 180 !== 0;
+    var canvas = document.createElement("canvas");
+    canvas.width = swap ? height : width;
+    canvas.height = swap ? width : height;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    // Rotate about the centre and draw the image back through it: this maps
+    // the source top-left to the output top-right for +90, i.e. the same
+    // clockwise direction CSS `rotate()` uses on the video.
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((deg * Math.PI) / 180);
+    ctx.drawImage(image, -width / 2, -height / 2, width, height);
+    return canvas;
+  }
+
+  function rotateCoverImage(url, deg) {
+    if (!url) return Promise.resolve(null);
+    return loadImage(url).then(function (image) {
+      if (!image || !image.naturalWidth) return null;
+      var canvas = rotateIntoCanvas(image, deg);
+      if (!canvas) return null;
+      try {
+        return canvas.toDataURL("image/jpeg", COVER_JPEG_QUALITY);
+      } catch (err) {
+        // Tainted canvas: the cover is served from a different origin.
+        console.warn("SceneRotation: cover could not be exported", err);
+        return null;
+      }
+    });
+  }
+
+  // Rotate only by the difference to what is already baked in.
+  function applyCoverTarget(id, target) {
+    return readScene(id)
+      .then(function (record) {
+        var applied = record.cover === null ? 0 : record.cover;
+        if (applied === target) return false;
+        var delta = ((target - applied) % 360 + 360) % 360;
+        return rotateCoverImage(record.screenshot, delta).then(function (dataUrl) {
+          if (!dataUrl) {
+            console.warn(
+              "SceneRotation: no cover image to rotate, cover left as-is"
+            );
+            return false;
+          }
+          var customFields = target
+            ? { partial: {} }
+            : { remove: [COVER_FIELD_KEY] };
+          if (target) customFields.partial[COVER_FIELD_KEY] = target;
+          return graphql(
+            "mutation ($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
+            {
+              input: {
+                id: String(id),
+                cover_image: dataUrl,
+                custom_fields: customFields,
+              },
+            }
+          )
+            .then(function () {
+              record.cover = target;
+              refreshCoverImages(id, record.screenshot);
+              // Awaited on purpose: the queue must not start the next rotation
+              // from a screenshot URL that still points at the old cover.
+              return refreshScreenshotUrl(id).then(function () {
+                return true;
+              });
+            })
+            .catch(function (err) {
+              console.error("SceneRotation: could not save the rotated cover", err);
+              return false;
+            });
+        });
+      })
+      .catch(function (err) {
+        console.warn("SceneRotation: cover rotation skipped", err);
+        return false;
+      });
+  }
+
+  // Cover writes are serialised per scene. Two fast clicks would otherwise both
+  // read the same "already applied" angle, both rotate the same source frame
+  // and both write a cover — the second one undoing the first.
+  var coverQueue = Object.create(null);
+
+  function syncCover(sceneId, target) {
+    var id = sceneId || state.sceneId || currentSceneId();
+    if (!id) return Promise.resolve(false);
+    var previous = coverQueue[id] || Promise.resolve();
+    var next = previous.then(function () {
+      return applyCoverTarget(id, target);
+    });
+    coverQueue[id] = next.catch(function () {});
+    return next;
+  }
+
+  // The scene detail header renders the cover from the same screenshot URL, so
+  // a replaced cover keeps showing the old orientation until the page reloads.
+  // Bumping the cache-buster on the matching <img> makes the change immediate;
+  // this only touches the attribute, never React state. Matching is best-effort
+  // (Stash may key the screenshot URL by checksum), so a miss is a no-op.
+  function refreshCoverImages(sceneId, url) {
+    var base = url ? url.split("#")[0].split("?")[0] : "";
+    var fallback = "/scene/" + sceneId + "/screenshot";
+    Array.prototype.forEach.call(document.images, function (image) {
+      var src = (image.currentSrc || image.src).split("#")[0].split("?")[0];
+      if (src !== base && src.indexOf(fallback) === -1) return;
+      image.src = src + "?t=" + Date.now();
+    });
+  }
+
+
+  // Stash may key the screenshot URL by the cover checksum, in which case the
+  // URL we just used is already stale and the next rotation would start from
+  // the previous image. Re-read it once per write.
+  function refreshScreenshotUrl(id) {
+    return graphql(
+      "query ($id: ID!) { findScene(id: $id) { id paths { screenshot } } }",
+      { id: String(id) }
+    )
+      .then(function (data) {
+        var record = cache[id];
+        var url =
+          data && data.findScene && data.findScene.paths
+            ? data.findScene.paths.screenshot
+            : "";
+        if (record && url) record.screenshot = url;
+      })
+      .catch(function () {
+        // Non-fatal: the next cover sync just reports "no cover image".
+      });
   }
 
   // ── Applying ────────────────────────────────────────────────────────
@@ -285,7 +507,11 @@
     state.deg = normalize(deg);
     apply();
     renderBar();
-    return writeRotation(sceneId, state.deg);
+    var saved = writeRotation(sceneId, state.deg);
+    // Fire and forget: a cover that cannot be rebuilt (no screenshot, tainted
+    // canvas) must never block or fail the rotation itself.
+    syncCover(sceneId, state.deg);
+    return saved;
   }
 
   // ── Reconciliation ──────────────────────────────────────────────────
@@ -319,11 +545,21 @@
       state.deg = 0;
       apply();
       renderBar();
-      readRotation(sceneId).then(function (deg) {
+      readScene(sceneId).then(function (record) {
         if (state.sceneId !== sceneId) return; // navigated away meanwhile
-        state.deg = deg;
+        state.deg = record.rotation;
         apply();
         renderBar();
+        // A mismatch means the cover predates cover sync, or was regenerated
+        // after the rotation was set. Reported, never written here: opening a
+        // scene must not mutate it.
+        var appliedCover = record.cover === null ? 0 : record.cover;
+        if (record.rotation !== appliedCover) {
+          console.info(
+            "SceneRotation: cover is not in sync with the rotation — run " +
+              "SceneRotation.syncCover() to fix it"
+          );
+        }
       });
       return;
     }
@@ -362,6 +598,17 @@
     cycle: function () { return set((state.deg + 90) % 360); },
     sceneId: currentSceneId,
     sync: sync,
+    // Repair a cover that predates cover sync, or that was regenerated after
+    // the rotation was set. Rotates by the difference only.
+    syncCover: function () {
+      return syncCover(state.sceneId || currentSceneId(), state.deg);
+    },
+    // Angle currently baked into the cover: null when this plugin has not
+    // touched it, otherwise 0 / 90 / 180 / 270.
+    cover: function () {
+      var record = state.sceneId ? cache[state.sceneId] : null;
+      return record ? record.cover : null;
+    },
   };
 
   sync();
