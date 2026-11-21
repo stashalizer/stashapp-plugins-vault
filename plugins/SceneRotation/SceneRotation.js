@@ -813,8 +813,12 @@
             "Stash's Filters panel sends every rotate/scale/brightness/contrast " +
             "change to the first canvas it finds, so as long as that canvas was " +
             "inside the player the sliders had no visible effect. The canvas is " +
-            "still on the page, just outside the player. Run " +
-            "SceneRotation.filtersGuard(false) to disable this check."
+            "still on the page, just outside the player.\n" +
+            "  If it belongs to another plugin, that plugin can no longer use it " +
+            "— update it instead: the fix is to keep the canvas inside a shadow " +
+            "root, which getElementsByTagName does not cross (MosaicFilter 0.5.2+ " +
+            "does this). Until then, SceneRotation.filtersGuard(false) trades the " +
+            "Filters sliders back for that plugin's canvas."
         );
       }
     }
