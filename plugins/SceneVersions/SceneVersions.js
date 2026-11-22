@@ -388,9 +388,12 @@
   // 1. A dedicated slim document instead of `GQL.FindScenesDocument`.
   //    The generated document pulls a full scene (files with
   //    fingerprints, performers, tags, …), so fetching 200 of them cost
-  //    far more than the five fields this list actually renders. The
-  //    slim document also returns `count`, which is what tells us
-  //    whether another page exists.
+  //    far more than the handful of fields this list renders. The slim
+  //    selection does include the file's media fields, because a
+  //    suggestion added without saving is rendered by the comparison
+  //    table too — it must not show dashes there. The document also
+  //    returns `count`, which is what tells us whether another page
+  //    exists.
   // 2. Client-side ranking by filename similarity to the current scene.
   //    The backend can only sort by path/date/etc. — it cannot sort by
   //    "looks like this filename" — and `INCLUDES` ORs the
@@ -433,6 +436,11 @@
           }
           files {
             path
+            duration
+            width
+            height
+            video_codec
+            bit_rate
           }
         }
       }

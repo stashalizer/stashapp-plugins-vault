@@ -258,8 +258,12 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **SceneIDSelect picker** with `isMulti` + `excludeIds={[scene.id]}` to prevent self-links; `extraCriteria` restricts the dropdown to the current scene's folder via a path `INCLUDES` criterion (`makeFolderCriterion`).
 - **Suggest-from-folder helper**: a dedicated slim document
   (`SceneVersionsFolderScenes`: `id title date paths.screenshot studio.name
-  files.path` plus `count`) with `scene_filter.path { modifier: "INCLUDES" }`,
-  ordered and paged by path (`SUGGESTION_PAGE_SIZE` = 200).
+  files.path` plus `files.duration/width/height/video_codec/bit_rate` and
+  `count`) with `scene_filter.path { modifier: "INCLUDES" }`, ordered and paged
+  by path (`SUGGESTION_PAGE_SIZE` = 200). The media fields are not used by the
+  suggestion rows — they are there because a scene added from the list is
+  rendered by the comparison table before it is saved, so dropping them makes
+  Compare show dashes for every freshly added scene.
   Do **not** go back to `GQL.FindScenesDocument` here — the generated document
   pulls a whole scene (files with fingerprints, performers, tags) per row, which
   is what made the pre-0.6.0 list both huge and slow.
