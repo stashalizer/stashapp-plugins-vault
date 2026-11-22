@@ -256,7 +256,31 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Tab-only React plugin** (no player overlay, no `csLib.PathElementListener`, no SPA re-injection). Single component `RelatedScenesTab` injected via `PluginApi.patch.before` on `"ScenePage.Tabs"` (Nav link, `eventKey: "scene-versions-panel"`, inserted after the Details tab) and `"ScenePage.TabContent"` (Tab.Pane).
 - **Apollo client for all data**: `libraries.Apollo.client.query` for reads (`FindSceneDocument`, `FindScenesDocument`), `libraries.Apollo.client.mutate` for writes (`SceneUpdateDocument`). No `csLib.getConfiguration`/`setConfiguration`.
 - **SceneIDSelect picker** with `isMulti` + `excludeIds={[scene.id]}` to prevent self-links; `extraCriteria` restricts the dropdown to the current scene's folder via a path `INCLUDES` criterion (`makeFolderCriterion`).
-- **Suggest-from-folder helper**: `GQL.FindScenesDocument` with `scene_filter.path { modifier: "INCLUDES" }` queries other scenes in the same folder; "Add" button appends to `relatedIds` without saving (non-destructive). Rendered only when suggestions exist.
+- **Suggest-from-folder helper**: a dedicated slim document
+  (`SceneVersionsFolderScenes`: `id title date paths.screenshot studio.name
+  files.path` plus `count`) with `scene_filter.path { modifier: "INCLUDES" }`,
+  ordered and paged by path (`SUGGESTION_PAGE_SIZE` = 200).
+  Do **not** go back to `GQL.FindScenesDocument` here — the generated document
+  pulls a whole scene (files with fingerprints, performers, tags) per row, which
+  is what made the pre-0.6.0 list both huge and slow.
+- **The suggestion list is ranked and paged, and must stay small.** Rows are
+  scored client-side by filename similarity to the current scene
+  (`similarityScore`: token overlap 0.5 + shared prefix 0.35 + bigram 0.15, plus
+  `SUGGESTION_SAME_DIR_BONUS` 0.05 for an exact directory match so `INCLUDES`
+  subfolder false positives sink). Only `SUGGESTION_INITIAL_VISIBLE` = 6 rows
+  render; "Show more" is pure UI paging over the loaded pool, and only once the
+  pool is exhausted *and* `count` says more pages exist does it fetch the next
+  page and re-rank. On open it scans serially and stops as soon as the current
+  scene appears in the pool (hard cap `SUGGESTION_MAX_SCAN_PAGES` = 3), because
+  name-similar files sit next to each other in path order — without that, a
+  folder whose scenes all share one directory would rank against an unrelated
+  alphabetical slice of itself. Ranking has to be client-side: the backend can
+  sort by path/date but not by "looks like this filename", and `INCLUDES` ORs the
+  whitespace-separated terms of its value, so the name cannot be pushed into the
+  query as a prefilter. Already-linked scenes are excluded at render time (not
+  in the query), so clicking "Add" neither re-runs the query nor resets the
+  pagination the user just expanded. "Add" appends to `relatedIds` without
+  saving (non-destructive).
 - **patch.before error return shape**: handlers return `[props]` (pass-through) on error so the scene page doesn't break. Do NOT change to `[]` (zero args → original component called with `props=undefined` → breaks the whole scene page).
 - **`fetchPolicy: "no-cache"`** on all Apollo queries so stale cache doesn't hide bidirectional writes.
 - **No migrations** (new plugin, no legacy data).
@@ -264,7 +288,7 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **`custom_fields` only stores scalars.** The id list is `JSON.stringify`'d on write and `JSON.parse`'d on read (`encodeIds`/`decodeIds`); passing a bare array is rejected by the backend (`getSQLValueFromCustomFieldInput`). All writes use `custom_fields: { partial: { RelatedScenes: ... } }` so other custom fields are not clobbered. `decodeIds` also tolerates a legacy bare-array value found in cache.
 - **`syncBidirectional` is best-effort by design.** Peer writes run concurrently via `Promise.allSettled`; individual peer failures are logged to `console.error` and don't block the rest. The current scene's own list is written **last and unconditionally**, so a peer failure can never leave the user's own edit unsaved. Self-links are filtered at every step.
 - **`getFolderPath` must keep the platform path separator** (`\` on Windows). The backend builds its LIKE pattern from `folders.path || filepath.Separator || files.basename` and matches the raw value sent, so normalising to `/` made the folder criterion match nothing and the suggestion list was **always empty on Windows** (fixed in 0.3.0). Do not "clean up" the separator.
-- **`INCLUDES` is a loose match.** It is a substring match that also splits the value on whitespace and ORs the terms, so paths in subfolders or containing spaces can produce extra hits. Accepted trade-off; irrelevant entries can be ignored.
+- **`INCLUDES` is a loose match.** It is a substring match that also splits the value on whitespace and ORs the terms, so paths in subfolders or containing spaces can produce extra hits. Accepted trade-off: the suggestions list is ranked by filename similarity with a same-directory bonus, so those hits sink instead of flooding the tab.
 - **Tab-label count badge is live.** `RelatedScenesTabLabel` does its own `readRelatedIds` on mount (so the count shows before the tab is opened) and subscribes to a module-level pub/sub (`onCountChange` / `emitCountChange`, keyed by scene id) that the tab body emits on every edit-state change. The in-tab duplicate header was removed in 0.4.0 — don't re-add it.
 - **Files**: `SceneVersions.yml` (manifest, no `ui.requires`) · `SceneVersions.js` (tab + badge + protection + comparison + pHash) · `SceneVersions.css`.
 

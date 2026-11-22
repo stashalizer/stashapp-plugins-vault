@@ -141,7 +141,7 @@ Think of it as a **lightweight alternative to Stash's built-in Groups**. Stash's
 ### Features
 
 - **Bidirectional auto-sync.** Link once and both scenes show each other — no need to edit both sides.
-- **Suggest-from-folder.** Scenes sharing the same file folder surface as quick-add candidates, so the most likely related scenes are one click away.
+- **Suggest-from-folder.** Scenes sharing the same file folder surface as quick-add candidates — ranked by how close their filename is to the one you are viewing, and revealed six at a time with **Show more**, so a folder holding hundreds of scenes cannot bury the tab.
 - **Cleanup protection.** New links apply the known ignore tags used by Smart Resolve and additionalFilesDeleter, so duplicate cleaners can skip versioned scenes. Protection is per-tool; other cleaners need their own ignore tags.
 - **Visible outside the tab.** A scene-card version badge and a saved filter (`Scene Versions: has alternate cut`) make versioned scenes discoverable in the library.
 - **Comparison and pHash.** Compare duration, resolution, codec, bitrate and date side by side; pHash suggests possible same-shoot scenes without auto-linking.
@@ -153,13 +153,14 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 
 - Use the scene picker to select related scenes (filtered to the current folder by default; cross-folder links can be added via suggestions).
 - **Save** writes both directions — the linked scenes also get a back-link.
-- **Add** from the suggestions list queues a scene without saving (non-destructive).
+- **Add** from the suggestions list queues a scene without saving (non-destructive). The list shows the closest filenames first; **Show more** reveals the next six, and once the loaded batch is used up it loads another batch from the folder.
 - **Discard** reverts to the last saved state.
 - **Remove** a related scene — the unlink is applied bidirectionally on save.
 
 ### Known limitations
 
-- Suggest-from-folder uses substring `INCLUDES` on path, so scenes in subfolders whose path contains the folder string may also appear. This is usually fine since folders hold few scenes, and irrelevant suggestions can be ignored.
+- Suggest-from-folder uses substring `INCLUDES` on path, so scenes in subfolders whose path contains the folder string may also appear. They are ranked below same-name, same-directory hits rather than hidden, and the list is paged, so they no longer crowd out the tab.
+- Filename ranking runs over the batches loaded so far (200 scenes each; the tab loads up to three batches on open, stopping as soon as the current scene is among them). In a folder large enough that the current scene sits beyond that, a better match further down the path order only surfaces after **Show more** has pulled that batch in.
 - Cleanup protection is per-tool. The plugin applies the known Smart Resolve and additionalFilesDeleter tags, but other cleaners use different names; configure their own ignore tag. Protection is not a backup.
 - pHash suggestions depend on a generated video pHash and are suggestions only; they never create links automatically.
 - Concurrent multi-user edits to the same scene's related list could race (acceptable for typical single-user Stash).

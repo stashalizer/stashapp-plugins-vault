@@ -378,42 +378,198 @@
     };
   }
 
+  // ── Folder suggestions: bounded pages + filename ranking ────────────
+  //
+  // The folder criterion is a loose `INCLUDES` substring match (see
+  // AGENTS.md), so a library where many scenes share one directory can
+  // return hundreds of hits — and the old implementation rendered every
+  // single one of them. Three changes keep the list small and relevant:
+  //
+  // 1. A dedicated slim document instead of `GQL.FindScenesDocument`.
+  //    The generated document pulls a full scene (files with
+  //    fingerprints, performers, tags, …), so fetching 200 of them cost
+  //    far more than the five fields this list actually renders. The
+  //    slim document also returns `count`, which is what tells us
+  //    whether another page exists.
+  // 2. Client-side ranking by filename similarity to the current scene.
+  //    The backend can only sort by path/date/etc. — it cannot sort by
+  //    "looks like this filename" — and `INCLUDES` ORs the
+  //    whitespace-separated terms of its value, so a name prefix cannot
+  //    be used as a prefilter either. Ranking therefore runs over the
+  //    loaded pool.
+  // 3. The list renders a few rows at a time. "Show more" first reveals
+  //    the rest of the loaded pool, and only fetches the next backend
+  //    page once that pool is exhausted.
+
+  var SUGGESTION_PAGE_SIZE = 200;
+  var SUGGESTION_INITIAL_VISIBLE = 6;
+  var SUGGESTION_VISIBLE_STEP = 6;
+  // Same-directory hits outrank `INCLUDES` false positives from
+  // subfolders whose path merely contains this folder string.
+  var SUGGESTION_SAME_DIR_BONUS = 0.05;
+  // Name-similar files sit next to each other in path order, so the
+  // useful candidates are around the current scene's own position. If it
+  // is not in the first page, scan a few more (serially, stopping as soon
+  // as it shows up) before ranking — otherwise a folder whose scenes are
+  // all in one directory would rank against an unrelated slice of itself.
+  var SUGGESTION_MAX_SCAN_PAGES = 3;
+
+  var FolderScenesDocument = gql`
+    query SceneVersionsFolderScenes($folderPath: String!, $page: Int!, $perPage: Int!) {
+      findScenes(
+        scene_filter: { path: { value: $folderPath, modifier: INCLUDES } }
+        filter: { page: $page, per_page: $perPage, sort: "path" }
+      ) {
+        count
+        scenes {
+          id
+          title
+          date
+          paths {
+            screenshot
+          }
+          studio {
+            name
+          }
+          files {
+            path
+          }
+        }
+      }
+    }
+  `;
+
+  /** Basename of the scene's first file (no directory part). */
+  function sceneFileName(scene) {
+    var file = scene && scene.files && scene.files[0];
+    if (!file || !file.path) return "";
+    var parts = String(file.path).split(/[\\/]/);
+    return parts[parts.length - 1] || "";
+  }
+
   /**
-   * Fetch scenes sharing the same folder as the current scene.
-   *
-   * Approach: Use GQL.FindScenesDocument with a scene_filter on path
-   * (modifier: "INCLUDES"). This is the standard Stash API filter for
-   * path-based queries. The folder path is derived from the current
-   * scene's first file path with the basename stripped.
-   *
-   * We request up to 200 scenes sorted by path. The INCLUDES modifier
-   * is a substring match, which may also match scenes in subfolders
-   * whose path contains the folder string — acceptable for a suggestion
-   * feature since folders usually contain few scenes and the user can
-   * simply ignore irrelevant suggestions.
+   * Lowercase, drop the extension, collapse every run of separators and
+   * punctuation to a single space. Kept Unicode-aware so CJK filenames
+   * are not erased into an empty string (which would score everything
+   * 0 and silently disable the ranking).
    */
-  async function fetchSuggestions(folderPath, excludeIds) {
-    if (!folderPath) return [];
-    var excludeSet = new Set(excludeIds.map(String));
+  function normalizeFileName(name) {
+    if (!name) return "";
+    var stem = String(name).replace(/\.[^./\\]+$/, "");
+    try {
+      return stem.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    } catch (e) {
+      return stem.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    }
+  }
+
+  function bigramSet(normalized) {
+    var grams = new Set();
+    for (var i = 0; i < normalized.length - 1; i++) {
+      grams.add(normalized.substr(i, 2));
+    }
+    return grams;
+  }
+
+  /**
+   * Filename similarity in [0, 1].
+   *
+   * Versions of one scene usually share a stem and differ in a suffix
+   * ("… (1080p)" vs "… (4K)"), and their tokens mostly overlap, so the
+   * score mixes token overlap (weight 0.5), shared prefix (0.35 — the
+   * strongest signal for "same title, different cut") and character
+   * bigrams (0.15, which still rewards partial word matches).
+   */
+  function similarityScore(target, candidate) {
+    if (!target || !candidate) return 0;
+    if (target === candidate) return 1;
+
+    var targetTokens = target.split(" ").filter(Boolean);
+    var candidateTokens = candidate.split(" ").filter(Boolean);
+    var candidateSet = new Set(candidateTokens);
+    var sharedTokens = 0;
+    targetTokens.forEach(function (t) {
+      if (candidateSet.has(t)) sharedTokens++;
+    });
+    var tokenTotal = targetTokens.length + candidateTokens.length;
+    var tokenScore = tokenTotal > 0 ? (2 * sharedTokens) / tokenTotal : 0;
+
+    var shortest = Math.min(target.length, candidate.length);
+    var prefixLength = 0;
+    while (
+      prefixLength < shortest &&
+      target.charAt(prefixLength) === candidate.charAt(prefixLength)
+    ) {
+      prefixLength++;
+    }
+    var prefixScore =
+      prefixLength / Math.max(target.length, candidate.length);
+
+    var targetGrams = bigramSet(target);
+    var candidateGrams = bigramSet(candidate);
+    var sharedGrams = 0;
+    targetGrams.forEach(function (g) {
+      if (candidateGrams.has(g)) sharedGrams++;
+    });
+    var gramTotal = targetGrams.size + candidateGrams.size;
+    var gramScore = gramTotal > 0 ? (2 * sharedGrams) / gramTotal : 0;
+
+    return 0.5 * tokenScore + 0.35 * prefixScore + 0.15 * gramScore;
+  }
+
+  /**
+   * Fetch one page of the folder's scenes, sorted by path.
+   *
+   * `hasMore` comes from the server-side `count` when it is present and
+   * falls back to "the page came back full" otherwise. A failed page is
+   * reported as `{ failed: true, scenes: [] }` rather than thrown: the
+   * suggestion list is a convenience, and losing it must never break
+   * the tab.
+   */
+  async function fetchSuggestionPage(folderPath, page) {
+    if (!folderPath) return { scenes: [], hasMore: false, total: 0 };
     try {
       var result = await apolloClient.query({
-        query: GQL.FindScenesDocument,
+        query: FolderScenesDocument,
         variables: {
-          filter: { per_page: 200, sort: "path" },
-          scene_filter: {
-            path: { value: folderPath, modifier: "INCLUDES" },
-          },
+          folderPath: folderPath,
+          page: page,
+          perPage: SUGGESTION_PAGE_SIZE,
         },
         fetchPolicy: "no-cache",
       });
-      var scenes = result.data.findScenes.scenes || [];
-      return scenes.filter(function (s) {
-        return !excludeSet.has(String(s.id));
-      });
+      var payload = result && result.data && result.data.findScenes;
+      var scenes = (payload && payload.scenes) || [];
+      var total = payload && typeof payload.count === "number" ? payload.count : null;
+      return {
+        scenes: scenes,
+        total: total || 0,
+        hasMore:
+          total !== null
+            ? page * SUGGESTION_PAGE_SIZE < total
+            : scenes.length === SUGGESTION_PAGE_SIZE,
+      };
     } catch (err) {
-      console.error("SceneVersions: fetchSuggestions failed", err);
-      return [];
+      console.error("SceneVersions: folder suggestion query failed", err);
+      return { scenes: [], hasMore: false, total: 0, failed: true };
     }
+  }
+
+  /** Append a page to the pool, dropping ids already present. */
+  function mergeScenePool(existing, incoming) {
+    var seen = new Set(
+      existing.map(function (s) {
+        return String(s.id);
+      })
+    );
+    var merged = existing.slice();
+    (incoming || []).forEach(function (s) {
+      var id = String(s.id);
+      if (seen.has(id)) return;
+      seen.add(id);
+      merged.push(s);
+    });
+    return merged;
   }
 
   function getPrimaryHash(scene) {
@@ -715,18 +871,30 @@
     var dirty = _f[0];
     var setDirty = _f[1];
     var loadedIdsRef = useRef([]);
-    var _g = useState([]);
-    var suggestions = _g[0];
-    var setSuggestions = _g[1];
-    var _h = useState(false);
+    var _g = useState([]); // loaded pool of same-folder candidates
+    var suggestionPool = _g[0];
+    var setSuggestionPool = _g[1];
+    var _h = useState(false); // first page in flight
     var suggestionsLoading = _h[0];
     var setSuggestionsLoading = _h[1];
-    var _i = useState(false);
-    var compareOpen = _i[0];
-    var setCompareOpen = _i[1];
-    var _j = useState([]);
-    var phashSuggestions = _j[0];
-    var setPhashSuggestions = _j[1];
+    var _i = useState(SUGGESTION_INITIAL_VISIBLE);
+    var suggestionVisible = _i[0];
+    var setSuggestionVisible = _i[1];
+    var _j = useState(1); // number of the last backend page fetched
+    var suggestionPage = _j[0];
+    var setSuggestionPage = _j[1];
+    var _k = useState(false); // backend reported more pages
+    var suggestionHasMore = _k[0];
+    var setSuggestionHasMore = _k[1];
+    var _l = useState(false); // next page in flight
+    var suggestionLoadingMore = _l[0];
+    var setSuggestionLoadingMore = _l[1];
+    var _m = useState(false);
+    var compareOpen = _m[0];
+    var setCompareOpen = _m[1];
+    var _n = useState([]);
+    var phashSuggestions = _n[0];
+    var setPhashSuggestions = _n[1];
     var Toast = hooks.useToast();
 
     // Restrict the scene picker to the current scene's folder so the
@@ -785,33 +953,50 @@
       [scene.id, relatedIds]
     );
 
-    // Fetch suggestions from same folder (parallel, non-blocking)
+    // Load the first batch of same-folder candidates in the background.
+    // Keyed on the scene only: already-linked scenes are excluded at
+    // render time, so linking one must not re-run the query and reset the
+    // pagination the user just expanded.
     useEffect(
       function () {
         var cancelled = false;
         var folderPath = getFolderPath(scene);
+        setSuggestionPool([]);
+        setSuggestionVisible(SUGGESTION_INITIAL_VISIBLE);
+        setSuggestionPage(1);
+        setSuggestionHasMore(false);
+        setSuggestionLoadingMore(false);
         if (!folderPath) {
-          setSuggestions([]);
           setSuggestionsLoading(false);
           return;
         }
         setSuggestionsLoading(true);
-        fetchSuggestions(folderPath, [scene.id].concat(relatedIds))
-          .then(function (scenes) {
+        (async function () {
+          var page = 1;
+          var pool = [];
+          var hasMore = false;
+          while (!cancelled && page <= SUGGESTION_MAX_SCAN_PAGES) {
+            var result = await fetchSuggestionPage(folderPath, page);
             if (cancelled) return;
-            setSuggestions(scenes);
-            setSuggestionsLoading(false);
-          })
-          .catch(function () {
-            if (cancelled) return;
-            setSuggestions([]);
-            setSuggestionsLoading(false);
-          });
+            pool = mergeScenePool(pool, result.scenes);
+            hasMore = !!result.hasMore;
+            page++;
+            var foundCurrent = pool.some(function (s) {
+              return String(s.id) === String(scene.id);
+            });
+            if (!hasMore || foundCurrent) break;
+          }
+          if (cancelled) return;
+          setSuggestionPool(pool);
+          setSuggestionPage(page - 1);
+          setSuggestionHasMore(hasMore);
+          setSuggestionsLoading(false);
+        })();
         return function () {
           cancelled = true;
         };
       },
-      [scene.id, relatedIds]
+      [scene.id]
     );
 
     useEffect(
@@ -829,6 +1014,49 @@
       },
       [scene.id, relatedIds]
     );
+
+    // Rank the loaded pool by filename similarity to this scene, so the
+    // rows shown first are the plausible versions and not simply the
+    // alphabetically first files of the folder.
+    var currentFolderPath = useMemo(
+      function () {
+        return getFolderPath(scene);
+      },
+      [scene]
+    );
+    var currentFileName = useMemo(
+      function () {
+        return normalizeFileName(sceneFileName(scene));
+      },
+      [scene]
+    );
+    var rankedSuggestions = useMemo(
+      function () {
+        var excluded = new Set([String(scene.id)].concat(relatedIds.map(String)));
+        var scored = [];
+        suggestionPool.forEach(function (s) {
+          if (excluded.has(String(s.id))) return;
+          var score = similarityScore(currentFileName, normalizeFileName(sceneFileName(s)));
+          if (currentFolderPath && getFolderPath(s) === currentFolderPath) {
+            score = Math.min(1, score + SUGGESTION_SAME_DIR_BONUS);
+          }
+          scored.push({ scene: s, score: score, name: sceneFileName(s) });
+        });
+        scored.sort(function (a, b) {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.name.localeCompare(b.name);
+        });
+        return scored.map(function (entry) {
+          return entry.scene;
+        });
+      },
+      [suggestionPool, relatedIds, scene.id, currentFolderPath, currentFileName]
+    );
+
+    var visibleSuggestions = rankedSuggestions.slice(0, suggestionVisible);
+    var hiddenSuggestionCount = rankedSuggestions.length - visibleSuggestions.length;
+    var canShowMoreSuggestions =
+      hiddenSuggestionCount > 0 || suggestionHasMore;
 
     var handleSelect = useCallback(function (scenes) {
       var ids = scenes.map(function (s) {
@@ -897,6 +1125,36 @@
         return prev.concat([suggestedScene]);
       });
     }, [relatedIds]);
+
+    /**
+     * Reveal the next slice of candidates.
+     *
+     * While the loaded pool still has hidden rows, this is pure UI
+     * pagination — no request. Only once the pool is exhausted (and the
+     * backend count says there are more pages) does it fetch the next
+     * page and rank the enlarged pool again.
+     */
+    function handleShowMoreSuggestions() {
+      if (suggestionLoadingMore) return;
+      if (hiddenSuggestionCount > 0) {
+        setSuggestionVisible(suggestionVisible + SUGGESTION_VISIBLE_STEP);
+        return;
+      }
+      if (!suggestionHasMore) return;
+      var folderPath = getFolderPath(scene);
+      if (!folderPath) return;
+      var nextPage = suggestionPage + 1;
+      setSuggestionLoadingMore(true);
+      fetchSuggestionPage(folderPath, nextPage).then(function (result) {
+        setSuggestionPool(function (prev) {
+          return mergeScenePool(prev, result.scenes);
+        });
+        setSuggestionPage(nextPage);
+        setSuggestionHasMore(!!result.hasMore);
+        setSuggestionLoadingMore(false);
+        setSuggestionVisible(suggestionVisible + SUGGESTION_VISIBLE_STEP);
+      });
+    }
 
     // ── Render ──────────────────────────────────────────────────────
 
@@ -1189,60 +1447,95 @@
             )
           )
         : null,
-      // Suggestions from same folder
-      suggestions.length > 0
+      // Suggestions from the same folder — closest filenames first, a
+      // few rows at a time so a folder holding hundreds of scenes cannot
+      // flood the tab.
+      suggestionsLoading
         ? h(
             "div",
-            { className: "scene-versions-suggestions" },
-            h(
-              "div",
-              { className: "scene-versions-suggestions__header" },
-              "Scenes in the same folder"
-            ),
-            suggestions.map(function (s) {
-              return h(
-                "div",
-                { key: s.id, className: "scene-versions-suggestion" },
-                s.paths && s.paths.screenshot
-                  ? h("img", {
-                      className: "scene-versions-suggestion__thumb",
-                      src: s.paths.screenshot,
-                      alt: "",
-                      loading: "lazy",
-                    })
-                  : h("div", {
-                      className:
-                        "scene-versions-suggestion__thumb scene-versions-suggestion__thumb--placeholder",
-                    }),
-                h(
-                  "span",
-                  { className: "scene-versions-suggestion__title" },
-                  sceneTitle(s)
-                ),
-                h(
-                  Button,
-                  {
-                    variant: "outline-primary",
-                    size: "sm",
-                    className: "scene-versions-suggestion__add",
-                    title: "Add this scene as a related version",
-                    "aria-label": "Add this scene as a related version",
-                    onClick: function (evt) {
-                      evt.preventDefault();
-                      evt.stopPropagation();
-                      handleAddSuggestion(s);
-                    },
-                  },
-                  "Add"
-                )
-              );
-            })
+            { className: "scene-versions-suggestions-loading" },
+            "Finding scenes in the same folder\u2026"
           )
-        : suggestionsLoading
+        : visibleSuggestions.length > 0 || canShowMoreSuggestions
           ? h(
               "div",
-              { className: "scene-versions-suggestions-loading" },
-              "Finding scenes in the same folder\u2026"
+              { className: "scene-versions-suggestions" },
+              h(
+                "div",
+                { className: "scene-versions-suggestions__header" },
+                "Scenes in the same folder",
+                rankedSuggestions.length > 0
+                  ? h(
+                      "span",
+                      { className: "scene-versions-suggestions__count" },
+                      rankedSuggestions.length +
+                        (suggestionHasMore ? "+" : "") +
+                        " candidates, closest first"
+                    )
+                  : null
+              ),
+              visibleSuggestions.map(function (s) {
+                return h(
+                  "div",
+                  { key: s.id, className: "scene-versions-suggestion" },
+                  s.paths && s.paths.screenshot
+                    ? h("img", {
+                        className: "scene-versions-suggestion__thumb",
+                        src: s.paths.screenshot,
+                        alt: "",
+                        loading: "lazy",
+                      })
+                    : h("div", {
+                        className:
+                          "scene-versions-suggestion__thumb scene-versions-suggestion__thumb--placeholder",
+                      }),
+                  h(
+                    "span",
+                    {
+                      className: "scene-versions-suggestion__title",
+                      title: sceneFileName(s),
+                    },
+                    sceneTitle(s)
+                  ),
+                  h(
+                    Button,
+                    {
+                      variant: "outline-primary",
+                      size: "sm",
+                      className: "scene-versions-suggestion__add",
+                      title: "Add this scene as a related version",
+                      "aria-label": "Add this scene as a related version",
+                      onClick: function (evt) {
+                        evt.preventDefault();
+                        evt.stopPropagation();
+                        handleAddSuggestion(s);
+                      },
+                    },
+                    "Add"
+                  )
+                );
+              }),
+              canShowMoreSuggestions
+                ? h(
+                    "div",
+                    { className: "scene-versions-suggestions__footer" },
+                    h(
+                      Button,
+                      {
+                        variant: "outline-secondary",
+                        size: "sm",
+                        className: "scene-versions-suggestions__more",
+                        disabled: suggestionLoadingMore,
+                        onClick: handleShowMoreSuggestions,
+                      },
+                      suggestionLoadingMore
+                        ? "Loading\u2026"
+                        : hiddenSuggestionCount > 0
+                          ? "Show more (" + hiddenSuggestionCount + ")"
+                          : "Load more from this folder"
+                    )
+                  )
+                : null
             )
           : null,
       phashSuggestions.needsHash

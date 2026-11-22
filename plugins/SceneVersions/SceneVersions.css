@@ -265,21 +265,41 @@
   letter-spacing: 0.04em;
 }
 
+/* Candidate count next to the header title ("12 candidates, closest first") */
+.scene-versions-suggestions__count {
+  margin-left: 0.5rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+
 .scene-versions-suggestion {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   padding: 0.4rem 0;
-  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.12));
 }
 
-.scene-versions-suggestion:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+/* Separator between rows, not on the last one. Done with a sibling
+   selector so the paging footer below does not leave a dangling
+   bottom border behind. */
+.scene-versions-suggestion + .scene-versions-suggestion {
+  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.12));
 }
 
-.scene-versions-suggestion:first-child {
-  padding-top: 0;
+/* "Show more" / "Load more from this folder" */
+.scene-versions-suggestions__footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.12));
+}
+
+.scene-versions-suggestions__more {
+  font-size: 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .scene-versions-suggestion__thumb {
