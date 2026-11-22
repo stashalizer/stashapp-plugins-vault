@@ -143,7 +143,7 @@ Think of it as a **lightweight alternative to Stash's built-in Groups**. Stash's
 - **Bidirectional auto-sync.** Link once and both scenes show each other — no need to edit both sides.
 - **Suggest-from-folder.** Scenes sharing the same file folder surface as quick-add candidates — ranked by how close their filename is to the one you are viewing, and revealed six at a time with **Show more**, so a folder holding hundreds of scenes cannot bury the tab.
 - **Cleanup protection.** New links apply the known ignore tags used by Smart Resolve and additionalFilesDeleter, so duplicate cleaners can skip versioned scenes. Protection is per-tool; other cleaners need their own ignore tags.
-- **Visible outside the tab.** A scene-card version badge and a saved filter (`Scene Versions: has alternate cut`) make versioned scenes discoverable in the library.
+- **Visible outside the tab.** A scene-card version badge makes versioned scenes recognizable in any grid, and an optional saved filter (`Scene Versions: has alternate cut`) lists them in one place — create it under **Settings → Plugins → Scene Versions**.
 - **Comparison and pHash.** Compare duration, resolution, codec, bitrate and date side by side; pHash suggests possible same-shoot scenes without auto-linking.
 - **No extra dependency.** Works without CommunityScriptsUILibrary — no csLib required.
 
@@ -157,10 +157,13 @@ Open any scene and click the **Related Scenes** tab (after the Details tab):
 - **Discard** reverts to the last saved state.
 - **Remove** a related scene — the unlink is applied bidirectionally on save.
 
+**Browsing everything versioned** is a one-time setup, not a per-scene action: go to **Settings → Plugins → Scene Versions** and click **Create saved filter**. The plugin counts the matching scenes first and refuses to create an empty filter, then the filter shows up in **Scenes → Filter → Saved filters**. Stash has no link that opens a saved filter directly, so the plugin cannot jump there for you.
+
 ### Known limitations
 
 - Suggest-from-folder uses substring `INCLUDES` on path, so scenes in subfolders whose path contains the folder string may also appear. They are ranked below same-name, same-directory hits rather than hidden, and the list is paged, so they no longer crowd out the tab.
 - Filename ranking runs over the batches loaded so far (200 scenes each; the tab loads up to three batches on open, stopping as soon as the current scene is among them). In a folder large enough that the current scene sits beyond that, a better match further down the path order only surfaces after **Show more** has pulled that batch in.
+- The saved filter matches on "field present", so a scene whose last link was removed (the field is stored as `[]`) still appears in it. The count shown before creating the filter uses the same rule, so the two always agree.
 - Cleanup protection is per-tool. The plugin applies the known Smart Resolve and additionalFilesDeleter tags, but other cleaners use different names; configure their own ignore tag. Protection is not a backup.
 - pHash suggestions depend on a generated video pHash and are suggestions only; they never create links automatically.
 - Concurrent multi-user edits to the same scene's related list could race (acceptable for typical single-user Stash).

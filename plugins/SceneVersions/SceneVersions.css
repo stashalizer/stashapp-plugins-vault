@@ -344,6 +344,33 @@
   padding: 0.5rem 0;
 }
 
+/* Settings > Plugins > Scene Versions */
+.scene-versions-settings {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+}
+
+.scene-versions-settings__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.scene-versions-settings__text {
+  margin: 0 0 0.6rem;
+  max-width: 60ch;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+}
+
+.scene-versions-settings__status {
+  margin-bottom: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, rgba(128, 128, 128, 0.9));
+}
+
 /* Responsive: smaller thumbnails on narrow panes */
 @media (max-width: 480px) {
   .scene-versions-thumb {

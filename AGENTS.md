@@ -245,16 +245,41 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `Minified React error #31 — object with keys {}` on the whole Scenes page
   (fixed in 0.5.1). The same arity rule applies to `patch.instead`
   (`props, _ctx, next`).
-- **Saved filter.** `ensureVersionFilter` creates
-  `Scene Versions: has alternate cut` with
-  `custom_fields: [{field:"RelatedScenes", value:[], modifier:"NOT_NULL"}]`.
+- **Saved filter is a settings-page setup step, not a scene action.** The filter
+  `Scene Versions: has alternate cut`
+  (`custom_fields: [{field:"RelatedScenes", value:[], modifier:"NOT_NULL"}]`) is
+  created from **Settings > Plugins > Scene Versions** — `ensureVersionFilter()`
+  refuses to create it when `countVersionedScenes()` is 0, so an empty filter
+  never lands in every user's dropdown. Until 0.7.0 the trigger was a "Find all
+  versioned" button in the scene tab's edit row, which was wrong on three counts:
+  the action is library-wide, it writes to the database once and is then dead
+  forever, and the label promised a result list the platform cannot deliver.
+  **It cannot navigate to the results**: `ListFilterModel.configureFromQueryString`
+  accepts only `perPage/sortby/sortdir/disp/q/p/z/c` (no `filter=<id>`), and `c`
+  is Stash's internal criteria encoding. Do not "fix" the button by adding a
+  URL — it has to stay a create-and-point-at affordance.
+- **`NOT_NULL` means "field present", not "non-empty list".** Unlinking the last
+  scene writes `"[]"`, which still satisfies the filter, so a scene you fully
+  unlinked keeps appearing in the saved filter. The count shown in the settings
+  section uses the same criterion on purpose, so the number equals what Stash
+  will show rather than a nicer number that disagrees with the results.
+- **Settings-page section** is injected with
+  `PluginApi.patch.after("PluginSettings", …)`: `SettingsPluginsPanel.tsx`
+  renders one `PatchComponent("PluginSettings")` per installed plugin, so the
+  handler must hand back `result` untouched unless
+  `String(props.pluginID) === "SceneVersions"` — it runs for every plugin row on
+  that page, including third-party ones. Keep the three-parameter `patch.after`
+  arity (see the card-badge bullet). `PluginSettings` is listed in the v0.32.0
+  `UIPluginApi.md` patch list. Note the plugin declares no `hooks` and no
+  `settings`, so its `SettingGroup` is not collapsible and this block is visible
+  without expanding anything.
 - **Comparison / pHash.** The tab shows duration, resolution, codec, bitrate and
   date side by side. pHash suggestions use `SceneFilterType.phash_distance`
   with distance 8; they are suggestions only and never auto-link. If the current
   scene has no stored phash, the UI says to generate one first.
 - **Bidirectional links**: when scene A lists B, B also lists A. `syncBidirectional` writes both sides on every link/unlink using `custom_fields: { partial: { RelatedScenes: [...] } }` to avoid clobbering other custom fields. Self-links filtered at every step.
-- **Tab-only React plugin** (no player overlay, no `csLib.PathElementListener`, no SPA re-injection). Single component `RelatedScenesTab` injected via `PluginApi.patch.before` on `"ScenePage.Tabs"` (Nav link, `eventKey: "scene-versions-panel"`, inserted after the Details tab) and `"ScenePage.TabContent"` (Tab.Pane).
-- **Apollo client for all data**: `libraries.Apollo.client.query` for reads (`FindSceneDocument`, `FindScenesDocument`), `libraries.Apollo.client.mutate` for writes (`SceneUpdateDocument`). No `csLib.getConfiguration`/`setConfiguration`.
+- **No player overlay, no `csLib.PathElementListener`, no SPA re-injection.** Two React injection points: the tab (label + body) via `PluginApi.patch.before` on `"ScenePage.Tabs"` (Nav link, `eventKey: "scene-versions-panel"`, inserted after the Details tab) and `"ScenePage.TabContent"` (Tab.Pane), and the settings section via `patch.after("PluginSettings")` (see above).
+- **Apollo client for all data**: `PluginApi.utils.StashService.getClient()` for both reads (`FindSceneDocument`, `FindScenesDocument`) and writes (`SceneUpdateDocument`) — `libraries.Apollo` is only the `@apollo/client` namespace (`gql`, `useQuery`), it does not expose the live client. No `csLib.getConfiguration`/`setConfiguration`.
 - **SceneIDSelect picker** with `isMulti` + `excludeIds={[scene.id]}` to prevent self-links; `extraCriteria` restricts the dropdown to the current scene's folder via a path `INCLUDES` criterion (`makeFolderCriterion`).
 - **Suggest-from-folder helper**: a dedicated slim document
   (`SceneVersionsFolderScenes`: `id title date paths.screenshot studio.name

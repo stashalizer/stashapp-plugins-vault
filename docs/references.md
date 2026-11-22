@@ -65,6 +65,7 @@ Caveats that cost real time:
 | `SettingsToolsSection` | all three settings pages | Still a `PatchContainerComponent` instantiated **twice** in `SettingsToolsPanel.tsx` — the even-call counter still selects the Scene Tools section |
 | `PluginRoutes`, `MainNavBar.MenuItems` | `PluginRoutes`: all three settings pages; `MainNavBar.MenuItems`: AudioSupport | Both in the patch list |
 | `SceneIDSelect` (`isMulti`, `excludeIds`, `extraCriteria`) | SceneVersions | All three props still accepted (`excludeIds` / `extraCriteria` on `ExtraSceneProps`) |
+| `patch.after("PluginSettings", (props, ctx, result))` | SceneVersions settings section | Listed in `UIPluginApi.md` and still `PatchComponent("PluginSettings", ({ pluginID, settings }) => …)` in `SettingsPluginsPanel.tsx`, rendered once per installed plugin inside its `SettingGroup`. Same three-parameter arity rule as `SceneCard.Overlays`. Note the UI is code-split: grepping the main bundle (`assets/index-*.js`) for patch names returns nothing, so it is not a valid way to test whether a target exists — check the source at the running version's tag, or the DOM. |
 | `#VideoJsPlayer` (`VIDEO_PLAYER_ID`) | MosaicFilter, QuestingAdventurer, AudioSupport (fallback) | `"VideoJsPlayer"`, unchanged |
 | `utils.StashService.getClient()`, `libraries.Bootstrap`, `libraries.ReactRouterDOM` | SceneVersions, all settings pages | All exposed; React Router is still v5 |
 | `SceneUpdateInput.cover_image`, `custom_fields.partial` | AudioSupport, SceneVersions | Unchanged (a `production_date` field was added, nothing removed) |

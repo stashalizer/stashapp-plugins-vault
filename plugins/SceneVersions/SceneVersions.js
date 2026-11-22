@@ -51,6 +51,9 @@
 
   var RELATED_KEY = "RelatedScenes";
   var TAB_KEY = "scene-versions-panel";
+  var PLUGIN_ID = "SceneVersions";
+  // Name of the saved filter this plugin registers for library-wide browsing.
+  var VERSION_FILTER_NAME = "Scene Versions: has alternate cut";
 
   // ── Data layer ──────────────────────────────────────────────────────
   //
@@ -774,14 +777,80 @@
     }, "Versions " + count);
   }
 
+  // ── Saved filter (library-wide entry point) ─────────────────────────
+  //
+  // Stash has no URL route for "open the Scenes list with saved filter X":
+  // `ListFilterModel.configureFromQueryString` reads only
+  // perPage/sortby/sortdir/disp/q/p/z/c, and the criteria encoding behind
+  // `c` is an internal format. So a button cannot take the user to the
+  // results — all this plugin can do is create the filter once and say
+  // where to pick it up. That is why the affordance lives on the settings
+  // page as a one-time setup step instead of inside the scene tab as an
+  // action: it is library-wide, it writes to the database, and it stays
+  // true long after the current scene is closed.
+
+  function findVersionFilter() {
+    return apolloClient
+      .query({
+        query: gql`
+          query SceneVersionsSavedFilters {
+            findSavedFilters(mode: SCENES) { id name }
+          }
+        `,
+        fetchPolicy: "no-cache",
+      })
+      .then(function (res) {
+        var filters = (res && res.data && res.data.findSavedFilters) || [];
+        var match = filters.filter(function (f) {
+          return f.name === VERSION_FILTER_NAME;
+        });
+        return match[0] || null;
+      });
+  }
+
+  /**
+   * How many scenes the filter would return.
+   *
+   * `NOT_NULL` on a custom field means "the field is present", which is
+   * exactly the filter's own semantics — including scenes whose list was
+   * emptied to `"[]"` by unlinking (see AGENTS.md). Counting it the same
+   * way keeps the number shown here equal to what Stash will show.
+   */
+  function countVersionedScenes() {
+    return apolloClient
+      .query({
+        query: gql`
+          query SceneVersionsCount($field: String!) {
+            findScenes(
+              scene_filter: { custom_fields: [{ field: $field, value: [], modifier: NOT_NULL }] }
+              filter: { per_page: 1 }
+            ) {
+              count
+            }
+          }
+        `,
+        variables: { field: RELATED_KEY },
+        fetchPolicy: "no-cache",
+      })
+      .then(function (res) {
+        var count = res && res.data && res.data.findScenes && res.data.findScenes.count;
+        return typeof count === "number" ? count : 0;
+      });
+  }
+
+  /**
+   * Create the saved filter if it is missing.
+   *
+   * Resolves with `{ created, existed, total }`. Never creates a filter
+   * that would match nothing: an empty saved filter is noise in every
+   * user's dropdown, and "0 results" is not something the UI can explain
+   * away after the fact.
+   */
   async function ensureVersionFilter() {
-    var existing = await apolloClient.query({
-      query: gql`query { findSavedFilters(mode: SCENES) { id name } }`,
-      fetchPolicy: "no-cache",
-    });
-    var filters = (existing && existing.data && existing.data.findSavedFilters) || [];
-    var name = "Scene Versions: has alternate cut";
-    if (filters.some(function (f) { return f.name === name; })) return false;
+    var total = await countVersionedScenes();
+    var existing = await findVersionFilter();
+    if (existing) return { created: false, existed: true, total: total };
+    if (total === 0) return { created: false, existed: false, total: 0 };
     await apolloClient.mutate({
       mutation: gql`
         mutation SceneVersionsSaveFilter($input: SaveFilterInput!) {
@@ -791,7 +860,7 @@
       variables: {
         input: {
           mode: "SCENES",
-          name: name,
+          name: VERSION_FILTER_NAME,
           object_filter: {
             custom_fields: [
               { field: RELATED_KEY, value: [], modifier: "NOT_NULL" },
@@ -800,7 +869,7 @@
         },
       },
     });
-    return true;
+    return { created: true, existed: false, total: total };
   }
 
   // ── Tab label (count badge) ─────────────────────────────────────────
@@ -1367,25 +1436,6 @@
             {
               variant: "outline-secondary",
               size: "sm",
-              onClick: function () {
-                ensureVersionFilter()
-                  .then(function (created) {
-                    if (created) Toast.success("Saved filter created: Scene Versions: has alternate cut");
-                    else Toast.success("Saved filter already exists: Scene Versions: has alternate cut");
-                  })
-                  .catch(function (err) {
-                    console.error("SceneVersions: saved filter failed", err);
-                    Toast.error("Could not create the scene filter");
-                  });
-              },
-            },
-            "Find all versioned"
-          ),
-          h(
-            Button,
-            {
-              variant: "outline-secondary",
-              size: "sm",
               disabled: !dirty || saving,
               onClick: handleDiscard,
             },
@@ -1582,6 +1632,119 @@
     );
   }
 
+  // ── Settings-page section ──────────────────────────────────────────
+  //
+  // Rendered inside Settings > Plugins, under this plugin's own block:
+  // `SettingsPluginsPanel.tsx` renders a `PatchComponent("PluginSettings")`
+  // per installed plugin, so `patch.after` gives us the plugin's body and
+  // `props.pluginID` tells us whether it is ours.
+  //
+  // This is where the saved-filter affordance belongs. It used to sit in
+  // the scene tab's edit row next to Compare / Discard / Save, where it
+  // was neither scoped to the scene nor part of the edit, wrote to the
+  // database once and then read as a dead button forever.
+
+  function LibraryFilterSection() {
+    var _a = useState(null); // { exists, total, failed } | null while loading
+    var status = _a[0];
+    var setStatus = _a[1];
+    var _b = useState(false);
+    var busy = _b[0];
+    var setBusy = _b[1];
+    var Toast = hooks.useToast();
+
+    var refresh = useCallback(function () {
+      return Promise.all([findVersionFilter(), countVersionedScenes()])
+        .then(function (results) {
+          setStatus({ exists: !!results[0], total: results[1], failed: false });
+        })
+        .catch(function (err) {
+          console.error("SceneVersions: saved filter status failed", err);
+          setStatus({ exists: false, total: 0, failed: true });
+        });
+    }, []);
+
+    useEffect(
+      function () {
+        refresh();
+      },
+      [refresh]
+    );
+
+    function handleCreate() {
+      setBusy(true);
+      ensureVersionFilter()
+        .then(function (result) {
+          if (result.created) {
+            Toast.success("Saved filter created: " + VERSION_FILTER_NAME);
+          } else if (result.existed) {
+            Toast.success("Saved filter already exists: " + VERSION_FILTER_NAME);
+          } else {
+            Toast.error("Nothing to include yet \u2014 link a scene to another one first");
+          }
+          return refresh();
+        })
+        .catch(function (err) {
+          console.error("SceneVersions: saved filter failed", err);
+          Toast.error("Could not create the scene filter");
+        })
+        .then(function () {
+          setBusy(false);
+        });
+    }
+
+    var statusText;
+    if (!status) {
+      statusText = "Checking\u2026";
+    } else if (status.failed) {
+      statusText = "Could not read the saved filters or the scene count.";
+    } else if (status.exists) {
+      statusText =
+        "Filter exists \u00b7 " +
+        status.total +
+        (status.total === 1 ? " scene matches" : " scenes match") +
+        " right now.";
+    } else if (status.total === 0) {
+      statusText = "No scene has a related scene yet, so there is nothing to include.";
+    } else {
+      statusText =
+        status.total + (status.total === 1 ? " scene would match." : " scenes would match.");
+    }
+
+    var canCreate =
+      !!status && !status.failed && !status.exists && status.total > 0 && !busy;
+
+    return h(
+      "div",
+      { className: "scene-versions-settings" },
+      h("h6", { className: "scene-versions-settings__title" }, "Library"),
+      h(
+        "p",
+        { className: "scene-versions-settings__text" },
+        "Optional. Saves a Scenes filter named \u201c" +
+          VERSION_FILTER_NAME +
+          "\u201d so every scene with alternate cuts can be browsed from the Scenes page " +
+          "(Filter \u203a Saved filters). It is created once on this Stash instance and " +
+          "does not modify any scene."
+      ),
+      h("div", { className: "scene-versions-settings__status" }, statusText),
+      h(
+        Button,
+        {
+          variant: "primary",
+          size: "sm",
+          disabled: !canCreate,
+          onClick: handleCreate,
+        },
+        busy
+          ? "Working\u2026"
+          : status && status.exists
+            ? "Saved filter exists"
+            : "Create saved filter"
+      )
+    );
+  }
+
   // ── Tab injection ──────────────────────────────────────────────────
 
   function findInsertIndex(childrenArray) {
@@ -1662,6 +1825,23 @@
         );
       } catch (e) {
         console.error("SceneVersions: SceneCard.Overlays patch failed", e);
+        return result;
+      }
+    });
+    // Settings > Plugins. One handler serves every plugin row on that page,
+    // so it must hand back `result` untouched for anything that is not this
+    // plugin — including when `pluginID` is missing.
+    PluginApi.patch.after("PluginSettings", function (props, _ctx, result) {
+      try {
+        if (!props || String(props.pluginID) !== PLUGIN_ID) return result;
+        return h(
+          React.Fragment,
+          null,
+          result,
+          h(LibraryFilterSection, null)
+        );
+      } catch (e) {
+        console.error("SceneVersions: PluginSettings patch failed", e);
         return result;
       }
     });
