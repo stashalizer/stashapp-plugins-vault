@@ -344,22 +344,16 @@
   padding: 0.5rem 0;
 }
 
-/* Settings > Plugins > Scene Versions */
-.scene-versions-settings {
-  margin-top: 0.85rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
-}
-
-.scene-versions-settings__title {
-  margin: 0 0 0.35rem;
-  font-size: 0.9rem;
-  font-weight: 600;
+/* Settings > Plugins > Scene Versions.
+   The "Saved filter" group deliberately reuses Stash's own
+   `.setting-group.collapsible` markup, so only the body copy is styled here.
+   The 15px inset matches the `.setting` rows Stash renders around it. */
+.scene-versions-settings__body {
+  padding: 15px 15px 0;
 }
 
 .scene-versions-settings__text {
   margin: 0 0 0.6rem;
-  max-width: 60ch;
   font-size: 0.8rem;
   line-height: 1.5;
   color: var(--text-muted, rgba(128, 128, 128, 0.9));

@@ -48,6 +48,12 @@
   var Alert = libraries.Bootstrap.Alert;
   var Spinner = libraries.Bootstrap.Spinner;
   var Link = libraries.ReactRouterDOM.Link;
+  // The settings page's collapse buttons are plain FontAwesome chevrons; the
+  // icon set is exposed through libraries, not through components.
+  var FontAwesomeIcon =
+    libraries.ReactFontAwesome && libraries.ReactFontAwesome.FontAwesomeIcon;
+  var faChevronDown = libraries.FontAwesomeSolid && libraries.FontAwesomeSolid.faChevronDown;
+  var faChevronUp = libraries.FontAwesomeSolid && libraries.FontAwesomeSolid.faChevronUp;
 
   var RELATED_KEY = "RelatedScenes";
   var TAB_KEY = "scene-versions-panel";
@@ -1651,6 +1657,11 @@
     var _b = useState(false);
     var busy = _b[0];
     var setBusy = _b[1];
+    // Collapsed by default, like every other collapsible group on the settings
+    // page (`collapsedDefault` in SettingsPluginsPanel.tsx).
+    var _c = useState(false);
+    var open = _c[0];
+    var setOpen = _c[1];
     var Toast = hooks.useToast();
 
     var refresh = useCallback(function () {
@@ -1714,33 +1725,88 @@
     var canCreate =
       !!status && !status.failed && !status.exists && status.total > 0 && !busy;
 
+    // Mirrors Stash's own SettingGroup markup (SettingSection / SettingsPluginsPanel):
+    // `.setting-group.collapsible` > `.setting` (h3 + sub-heading + collapse
+    // button) + `.collapsible-section.collapse[.show]`. Reusing the classes is
+    // what makes this look native instead of like a plugin-shaped box; the
+    // button keeps `setting-group-collapse-button btn btn-minimal` so the
+    // chevron, hover and spacing come from Stash's stylesheet.
     return h(
       "div",
-      { className: "scene-versions-settings" },
-      h("h6", { className: "scene-versions-settings__title" }, "Library"),
+      { className: "setting-group collapsible" },
       h(
-        "p",
-        { className: "scene-versions-settings__text" },
-        "Optional. Saves a Scenes filter named \u201c" +
-          VERSION_FILTER_NAME +
-          "\u201d so every scene with alternate cuts can be browsed from the Scenes page " +
-          "(Filter \u203a Saved filters). It is created once on this Stash instance and " +
-          "does not modify any scene."
+        "div",
+        { className: "setting" },
+        h(
+          "div",
+          null,
+          h("h3", null, "Saved filter"),
+          h(
+            "div",
+            { className: "sub-heading" },
+            "Optional: list every scene that has alternate cuts in the Scenes page."
+          )
+        ),
+        h(
+          "div",
+          null,
+          h(
+            "button",
+            {
+              type: "button",
+              className: "setting-group-collapse-button btn btn-minimal",
+              "aria-expanded": open ? "true" : "false",
+              "aria-controls": "scene-versions-saved-filter",
+              "aria-label": open ? "Collapse saved filter settings" : "Expand saved filter settings",
+              onClick: function () {
+                setOpen(!open);
+              },
+            },
+            FontAwesomeIcon
+              ? h(FontAwesomeIcon, {
+                  icon: open ? faChevronUp : faChevronDown,
+                  className: "fa-fw",
+                })
+              : open
+                ? "\u25be"
+                : "\u25b8"
+          )
+        )
       ),
-      h("div", { className: "scene-versions-settings__status" }, statusText),
       h(
-        Button,
+        "div",
         {
-          variant: "primary",
-          size: "sm",
-          disabled: !canCreate,
-          onClick: handleCreate,
+          id: "scene-versions-saved-filter",
+          className: "collapsible-section collapse" + (open ? " show" : ""),
         },
-        busy
-          ? "Working\u2026"
-          : status && status.exists
-            ? "Saved filter exists"
-            : "Create saved filter"
+        h(
+          "div",
+          { className: "scene-versions-settings__body" },
+          h(
+            "p",
+            { className: "scene-versions-settings__text" },
+            "Saves a Scenes filter named \u201c" +
+              VERSION_FILTER_NAME +
+              "\u201d so every scene with alternate cuts can be browsed from the Scenes page " +
+              "(Filter \u203a Saved filters). It is created once on this Stash instance and " +
+              "does not modify any scene."
+          ),
+          h("div", { className: "scene-versions-settings__status" }, statusText),
+          h(
+            Button,
+            {
+              variant: "primary",
+              size: "sm",
+              disabled: !canCreate,
+              onClick: handleCreate,
+            },
+            busy
+              ? "Working\u2026"
+              : status && status.exists
+                ? "Saved filter exists"
+                : "Create saved filter"
+          )
+        )
       )
     );
   }

@@ -270,9 +270,21 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `String(props.pluginID) === "SceneVersions"` — it runs for every plugin row on
   that page, including third-party ones. Keep the three-parameter `patch.after`
   arity (see the card-badge bullet). `PluginSettings` is listed in the v0.32.0
-  `UIPluginApi.md` patch list. Note the plugin declares no `hooks` and no
-  `settings`, so its `SettingGroup` is not collapsible and this block is visible
-  without expanding anything.
+  `UIPluginApi.md` patch list.
+- **The section is a nested collapsible group, collapsed by default.** Stash only
+  makes a plugin's own row collapsible when the manifest declares `hooks` or
+  `settings` (see `collapsible={!!(plugin.hooks?.length || plugin.settings?.length)}`
+  in `SettingsPluginsPanel.tsx`); this plugin has neither, and declaring a dummy
+  one to borrow the collapse would put a config knob in the UI for no reason.
+  The block therefore reproduces Stash's own group markup inside the plugin body:
+  `.setting-group.collapsible` > `.setting` (`h3` + `.sub-heading` + the
+  `button.setting-group-collapse-button.btn.btn-minimal` chevron) +
+  `.collapsible-section.collapse` (`show` when open). Icons come from
+  `libraries.ReactFontAwesome.FontAwesomeIcon` +
+  `libraries.FontAwesomeSolid.faChevronDown/faChevronUp` (`fa-fw`), and the body
+  gets `15px 15px 0` padding to line up with the `.setting` rows above it. The
+  classes are Stash internals, not API: if upstream restyles them the block keeps
+  working but loses its native look, so re-check the DOM after a Stash upgrade.
 - **Comparison / pHash.** The tab shows duration, resolution, codec, bitrate and
   date side by side. pHash suggestions use `SceneFilterType.phash_distance`
   with distance 8; they are suggestions only and never auto-link. If the current
