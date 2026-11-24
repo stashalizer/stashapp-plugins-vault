@@ -10,6 +10,11 @@
  * - Single global config — all scenes share one set of mosaic settings. The
  *   most common use case is follow-cursor, so the rectangle's position is
  *   normally derived from the cursor at runtime, not stored per scene.
+ * - UI surface is two-tier, deliberately quiet: a 28px pill in the bottom-right
+ *   corner (clear of Stash's own control bar) is the only persistent chrome,
+ *   and it fades out with the player chrome when the user goes idle. Every
+ *   control lives in a popover that only opens on request — see renderChrome
+ *   and setPanelOpen. Nothing is written to config about the panel's state.
  * - Geometry is stored as percentages of the player so the rectangle scales
  *   correctly across viewport sizes and fullscreen.
  * - All state mutations are persisted via
@@ -96,14 +101,38 @@
   let player = null;
   let rect = null;
   let resizeHandle = null;
-  let bar = null;
   let maskLayer = null;
 
-  // Track the collapsed state of the control bar so that re-renders (which
-  // rebuild the bar's innerHTML) don't silently re-expand the controls. The
-  // user can collapse via the chip or the close button and we must remember
-  // their choice across subsequent renders.
-  let barCollapsed = false;
+  // The chrome is the inset-0, pointer-events:none anchor that gives the pill,
+  // the panel and the toast a positioning frame equal to the player box. Only
+  // the pill and the panel accept pointer events.
+  let chrome = null;
+  let pill = null;
+  let panel = null;
+  let toastEl = null;
+  // Cached after every panel rebuild because renderChrome() replaces the
+  // panel's innerHTML wholesale.
+  let statusEl = null;
+
+  // Whether the settings panel is open. In-memory only and always false on a
+  // fresh mount: opening a scene must never push a slab of controls over the
+  // frame, however the filter was left last time.
+  let panelOpen = false;
+
+  // Last message written to the panel's status line. Kept module-level so a
+  // panel rebuild (which drops the DOM node) does not lose it.
+  let statusMessage = "";
+  let toastTimer = null;
+
+  // Inline SVG rather than emoji: emoji glyphs vary per platform (and render
+  // in colour over the video), which is exactly what makes plugin chrome look
+  // foreign next to video.js's monochrome icon font.
+  const ICON_CHEVRON =
+    '<svg class="mosaic-filter-pill__chevron" viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+    '<path d="M2.75 4.75 6 8l3.25-3.25" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ICON_CLOSE =
+    '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">' +
+    '<path d="M3.2 3.2 8.8 8.8M8.8 3.2 3.2 8.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
   // Active pointer interaction. Either { type: "drag" } or { type: "resize" }.
   let dragState = null;
@@ -209,7 +238,8 @@
     // checking the empty-string branch is unreachable. The only way the
     // element lacks a positioning context is when the computed value is
     // "static" — we promote it to "relative" so our absolutely-positioned
-    // children (the mosaic rectangle and control bar) anchor to it.
+    // children (the mask layer, the filter rectangle and the chrome anchor)
+    // anchor to it.
     const style = window.getComputedStyle(el);
     if (style.position === "static") {
       el.style.position = "relative";
@@ -266,76 +296,281 @@
     return ml;
   }
 
-  function buildBar() {
-    const b = document.createElement("div");
-    b.className = "mosaic-filter-bar";
-    b.dataset.action = "panel";
-    b.setAttribute("role", "toolbar");
-    b.setAttribute("aria-label", "Mosaic filter controls");
-    b.setAttribute("data-mosaic-filter-ui", "true");
-    return b;
+  function buildChrome() {
+    // Container: covers the player exactly, but is transparent to pointer
+    // events. Everything the user can hit re-enables them individually.
+    const root = document.createElement("div");
+    root.className = "mosaic-filter-chrome";
+    root.setAttribute("data-mosaic-filter-ui", "true");
+
+    // The pill is built once and only restyled afterwards, so focus and
+    // aria-expanded survive every state change.
+    const p = document.createElement("button");
+    p.type = "button";
+    p.className = "mosaic-filter-pill";
+    p.dataset.action = "toggle-panel";
+    p.setAttribute("aria-expanded", "false");
+    p.setAttribute("aria-controls", "mosaic-filter-panel");
+    p.innerHTML =
+      '<span class="mosaic-filter-pill__dot" aria-hidden="true"></span>' +
+      '<span class="mosaic-filter-pill__label">Mosaic</span>' +
+      ICON_CHEVRON;
+    root.appendChild(p);
+
+    const panelEl = document.createElement("div");
+    panelEl.className = "mosaic-filter-panel";
+    panelEl.id = "mosaic-filter-panel";
+    // Non-modal: no focus trap, no aria-modal, Escape and click-outside close
+    // it. `group` tells assistive tech it is a labelled cluster of controls
+    // without promising dialog behaviour this element does not implement.
+    panelEl.setAttribute("role", "group");
+    panelEl.setAttribute("aria-label", "Mosaic filter");
+    root.appendChild(panelEl);
+
+    const toast = document.createElement("div");
+    toast.className = "mosaic-filter-toast";
+    toast.setAttribute("role", "status");
+    toast.setAttribute("aria-live", "polite");
+    root.appendChild(toast);
+
+    pill = p;
+    panel = panelEl;
+    toastEl = toast;
+    return root;
   }
 
-  function renderBar() {
-    if (!bar) return;
+  function sourceLabel() {
+    if (context.source === "scene") return "Scene preset";
+    if (context.source === "studio") return "Studio preset";
+    return "Global default";
+  }
+
+  function segmentedRow(action, current, options, label) {
+    const buttons = options.map(function (opt) {
+      const pressed = current === opt.value;
+      return (
+        '<button type="button" class="mosaic-filter-seg__btn" data-action="' + action +
+        '" data-value="' + opt.value + '" aria-pressed="' + (pressed ? "true" : "false") + '"' +
+        (opt.title ? ' title="' + opt.title + '"' : "") + ">" + opt.label + "</button>"
+      );
+    }).join("");
+    return (
+      '<div class="mosaic-filter-row">' +
+        '<span class="mosaic-filter-row__label">' + label + "</span>" +
+        '<div class="mosaic-filter-seg" role="group" aria-label="' + label + '">' + buttons + "</div>" +
+      "</div>"
+    );
+  }
+
+  function actionButton(action, label, disabled, title, variant) {
+    return (
+      '<button type="button" class="mosaic-filter-actions__btn' +
+      (variant ? " mosaic-filter-actions__btn--" + variant : "") +
+      '" data-action="' + action + '" title="' + title + '"' +
+      (disabled ? " disabled" : "") + ">" + label + "</button>"
+    );
+  }
+
+  // Panel contents. Rebuilt on every render; the pill is not, so the control
+  // the user actually opens the panel with keeps its identity and focus.
+  function panelMarkup() {
     const on = !!state.active;
     const follow = !!state.follow;
-    const shape = state.shape;
-    const mode = state.mode;
     const fill = state.fill;
-    const sourceLabel = context.source === "scene" ? "Scene preset" : context.source === "studio" ? "Studio preset" : "Default";
     const hasPreset = context.source !== "default";
-    bar.classList.toggle("mosaic-filter-bar--collapsed", barCollapsed);
-    bar.innerHTML =
-      `<span class="mosaic-filter-bar__chip" data-action="toggle-bar" title="Hide controls · ${sourceLabel}">` +
-        `🔲 Mosaic ${on ? "ON" : "OFF"} · ${sourceLabel}` +
-      `</span>` +
-      `<span class="mosaic-filter-bar__controls">` +
-        `<span class="mosaic-filter-bar__slider">` +
-          `<span class="mosaic-filter-bar__label">Blur</span>` +
-          `<input type="range" min="0" max="${MAX_BLUR}" step="1" value="${state.blurAmount}" data-action="blur-slider" aria-label="Mosaic blur amount (pixels)" />` +
-          `<span class="mosaic-filter-bar__label" data-action="blur-readout">${state.blurAmount}px</span>` +
-        `</span>` +
-        `<button type="button" class="mosaic-filter-bar__button ${on ? "mosaic-filter-bar__button--active" : ""}" data-action="toggle-active" title="Toggle the mosaic on or off">` +
-          `${on ? "✓ Active" : "⏸ Off"}` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button ${follow ? "mosaic-filter-bar__button--active" : ""}" data-action="toggle-follow" title="When on, the rectangle follows the cursor. Drag is disabled in this mode.">` +
-          `🎯 Follow` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-shape" title="${shape === "ellipse" ? "Shape: ellipse. Click to switch to rectangle." : "Shape: rectangle. Click to switch to ellipse."}">` +
-          `${shape === "ellipse" ? "● Ellipse" : "▭ Rectangle"}` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="toggle-mode" title="${mode === "reverse" ? "Mode: reverse — hide outside the filter. Click to switch to normal." : "Mode: normal — hide inside the filter. Click to switch to reverse."}">` +
-          `${mode === "reverse" ? "◈ Reverse" : "▣ Normal"}` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button mosaic-filter-bar__button--active" data-action="cycle-fill" title="Fill mode: ${fill}. Click to cycle blur → solid → pixelate.">` +
-          `${fill === "solid" ? "■ Solid" : fill === "pixelate" ? "▦ Pixelate" : "◌ Blur"}` +
-        `</button>` +
-        (fill === "solid"
-          ? `<input type="color" value="${state.fillColor}" data-action="fill-color" title="Solid fill colour" aria-label="Solid fill colour" />`
-          : "") +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="save-scene-preset" title="Save the current filter as a preset for this scene" ${context.sceneId ? "" : "disabled"}>` +
-          `Save scene` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="save-studio-preset" title="Save the current filter as a preset for this studio" ${context.studioId ? "" : "disabled"}>` +
-          `Save studio` +
-        `</button>` +
+    return (
+      '<div class="mosaic-filter-panel__header">' +
+        '<span class="mosaic-filter-panel__title">Mosaic</span>' +
+        '<span class="mosaic-filter-panel__source">' + sourceLabel() + "</span>" +
+        '<button type="button" class="mosaic-filter-icon-btn" data-action="close-panel" ' +
+          'aria-label="Close mosaic settings" title="Close (Esc)">' + ICON_CLOSE + "</button>" +
+      "</div>" +
+
+      '<div class="mosaic-filter-switches">' +
+        '<button type="button" class="mosaic-filter-switch" data-action="toggle-active" ' +
+          'aria-pressed="' + (on ? "true" : "false") + '" title="Show or hide the filter (Alt+M)">' +
+          '<span class="mosaic-filter-switch__dot" aria-hidden="true"></span>' +
+          (on ? "On" : "Off") +
+        "</button>" +
+        '<button type="button" class="mosaic-filter-switch" data-action="toggle-follow" ' +
+          'aria-pressed="' + (follow ? "true" : "false") + '" ' +
+          'title="Re-centre the filter on the pointer as it moves. Dragging is disabled in this mode.">' +
+          '<span class="mosaic-filter-switch__dot" aria-hidden="true"></span>' +
+          "Follow" +
+        "</button>" +
+      "</div>" +
+
+      '<label class="mosaic-filter-slider">' +
+        '<span class="mosaic-filter-slider__label">Blur</span>' +
+        '<input class="mosaic-filter-slider__input" type="range" min="0" max="' + MAX_BLUR +
+          '" step="1" value="' + state.blurAmount + '" data-action="blur-slider" ' +
+          'aria-label="Mosaic blur amount in pixels" />' +
+        '<span class="mosaic-filter-slider__value" data-action="blur-readout">' + state.blurAmount + "px</span>" +
+      "</label>" +
+
+      segmentedRow("set-fill", fill, [
+        { value: "blur", label: "Blur" },
+        { value: "solid", label: "Solid" },
+        { value: "pixelate", label: "Pixelate", title: "Pixelate is the most expensive fill mode" },
+      ], "Fill") +
+
+      (fill === "solid"
+        ? '<div class="mosaic-filter-row">' +
+            '<span class="mosaic-filter-row__label">Colour</span>' +
+            '<input type="color" class="mosaic-filter-color" data-action="fill-color" value="' +
+              state.fillColor + '" aria-label="Solid fill colour" title="Solid fill colour" />' +
+          "</div>"
+        : "") +
+
+      segmentedRow("set-shape", state.shape, [
+        { value: "rectangle", label: "Rect" },
+        { value: "ellipse", label: "Ellipse" },
+      ], "Shape") +
+
+      segmentedRow("set-mode", state.mode, [
+        { value: "normal", label: "Normal", title: "Normal: the filter area is hidden" },
+        { value: "reverse", label: "Reverse", title: "Reverse: everything outside the filter is hidden" },
+      ], "Mode") +
+
+      '<div class="mosaic-filter-actions">' +
+        actionButton("save-scene-preset", "Save scene", !context.sceneId,
+          "Store these settings as the preset for this scene") +
+        actionButton("save-studio-preset", "Save studio", !context.studioId,
+          "Store these settings as the preset for this studio") +
         (hasPreset
-          ? `<button type="button" class="mosaic-filter-bar__button" data-action="clear-preset" title="Remove the preset for this scene/studio">Clear preset</button>`
+          ? actionButton("clear-preset", "Clear preset", false,
+              "Remove the stored preset and fall back to the layer below", "danger")
           : "") +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="reset-defaults" title="Reset the current filter to defaults">` +
-          `↺ Reset` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="screenshot" title="Copy or download a redacted screenshot of the current frame">` +
-          `📷 Shot` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="panic" title="Show a neutral local reference page (Ctrl+Shift+X to toggle)">` +
-          `⛔ Panic` +
-        `</button>` +
-        `<button type="button" class="mosaic-filter-bar__button" data-action="close-bar" title="Hide the control bar (the rectangle stays if it is active)" aria-label="Close controls">` +
-          `✕` +
-        `</button>` +
-      `</span>`;
+        actionButton("reset-defaults", "Reset", false, "Restore the built-in defaults") +
+        actionButton("screenshot", "Shot", false, "Copy or download a redacted screenshot of this frame") +
+        actionButton("panic", "Panic", false, "Show a neutral local page (Ctrl+Shift+X)", "quiet") +
+      "</div>" +
+
+      '<div class="mosaic-filter-panel__status" role="status" aria-live="polite"></div>'
+    );
+  }
+
+  // Remember which control had focus inside the panel so rebuilding its
+  // innerHTML does not drop keyboard users back to the top of the document.
+  function capturePanelFocus() {
+    const el = document.activeElement;
+    if (!el || !panel || !panel.contains(el) || !el.dataset || !el.dataset.action) return null;
+    return { action: el.dataset.action, value: el.dataset.value || "" };
+  }
+
+  function restorePanelFocus(key) {
+    if (!key || !panel) return;
+    const selector =
+      '[data-action="' + key.action + '"]' + (key.value ? '[data-value="' + key.value + '"]' : "");
+    const el = panel.querySelector(selector);
+    if (el && typeof el.focus === "function") {
+      el.focus({ preventScroll: true });
+    }
+  }
+
+  function renderChrome() {
+    if (!chrome || !pill || !panel) return;
+    const on = !!state.active;
+    chrome.classList.toggle("mosaic-filter-chrome--on", on);
+    // Reverse is only meaningful while the filter is live; gating the class on
+    // `on` keeps the pill from advertising a state that is not applied.
+    chrome.classList.toggle("mosaic-filter-chrome--reverse", on && state.mode === "reverse");
+    chrome.classList.toggle("mosaic-filter-chrome--open", panelOpen);
+    // An open panel is an explicit interaction, so it must not fade away when
+    // video.js decides the user is idle.
+    chrome.classList.toggle("mosaic-filter-chrome--pinned", panelOpen);
+
+    pill.setAttribute("aria-expanded", panelOpen ? "true" : "false");
+    pill.title =
+      "Mosaic filter — " + (on ? "on" : "off") + " · " + sourceLabel() +
+      " (Alt+M toggles, Esc closes)";
+
+    const focusKey = panelOpen ? capturePanelFocus() : null;
+    panel.innerHTML = panelMarkup();
+    statusEl = panel.querySelector(".mosaic-filter-panel__status");
+    if (statusEl) statusEl.textContent = statusMessage;
+    if (focusKey) restorePanelFocus(focusKey);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Panel visibility + state feedback
+  // ---------------------------------------------------------------------------
+
+  function setPanelOpen(open) {
+    if (panelOpen === open) return;
+    // Keyboard users who close the panel from inside it must not be dropped
+    // back to the top of the document; the pill is the disclosure control, so
+    // that is where focus belongs.
+    const returnFocus = !open && panel && panel.contains(document.activeElement);
+    panelOpen = open;
+    if (open) {
+      // Stale text from a previous session reads as a current claim.
+      statusMessage = "";
+      document.addEventListener("pointerdown", onDocumentPointerDown, true);
+    } else {
+      document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+    }
+    render();
+    if (returnFocus && pill) {
+      pill.focus({ preventScroll: true });
+    }
+  }
+
+  function onDocumentPointerDown(e) {
+    if (!panelOpen) return;
+    const target = e.target;
+    if (chrome && target && target.nodeType === 1 && chrome.contains(target)) return;
+    setPanelOpen(false);
+  }
+
+  // Collapsed state has no room for a message, so the result of an action
+  // goes to the panel's status line when it is open and to a transient toast
+  // when it is not. One rule, applied consistently.
+  function announce(message) {
+    statusMessage = message;
+    if (panelOpen) {
+      if (statusEl) statusEl.textContent = message;
+      return;
+    }
+    showToast(message);
+  }
+
+  function showToast(message) {
+    if (!toastEl) return;
+    toastEl.textContent = message;
+    toastEl.classList.add("mosaic-filter-toast--visible");
+    // Alt+M works while the chrome is faded out, and a `visibility: hidden`
+    // ancestor would swallow both the toast and its live-region announcement.
+    if (chrome) chrome.classList.add("mosaic-filter-chrome--toasting");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastTimer = null;
+      if (toastEl) toastEl.classList.remove("mosaic-filter-toast--visible");
+      if (chrome) chrome.classList.remove("mosaic-filter-chrome--toasting");
+    }, 1600);
+  }
+
+  function toggleActive() {
+    state.active = !state.active;
+    saveNow();
+    render();
+    announce(
+      state.active
+        ? "Mosaic filter on" + (state.mode === "reverse" ? " · reverse" : "")
+        : "Mosaic filter off"
+    );
+  }
+
+  // The pill sits just above Stash's control bar, so its offset has to come
+  // from the bar's real height rather than a guessed constant. Measured on
+  // mount, on resize, on fullscreen change — never in a per-frame path.
+  function syncPlayerMetrics() {
+    if (!player) return;
+    const controlBar = player.querySelector(".vjs-control-bar");
+    const height = controlBar ? Math.round(controlBar.getBoundingClientRect().height) : 0;
+    // With no control bar (controls disabled) hug the bottom edge instead of
+    // reserving space for nothing.
+    player.style.setProperty("--mf-cb-h", (height > 0 ? height : 8) + "px");
   }
 
   // Position the rectangle based on the current state and player size.
@@ -375,6 +610,9 @@
     rect.classList.toggle("mosaic-filter-rectangle--reverse", state.mode === 'reverse');
     rect.classList.toggle("mosaic-filter-rectangle--fill-solid", state.fill === 'solid');
     rect.classList.toggle("mosaic-filter-rectangle--fill-pixelate", state.fill === 'pixelate');
+    // Show the region's full outline (edge + resize grip) while the panel is
+    // open: the user is editing geometry, so the boundary has to be visible.
+    rect.classList.toggle("mosaic-filter-rectangle--editing", panelOpen);
     updateMask(pw, ph);
     syncPixelCanvas();
   }
@@ -658,9 +896,9 @@
   }
 
   function setScreenshotStatus(message) {
-    if (!bar) return;
-    const chip = bar.querySelector(".mosaic-filter-bar__chip");
-    if (chip) chip.title = message;
+    // Never a silent failure: the result of a Shot goes to the panel's status
+    // line when it is open and to the toast when it is not.
+    announce(message);
   }
 
   function captureRedacted() {
@@ -795,7 +1033,7 @@
 
   function render() {
     renderRect();
-    renderBar();
+    renderChrome();
   }
 
   // ---------------------------------------------------------------------------
@@ -806,13 +1044,22 @@
     stopPixelLoop();
     if (panicActive) togglePanicScreen();
     detachFollowListener();
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    document.removeEventListener("pointerdown", onDocumentPointerDown, true);
     if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
-    if (bar && bar.parentElement) bar.parentElement.removeChild(bar);
     if (maskLayer && maskLayer.parentElement) maskLayer.parentElement.removeChild(maskLayer);
+    if (chrome && chrome.parentElement) chrome.parentElement.removeChild(chrome);
     rect = null;
     resizeHandle = null;
-    bar = null;
     maskLayer = null;
+    chrome = null;
+    pill = null;
+    panel = null;
+    toastEl = null;
+    statusEl = null;
     player = null;
     pixelCanvasEl = null;
     pixelCanvasCtx = null;
@@ -820,11 +1067,9 @@
     rectW = 0;
     rectH = 0;
     pendingFollow = null;
-    // Note: barCollapsed is NOT reset here. It is re-derived in setupPanel
-    // on the next fresh mount based on state.active, so the bar always
-    // starts collapsed when the filter is off. The user's manual choice
-    // within the current mount is remembered (handled by the barCollapsed
-    // module variable surviving teardown).
+    // The panel is never carried across mounts: a new scene starts collapsed.
+    panelOpen = false;
+    statusMessage = "";
     lastPointer = null;
   }
 
@@ -853,10 +1098,14 @@
       player.appendChild(rect);
       attachRectPointerListeners();
     }
-    if (!bar) {
-      bar = buildBar();
-      player.appendChild(bar);
-      attachBarListeners();
+    if (!chrome) {
+      chrome = buildChrome();
+      player.appendChild(chrome);
+      attachChromeListeners();
+      syncPlayerMetrics();
+      // video.js may still be building its control bar on the first mount;
+      // re-measure once it has settled so the pill does not sit under it.
+      setTimeout(syncPlayerMetrics, 400);
     }
     // Always attach the follow listener while the overlay is mounted, so
     // that toggling Follow on later just flips the flag (and snaps the
@@ -874,12 +1123,12 @@
     }
     const routeMatch = window.location.pathname.match(/\/scenes\/(\d+)/);
     const routeSceneId = routeMatch ? routeMatch[1] : null;
-    if (rect && bar && context.sceneId !== routeSceneId) {
+    if (rect && chrome && context.sceneId !== routeSceneId) {
       // Same player element, different scene: drop the overlay and reload the
       // effective preset for the new scene.
       teardown();
     }
-    if (rect && bar) {
+    if (rect && chrome) {
       // Same overlay, same player — re-render only (handles window resize).
       render();
       return;
@@ -890,13 +1139,9 @@
     // silently lose the overlay.
     player = targetPlayer;
     await loadState();
-    // Fresh mount: default the bar to collapsed when the filter is
-    // off, expanded when the filter is on. The user's manual choice
-    // within the current mount is remembered (the barCollapsed module
-    // variable is not reset in teardown; it is re-derived here on
-    // every fresh mount so opening a scene with mosaic off starts
-    // with the bar collapsed).
-    barCollapsed = !state.active;
+    // A fresh mount always starts collapsed, whatever the filter's state is.
+    // The panel is an on-demand surface, not a status display.
+    panelOpen = false;
     if (mountOnPlayer()) {
       render();
     }
@@ -995,40 +1240,46 @@
   // Bar interactions (click delegation + slider)
   // ---------------------------------------------------------------------------
 
-  function onBarClick(e) {
+  function onChromeClick(e) {
     const target = e.target.closest("[data-action]");
-    if (!target || !bar || !bar.contains(target)) return;
+    if (!target || !chrome || !chrome.contains(target)) return;
     const action = target.dataset.action;
+    const value = target.dataset.value;
     switch (action) {
-      case "toggle-bar":
-        barCollapsed = !barCollapsed;
-        renderBar();
+      case "toggle-panel":
         e.preventDefault();
+        setPanelOpen(!panelOpen);
+        break;
+      case "close-panel":
+        setPanelOpen(false);
         break;
       case "toggle-active":
-        state.active = !state.active;
-        saveNow();
-        renderBar();
-        renderRect();
+        // Same path as the Alt+M shortcut, so the pill, the switch and the
+        // keyboard can never disagree about the state.
+        toggleActive();
         break;
       case "toggle-follow":
         state.follow = !state.follow;
         if (state.follow) snapRectToPointer();
         saveNow();
-        renderBar();
+        render();
         break;
-      case "toggle-shape":
-        state.shape = state.shape === 'rectangle' ? 'ellipse' : 'rectangle';
+      case "set-shape":
+        if (state.shape === value) break;
+        state.shape = value === "ellipse" ? "ellipse" : "rectangle";
         saveNow();
         render();
         break;
-      case "toggle-mode":
-        state.mode = state.mode === 'normal' ? 'reverse' : 'normal';
+      case "set-mode":
+        if (state.mode === value) break;
+        state.mode = value === "reverse" ? "reverse" : "normal";
         saveNow();
         render();
         break;
-      case "cycle-fill":
-        state.fill = state.fill === 'blur' ? 'solid' : state.fill === 'solid' ? 'pixelate' : 'blur';
+      case "set-fill":
+        if (state.fill === value) break;
+        if (value !== "blur" && value !== "solid" && value !== "pixelate") break;
+        state.fill = value;
         saveNow();
         render();
         break;
@@ -1038,6 +1289,7 @@
         applyEffectiveChange();
         persistConfig();
         render();
+        announce("Saved as this scene's preset");
         break;
       case "save-studio-preset":
         if (!context.studioId) break;
@@ -1045,6 +1297,7 @@
         applyEffectiveChange();
         persistConfig();
         render();
+        announce("Saved as this studio's preset");
         break;
       case "clear-preset":
         if (context.source === "scene" && context.sceneId) {
@@ -1056,15 +1309,13 @@
         state = resolveState(config, context.sceneId, context.studioId);
         persistConfig();
         render();
+        announce("Preset cleared · " + sourceLabel());
         break;
       case "reset-defaults":
         Object.assign(state, makeDefaultState());
         saveNow();
         render();
-        break;
-      case "close-bar":
-        barCollapsed = true;
-        renderBar();
+        announce("Reset to defaults");
         break;
       case "screenshot":
         captureRedacted();
@@ -1081,18 +1332,18 @@
   // We update the visual blur on every event for instant feedback, but we
   // deliberately do NOT persist on every event — the `change` event (which
   // fires when the user releases the thumb) is the persistence boundary.
-  function onBarInput(e) {
+  function onChromeInput(e) {
     const target = e.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
     const value = clamp(parseInt(target.value, 10) || 0, 0, MAX_BLUR);
     state.blurAmount = value;
-    player.style.setProperty("--mf-blur", value + "px");
-    const readout = bar.querySelector('[data-action="blur-readout"]');
+    if (player) player.style.setProperty("--mf-blur", value + "px");
+    const readout = panel && panel.querySelector('[data-action="blur-readout"]');
     if (readout) readout.textContent = value + "px";
   }
 
-  function onBarChange(e) {
+  function onChromeChange(e) {
     const target = e.target;
     if (target.dataset && target.dataset.action === "fill-color") {
       if (/^#[0-9a-fA-F]{6}$/.test(target.value)) {
@@ -1109,11 +1360,11 @@
     saveNow();
   }
 
-  function attachBarListeners() {
-    if (!bar) return;
-    bar.addEventListener("click", onBarClick);
-    bar.addEventListener("input", onBarInput);
-    bar.addEventListener("change", onBarChange);
+  function attachChromeListeners() {
+    if (!chrome) return;
+    chrome.addEventListener("click", onChromeClick);
+    chrome.addEventListener("input", onChromeInput);
+    chrome.addEventListener("change", onChromeChange);
   }
 
   // ---------------------------------------------------------------------------
@@ -1184,18 +1435,55 @@
     });
   }
 
-  // Panic shortcut: avoid single-key bindings that would collide with video
-  // controls or other plugins. The local decoy page has no network requests.
+  // Keyboard shortcuts live here rather than in the panel so they work while
+  // the chrome is collapsed or faded out.
+  function isTypingTarget(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName.toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || el.isContentEditable === true;
+  }
+
   document.addEventListener("keydown", function (e) {
+    // Panic shortcut: avoid single-key bindings that would collide with video
+    // controls or other plugins. The local decoy page has no network requests.
     if (e.ctrlKey && e.shiftKey && (e.key === "X" || e.key === "x")) {
       e.preventDefault();
       togglePanicScreen();
+      return;
+    }
+    // Escape closes the panel but is never preventDefault-ed: Stash uses it
+    // for its own dismissals and this panel is not modal.
+    if (e.key === "Escape" && panelOpen) {
+      setPanelOpen(false);
+      return;
+    }
+    // Alt+M flips the filter without opening anything — the fastest way to
+    // hide something, and the reason the collapsed state can stay silent.
+    // Alt keeps the binding clear of video.js hotkeys (m = mute) and of every
+    // plain-letter shortcut another plugin might claim.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && (e.key === "m" || e.key === "M")) {
+      if (isTypingTarget(e.target)) return;
+      if (!rect || !player) return;
+      e.preventDefault();
+      toggleActive();
     }
   });
 
   // Re-position the rectangle on window resize so the percentages stay right.
+  // The control bar is re-measured too: Stash's bar height changes with the
+  // player size at some breakpoints.
   window.addEventListener("resize", function () {
-    if (rect && player) renderRect();
+    if (!rect || !player) return;
+    syncPlayerMetrics();
+    renderRect();
+  });
+
+  // Fullscreen swaps the player box for the viewport, so both the control-bar
+  // offset and the rectangle have to be recomputed.
+  document.addEventListener("fullscreenchange", function () {
+    if (!rect || !player) return;
+    syncPlayerMetrics();
+    renderRect();
   });
 
   // Best-effort: persist any in-memory changes before the page is hidden.

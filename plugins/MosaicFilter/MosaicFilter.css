@@ -2,31 +2,67 @@
  * Mosaic Filter — overlay CSS
  *
  * Namespace prefix: .mosaic-filter-*
- * Custom properties: --mf-blur (px), --mf-bg-alpha (0..1)
+ * Custom properties read here, set from JS:
+ *   --mf-blur        blur radius in px          (player)
+ *   --mf-fill-color  solid fill colour          (player)
+ *   --mf-cb-h        measured .vjs-control-bar height (player, see
+ *                    syncPlayerMetrics in MosaicFilter.js)
  *
  * Structure:
  *   #VideoJsPlayer (relative)
- *     .mosaic-filter-mask-layer           (full-cover backdrop-filter for reverse mode)
- *     .mosaic-filter-rectangle            (the blurred censor rectangle; absolute)
- *     .mosaic-filter-rectangle__resize    (bottom-right resize handle)
- *     .mosaic-filter-bar                  (compact control bar; absolute top-right)
- *       .mosaic-filter-bar__chip
- *       .mosaic-filter-bar__controls      (revealed when "show controls" is on)
- *       .mosaic-filter-bar__slider        (blur amount)
- *       .mosaic-filter-bar__button        (toggle / reset / clear / close)
+ *     .mosaic-filter-mask-layer           (full-cover backdrop-filter, reverse mode)
+ *     .mosaic-filter-rectangle            (the filtered region; absolute)
+ *     .mosaic-filter-rectangle__resize    (bottom-right resize grip)
+ *     .mosaic-filter-chrome               (inset:0 anchor, pointer-events:none)
+ *       .mosaic-filter-pill               (collapsed launcher, bottom-right)
+ *       .mosaic-filter-panel              (popover opened by the pill)
+ *       .mosaic-filter-toast              (transient state feedback)
+ *
+ * Layering inside the player:
+ *   mask layer 7 < rectangle 8 < Stash's control bar / big play button 10
+ *   < chrome 11
+ * The control bar is lifted above the plugin's effect layers on purpose — see
+ * the rule at the top of this file. The chrome sits above it because an open
+ * panel is a foreground surface: on a narrow player the panel overlaps the
+ * centre of the frame, and the big play button must not punch through it.
+ *
+ * Intrusion budget: at rest the plugin occupies one 28px pill in the bottom
+ * right corner, clear of the control bar, and nothing else. It fades out with
+ * the rest of the player chrome. The panel is only ever shown on request.
  */
 
-/* Override video.js's vjs-user-inactive class so the overlay isn't faded
-   when the user is idle in fullscreen mode. */
-.video-js.vjs-user-inactive .mosaic-filter-rectangle,
-.video-js.vjs-user-inactive .mosaic-filter-bar {
-  opacity: 1 !important;
-  visibility: visible !important;
+/* ---------------------------------------------------------------------------
+   Keep Stash's playback affordances above the effect layers.
+
+   Two real defects this fixes:
+   1. Reverse mode covers the whole player with a backdrop-filter, so the
+      control bar and the big play button were blurred along with the video.
+   2. The filter rectangle can be dragged — or, in follow mode, walked — over
+      the bottom edge, where it painted above the control bar and swallowed
+      clicks meant for Play / volume / fullscreen.
+
+   Scoped to #VideoJsPlayer, the only element this plugin already decorates;
+   no other Stash styling is touched. z-index 10 is also the value
+   QuestingAdventurer's panel uses, but that panel is pinned top-right while
+   this chrome lives at the bottom-right, so they never share pixels.
+
+   Deliberately NOT lifted: .vjs-text-track-display (captions). Subtitle text
+   inside a redacted region must stay hidden, so captions sit under the mask
+   layer like the video does.
+   --------------------------------------------------------------------------- */
+#VideoJsPlayer .vjs-control-bar,
+#VideoJsPlayer .vjs-big-play-button {
+  z-index: 10;
 }
 
-/* The blur rectangle: transparent, sits on top of the video, blurs whatever
-   is behind it via backdrop-filter. In reverse mode, the rectangle itself
-   does NOT carry backdrop-filter (the mask layer handles it). */
+/* ---------------------------------------------------------------------------
+   The filter rectangle
+
+   Rest state is intentionally quiet: a hairline edge at low alpha so the
+   region reads as "this area is filtered" rather than as a debug selection
+   box. The full chrome — brighter edge, drop shadow, resize grip — is only
+   revealed on hover, while dragging, and while the settings panel is open.
+   --------------------------------------------------------------------------- */
 .mosaic-filter-rectangle {
   position: absolute;
   z-index: 8;
@@ -35,23 +71,18 @@
   backdrop-filter: blur(var(--mf-blur, 10px));
   -webkit-backdrop-filter: blur(var(--mf-blur, 10px));
   background: rgba(0, 0, 0, var(--mf-bg-alpha, 0.18));
-  /* Soft edge: subtle white line plus a dark outer glow so the indicator
-     reads on both light and dark frames. The thin solid border replaces
-     the previous dashed outline; the box-shadow halo softens the edge
-     so it doesn't feel like a debug rectangle. */
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  border-radius: 4px;
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.12),
-    0 0 14px rgba(0, 0, 0, 0.18),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   box-sizing: border-box;
   cursor: move;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  /* keep below the control bar so the bar's buttons stay clickable */
+  /* keep below the chrome (9) and the control bar (10) so their buttons stay
+     clickable even when the region covers that part of the frame */
   pointer-events: auto;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .mosaic-filter-rectangle--hidden {
@@ -65,24 +96,35 @@
 }
 
 /* Reverse mode: the rectangle does not carry backdrop-filter (the mask
-   layer does). It remains visible as the clear-area indicator. The edge is
-   lifted slightly so the user can find the clear area against the blurred
-   surroundings. */
+   layer does). It remains visible as the clear-area indicator. Its edge
+   stays a little stronger than normal mode because the hole is the only
+   hint that everything else is deliberate. */
 .mosaic-filter-rectangle--reverse {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   background: transparent;
-  border-color: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* Interactive states share one look: the region advertises that it is
+   grabbable. `--editing` is set by JS while the panel is open, so configuring
+   the filter always shows its boundary. */
+.mosaic-filter-rectangle:hover,
+.mosaic-filter-rectangle--editing,
+.mosaic-filter-rectangle--dragging,
+.mosaic-filter-rectangle--resizing {
+  border-color: rgba(255, 255, 255, 0.68);
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.2),
-    0 0 18px rgba(0, 0, 0, 0.28),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 0 16px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 /* Resize handle in the bottom-right corner of the rectangle. The handle is
    18×18px visually, but a ::before pseudo-element extends the hit area by
    10px on the top/right so the touch target is at least ~28×28px while the
-   visual size stays small. */
+   visual size stays small. It fades in with the rest of the interactive
+   chrome instead of sitting on the video permanently. */
 .mosaic-filter-rectangle__resize {
   position: absolute;
   right: 0;
@@ -91,6 +133,15 @@
   height: 18px;
   cursor: nwse-resize;
   touch-action: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mosaic-filter-rectangle:hover .mosaic-filter-rectangle__resize,
+.mosaic-filter-rectangle--editing .mosaic-filter-rectangle__resize,
+.mosaic-filter-rectangle--dragging .mosaic-filter-rectangle__resize,
+.mosaic-filter-rectangle--resizing .mosaic-filter-rectangle__resize {
+  opacity: 1;
 }
 
 .mosaic-filter-rectangle__resize::before {
@@ -114,14 +165,14 @@
     linear-gradient(135deg, transparent 0 5px, rgba(255, 255, 255, 0.85) 5px 6px, transparent 6px 9px, rgba(255, 255, 255, 0.85) 9px 10px, transparent 10px);
 }
 
-.mosaic-filter-rectangle--dragging,
-.mosaic-filter-rectangle--resizing {
-  /* Slightly stronger outline while interacting. */
-  border-color: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.22),
-    0 0 20px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+/* Touch devices have no hover, so the grip can never be "revealed": keep it
+   reachable and give it a slightly larger target. */
+@media (hover: none) {
+  .mosaic-filter-rectangle__resize {
+    opacity: 1;
+    width: 22px;
+    height: 22px;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -184,96 +235,705 @@
   display: none !important;
 }
 
-/* Control bar — top-right of the player, similar in spirit to the
-   QuestingAdventurer panel but more compact (a single row of buttons). */
-.mosaic-filter-bar {
+/* ---------------------------------------------------------------------------
+   Chrome anchor: pill + panel + toast
+
+   `inset: 0` matches the player box, which is what every child positions
+   against. `pointer-events: none` means the anchor never intercepts clicks
+   meant for the video, the filter rectangle or the control bar — only the
+   pill and the panel opt back in.
+   --------------------------------------------------------------------------- */
+.mosaic-filter-chrome {
+  /* Tokens. The player chrome is always dark (video.js draws its own bar and
+     never follows the Stash light/dark theme), so these are deliberately not
+     derived from --bs-body-* colours. Radius and fill follow Stash's own
+     control surfaces closely enough to read as native. */
+  --mf-surface: rgba(16, 18, 22, 0.82);
+  --mf-surface-raised: rgba(30, 34, 41, 0.94);
+  --mf-line: rgba(255, 255, 255, 0.14);
+  --mf-line-strong: rgba(255, 255, 255, 0.28);
+  --mf-text: rgba(255, 255, 255, 0.94);
+  --mf-text-dim: rgba(255, 255, 255, 0.58);
+  --mf-accent: #7cc4ff;
+  --mf-accent-soft: rgba(124, 196, 255, 0.16);
+  --mf-reverse: #f0b46a;
+  --mf-radius: 10px;
+  --mf-pill-h: 28px;
+
   position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 9;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  border-radius: 6px;
-  font-family: sans-serif;
-  font-size: 13px;
-  line-height: 1.2;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+  /* Size containment lets the panel compact itself against the *player* box
+     rather than the viewport — see the @container rule below. The chrome is
+     sized by `inset: 0`, so containment costs nothing here. */
+  container-type: size;
+  container-name: mf-chrome;
+  font-family: var(--bs-body-font-family, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--mf-text);
+  text-align: left;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: auto;
+  /* Fade with the rest of the player chrome. `visibility` flips at the end of
+     the fade-out (delayed) but instantly on show. */
+  transition: opacity 160ms ease, visibility 0s linear 0s;
 }
 
-.mosaic-filter-bar--collapsed .mosaic-filter-bar__controls {
-  display: none;
+/* Idle state: hide the chrome the same way video.js hides its own control
+   bar, so watching is never obstructed. Pinned while the panel is open (an
+   explicit interaction must not fade mid-adjustment), while a toast is on
+   screen (Alt+M works while the chrome is hidden), and while keyboard focus
+   is inside. */
+.video-js.vjs-user-inactive .mosaic-filter-chrome:not(.mosaic-filter-chrome--pinned):not(.mosaic-filter-chrome--toasting):not(:focus-within) {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease, visibility 0s linear 160ms;
 }
 
-.mosaic-filter-bar__chip {
-  cursor: pointer;
-  white-space: nowrap;
-  font-weight: 600;
-  padding: 2px 4px;
-  border-radius: 3px;
-}
+/* ---------- Pill (collapsed launcher) ---------- */
 
-.mosaic-filter-bar__chip:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.mosaic-filter-bar__controls {
+.mosaic-filter-pill {
+  position: absolute;
+  right: 10px;
+  bottom: calc(var(--mf-cb-h, 32px) + 10px);
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.mosaic-filter-bar__button {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  color: #fff;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1;
-  padding: 4px 6px;
-  border-radius: 3px;
+  gap: 7px;
+  height: var(--mf-pill-h);
+  padding: 0 9px 0 9px;
+  margin: 0;
+  border: 1px solid var(--mf-line);
+  border-radius: 999px;
+  background: var(--mf-surface);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+  color: var(--mf-text-dim);
+  font: inherit;
   cursor: pointer;
   white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.22);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
 }
 
-.mosaic-filter-bar__button:hover {
-  background: rgba(255, 255, 255, 0.15);
+.mosaic-filter-pill:hover {
+  color: var(--mf-text);
+  border-color: var(--mf-line-strong);
 }
 
-.mosaic-filter-bar__button--active {
-  background: rgba(255, 255, 255, 0.25);
-  border-color: rgba(255, 255, 255, 0.8);
+.mosaic-filter-pill:active {
+  transform: scale(0.97);
 }
 
-.mosaic-filter-bar__button[disabled] {
-  opacity: 0.4;
+.mosaic-filter-pill:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: 2px;
+}
+
+.mosaic-filter-chrome--open .mosaic-filter-pill {
+  background: var(--mf-surface-raised);
+  border-color: var(--mf-line-strong);
+  color: var(--mf-text);
+}
+
+/* Status dot. Hollow when off, filled and tinted when the filter is live —
+   the one piece of always-relevant state, readable at a glance. */
+.mosaic-filter-pill__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.42);
+  background: transparent;
+  box-shadow: 0 0 0 0 rgba(124, 196, 255, 0);
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mosaic-filter-chrome--on .mosaic-filter-pill__dot {
+  border-color: var(--mf-accent);
+  background: var(--mf-accent);
+  box-shadow: 0 0 0 3px var(--mf-accent-soft);
+}
+
+/* Reverse mode is a genuinely different state (the whole frame is filtered,
+   not just the region), so it gets its own tint rather than a second badge. */
+.mosaic-filter-chrome--reverse .mosaic-filter-pill__dot {
+  border-color: var(--mf-reverse);
+  background: var(--mf-reverse);
+  box-shadow: 0 0 0 3px rgba(240, 180, 106, 0.18);
+}
+
+.mosaic-filter-pill__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.mosaic-filter-chrome--on .mosaic-filter-pill__label {
+  color: var(--mf-text);
+}
+
+.mosaic-filter-pill__chevron {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  opacity: 0.55;
+  transition: transform 160ms ease;
+}
+
+.mosaic-filter-chrome--open .mosaic-filter-pill__chevron {
+  transform: rotate(180deg);
+  opacity: 0.8;
+}
+
+/* ---------- Panel (popover) ---------- */
+
+.mosaic-filter-panel {
+  position: absolute;
+  right: 10px;
+  bottom: calc(var(--mf-cb-h, 32px) + 10px + var(--mf-pill-h) + 8px);
+  pointer-events: auto;
+  display: none;
+  box-sizing: border-box;
+  /* Wide enough for a three-way segmented control, never wider than the
+     player. On a phone-sized player it still leaves 8px of frame on each
+     side. */
+  width: min(288px, calc(100% - 20px));
+  max-height: min(60vh, calc(100% - var(--mf-cb-h, 32px) - 56px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  padding: 10px;
+  border: 1px solid var(--mf-line);
+  border-radius: var(--mf-radius);
+  background: var(--mf-surface);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+.mosaic-filter-chrome--open .mosaic-filter-panel {
+  display: block;
+  animation: mf-panel-in 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes mf-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.mosaic-filter-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.mosaic-filter-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: content-box;
+}
+
+/* Header: title, resolved preset source, close. */
+.mosaic-filter-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+  margin-bottom: 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.mosaic-filter-panel__title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mf-text-dim);
+}
+
+.mosaic-filter-panel__source {
+  font-size: 10.5px;
+  color: var(--mf-text-dim);
+  border: 1px solid var(--mf-line);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mosaic-filter-icon-btn {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mf-text-dim);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mosaic-filter-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--mf-text);
+}
+
+/* Primary switches: On/Off and Follow. Full-height targets, first in the
+   panel, so the two things people actually toggle are one click away. */
+.mosaic-filter-switches {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.mosaic-filter-switch {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--mf-line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.mosaic-filter-switch:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--mf-text);
+}
+
+.mosaic-filter-switch[aria-pressed="true"] {
+  background: var(--mf-accent-soft);
+  border-color: rgba(124, 196, 255, 0.5);
+  color: var(--mf-accent);
+}
+
+.mosaic-filter-switch__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.mosaic-filter-switch[aria-pressed="true"] .mosaic-filter-switch__dot {
+  opacity: 1;
+}
+
+/* Blur slider row. */
+.mosaic-filter-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 9px;
+  cursor: pointer;
+}
+
+.mosaic-filter-slider__label {
+  flex: none;
+  width: 34px;
+  font-size: 11px;
+  color: var(--mf-text-dim);
+}
+
+.mosaic-filter-slider__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 18px;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mosaic-filter-slider__input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.mosaic-filter-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.mosaic-filter-slider__input::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.mosaic-filter-slider__input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.mosaic-filter-slider__input:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.mosaic-filter-slider__value {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mf-text-dim);
+}
+
+/* Segmented controls: fill / shape / mode. Showing all options beats a
+   cycling button whose other two states are invisible until clicked. */
+.mosaic-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mosaic-filter-row__label {
+  flex: none;
+  width: 34px;
+  font-size: 11px;
+  color: var(--mf-text-dim);
+}
+
+.mosaic-filter-seg {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--mf-line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.mosaic-filter-seg__btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-right: 1px solid var(--mf-line);
+  background: transparent;
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mosaic-filter-seg__btn:last-child {
+  border-right: 0;
+}
+
+.mosaic-filter-seg__btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mf-text);
+}
+
+.mosaic-filter-seg__btn[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-weight: 600;
+}
+
+.mosaic-filter-seg__btn:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: -2px;
+}
+
+.mosaic-filter-color {
+  width: 40px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--mf-line);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mosaic-filter-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.mosaic-filter-color::-webkit-color-swatch {
+  border: 0;
+  border-radius: 4px;
+}
+
+/* Utility actions, two per row so the panel stays short. */
+.mosaic-filter-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.mosaic-filter-actions__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--mf-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.mosaic-filter-actions__btn:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mf-text);
+}
+
+.mosaic-filter-actions__btn:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: 1px;
+}
+
+.mosaic-filter-actions__btn[disabled] {
+  opacity: 0.38;
   cursor: not-allowed;
 }
 
-.mosaic-filter-bar__slider {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
+.mosaic-filter-actions__btn--danger {
+  border-color: rgba(255, 120, 120, 0.3);
+  color: #ff9b9b;
 }
 
-.mosaic-filter-bar__slider input[type="range"] {
-  width: 80px;
-  vertical-align: middle;
+.mosaic-filter-actions__btn--danger:hover:not([disabled]) {
+  background: rgba(255, 120, 120, 0.12);
+  color: #ffb8b8;
 }
 
-.mosaic-filter-bar__label {
-  font-size: 12px;
-  opacity: 0.85;
+/* An odd number of actions (no preset saved yet, or a preset to clear) would
+   leave the last cell of the two-column grid empty. Let the trailing button
+   take the full row instead of sitting in a half-width stub. */
+.mosaic-filter-actions__btn:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 
-/* Fill modes ------------------------------------------------------------- */
+/* The panic switch is a different kind of action from "save/reset/shot": it
+   leaves the player entirely. Rendering it as a quiet full-width footer keeps
+   it available without giving it the same weight as the editing controls. */
+.mosaic-filter-actions__btn--quiet {
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.44);
+}
+
+.mosaic-filter-actions__btn--quiet:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--mf-text-dim);
+}
+
+/* Quiet status line: last action's result, announced to screen readers. */
+.mosaic-filter-panel__status {
+  min-height: 14px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--mf-text-dim);
+}
+
+/* ---------- Toast (state feedback while collapsed) ---------- */
+
+.mosaic-filter-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--mf-cb-h, 32px) + 12px);
+  transform: translate(-50%, 6px);
+  pointer-events: none;
+  padding: 5px 12px;
+  border: 1px solid var(--mf-line);
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.88);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--mf-text);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.mosaic-filter-toast--visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive / input adaptations
+   --------------------------------------------------------------------------- */
+
+/* Short player (phone in portrait, a small window, a grid pane): the panel has
+   to share the frame with the picture, so tighten the vertical rhythm rather
+   than let it scroll through four rows. A viewport media query would miss this
+   — the viewport is tall while the 16:9 player is not — hence the container
+   query against the player box. */
+@container mf-chrome (max-height: 460px) {
+  .mosaic-filter-panel {
+    padding: 8px;
+    max-height: calc(100% - var(--mf-cb-h, 32px) - 52px);
+  }
+
+  .mosaic-filter-panel__header {
+    padding-bottom: 6px;
+    margin-bottom: 7px;
+  }
+
+  .mosaic-filter-switches {
+    margin-bottom: 7px;
+  }
+
+  .mosaic-filter-switch {
+    height: 26px;
+  }
+
+  .mosaic-filter-slider {
+    margin-bottom: 7px;
+  }
+
+  .mosaic-filter-row {
+    margin-bottom: 6px;
+  }
+
+  .mosaic-filter-seg__btn {
+    height: 24px;
+  }
+
+  .mosaic-filter-actions {
+    margin-top: 8px;
+    padding-top: 8px;
+    gap: 5px;
+  }
+
+  .mosaic-filter-actions__btn {
+    height: 24px;
+  }
+
+  .mosaic-filter-panel__status {
+    min-height: 0;
+    margin-top: 6px;
+  }
+}
+
+/* Coarse pointers: every target grows to at least 32px, and the panel takes
+   the extra width a thumb needs. */
+@media (pointer: coarse) {
+  .mosaic-filter-chrome {
+    --mf-pill-h: 32px;
+  }
+
+  .mosaic-filter-pill {
+    padding: 0 12px;
+  }
+
+  .mosaic-filter-panel {
+    width: min(304px, calc(100% - 16px));
+    right: 8px;
+  }
+
+  .mosaic-filter-pill {
+    right: 8px;
+  }
+
+  .mosaic-filter-switch,
+  .mosaic-filter-seg__btn,
+  .mosaic-filter-actions__btn {
+    height: 32px;
+  }
+}
+
+/* Very narrow players (phones in portrait, tight grid panes): keep the panel
+   inside the frame and let the labels ellipsize instead of wrapping. */
+@media (max-width: 420px) {
+  .mosaic-filter-panel {
+    width: calc(100% - 16px);
+    right: 8px;
+    padding: 9px;
+  }
+
+  .mosaic-filter-pill {
+    right: 8px;
+  }
+
+  .mosaic-filter-row__label,
+  .mosaic-filter-slider__label {
+    width: 30px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mosaic-filter-chrome,
+  .mosaic-filter-pill,
+  .mosaic-filter-pill__chevron,
+  .mosaic-filter-pill__dot,
+  .mosaic-filter-rectangle,
+  .mosaic-filter-rectangle__resize,
+  .mosaic-filter-toast {
+    transition: none !important;
+  }
+
+  .mosaic-filter-chrome--open .mosaic-filter-panel {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Fill modes
+   --------------------------------------------------------------------------- */
 .mosaic-filter-rectangle--fill-solid {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

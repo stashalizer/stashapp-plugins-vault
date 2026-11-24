@@ -100,19 +100,21 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 
 ### How to use it
 
-**On the player** — a compact control bar appears on the scene player:
+**On the player** — a small **Mosaic** pill sits in the bottom-right corner, just above Stash's own control bar, and fades out with the rest of the player chrome while you watch. It is the only thing the plugin puts on the video. Click it to open the settings panel; click outside it, press `Esc`, or use the ✕ to close.
 
-- **On / Off** — show or hide the filter rectangle.
-- **Blur slider** — adjust blur intensity from 0 to 80 px. The visual updates live as you drag; the value is saved when you release the thumb (so dragging doesn't trigger a config write per frame).
+The pill's dot is the state read-out: hollow = off, blue = on, amber = reverse mode (everything outside the region is filtered).
+
+- **On / Off** — show or hide the filter. `Alt+M` flips it without opening the panel and confirms with a brief on-screen message.
 - **Follow** — when on, the filter jumps to your cursor immediately and then tracks it. Drag is disabled; resize still works.
-- **Shape** — toggle between `▭ Rectangle` and `● Ellipse`.
-- **Mode** — toggle between `▣ Normal` (blur inside the filter) and `◈ Reverse` (blur everywhere outside the filter).
-- **Reset** — restore defaults.
+- **Blur** — adjust blur intensity from 0 to 80 px. The visual updates live as you drag; the value is saved when you release the thumb (so dragging doesn't trigger a config write per frame).
+- **Fill / Shape / Mode** — segmented controls (Blur·Solid·Pixelate, Rect·Ellipse, Normal·Reverse), so every option is visible instead of hidden behind a cycling button. Solid adds a colour swatch.
+- **Save scene / Save studio / Clear preset** — store or remove the preset for the current scene or studio.
+- **Reset / Shot / Panic** — restore defaults, copy or download a redacted screenshot, or show the local decoy page.
 
 **Drag and resize the filter directly:**
 
 - Drag the rectangle body to move it (disabled in Follow mode).
-- Drag the bottom-right handle to resize.
+- Drag the bottom-right grip to resize. The grip and the region's outline only appear while you hover the region, while you drag it, or while the settings panel is open — the filter itself reads as a blur, not as a selection box.
 - Position/size are saved when you release the pointer — not on every pixel of movement.
 
 **On the settings page** at **Settings → Tools → Scene Tools → Mosaic Filter** (or `/plugins/mosaicfilter`):
@@ -125,6 +127,7 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 ### Known limitations
 
 - Pixelate is more expensive than blur and is not available in reverse mode; reverse + solid is supported.
+- On a short player (below roughly 420 px tall, e.g. a phone in portrait) the settings panel becomes scrollable rather than shrinking further; fullscreen gives it room.
 - Screenshot capture depends on a same-origin video; CORS/DRM-protected streams cannot be captured.
 - Clipboard copy requires a secure context; the plugin falls back to a PNG download.
 - The overlay and settings page keep separate save locks and don't coordinate. Settings edits won't live-reflect in an already-open overlay until the next navigation/reload.
