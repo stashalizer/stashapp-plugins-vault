@@ -446,6 +446,22 @@
   word-break: break-word;
 }
 
+/* Completed / attached moves in the run this trigger is currently in. It is
+   a progress figure for the open run, not a count of how often the trigger
+   happened — see the Quest Log block in QuestingAdventurer.js. */
+.questing-adventurer-panel__run-count {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--qa-line-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--qa-text-3);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
 /* Move rows are subordinate: no fill, a 1px rail instead of a border box, and
    the text one weight lighter than the trigger name above it. The rail is a
    border (not ::before) because the drop indicators own both pseudo-elements. */
@@ -688,7 +704,16 @@
   background: rgba(143, 224, 160, 0.16);
   color: var(--qa-ok);
   font-size: 10px;
-  cursor: default;
+  /* Undo is a click, not a disabled state: clicking a tick retracts that
+     completion for the current run (the log keeps both events). */
+  cursor: pointer;
+}
+
+/* Completed in an earlier run of the same trigger. Dashed, not filled: it
+   is history, not a tick for the run that is open right now. */
+.questing-adventurer-panel__controls .questing-adventurer-panel__complete-button--earlier {
+  border-style: dashed;
+  border-color: rgba(143, 224, 160, 0.45);
 }
 
 /* --- Empty state --------------------------------------------------------- */

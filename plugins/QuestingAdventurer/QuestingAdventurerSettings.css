@@ -300,3 +300,119 @@
   font-size: 0.82em;
   opacity: 0.9;
 }
+
+/* Playback triggers: scene + marker → trigger + move bindings. */
+.questing-adventurer-settings__auto {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 12px 8px;
+  padding: 8px 10px 9px;
+  border: 1px solid rgba(147, 184, 224, 0.18);
+  border-radius: 8px;
+  background: rgba(147, 184, 224, 0.06);
+}
+
+.questing-adventurer-settings__auto-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.questing-adventurer-settings__auto-hint {
+  font-size: 0.92em;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.7;
+}
+
+.questing-adventurer-settings__auto-rule {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) minmax(110px, 1.4fr) minmax(110px, 1.4fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.questing-adventurer-settings__auto-scene {
+  overflow: hidden;
+  font-size: 0.85em;
+  color: rgba(147, 184, 224, 0.95);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.questing-adventurer-settings__auto-select,
+.questing-adventurer-settings__auto-input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.28);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85em;
+}
+
+.questing-adventurer-settings__auto-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.questing-adventurer-settings__auto-add .questing-adventurer-settings__auto-input {
+  flex: 1 1 auto;
+}
+
+.questing-adventurer-settings__auto-add-btn,
+.questing-adventurer-settings__auto-remove {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+
+.questing-adventurer-settings__auto-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.questing-adventurer-settings__auto-remove {
+  width: 28px;
+  padding: 0;
+}
+
+.questing-adventurer-settings__auto-repeat {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 0.8em;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .questing-adventurer-settings__auto-rule {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .questing-adventurer-settings__auto-scene {
+    grid-column: 1 / -1;
+  }
+}

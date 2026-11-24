@@ -66,18 +66,36 @@
   let suppressNextClick = false;
 
   // ── Quest Log ────────────────────────────────────────────────────────
+  // Layout: one session per playthrough of one scene → one run per time a
+  // trigger becomes active inside that session → one completion per
+  // (run, move) pair.
+  //
+  // A run is NOT a count of how often the trigger happened on screen. The
+  // plugin cannot observe that: `active` is a persisted flag rather than an
+  // episode, and the only repeatable on-screen signal is a scene marker.
+  // Runs are therefore a lower bound ("this many times the trigger was
+  // switched on while you watched") and the UI never claims more.
+  //
+  // Progress is derived from the event list on every render; no completion
+  // boolean is persisted. Undo appends an event instead of deleting one, so
+  // "what was ticked, and when" stays answerable.
+  //
   // Sessions are stored outside the plugin's settings object. Suite Data is
   // preferred; csLib is the backward-compatible fallback.
   const LOG_KEY = "log";
   const LOG_CS_KEY = "QuestingAdventurerLog";
+  const LOG_SCHEMA = 2;
   const MAX_SESSIONS = 200;
-  const MAX_EVENTS_PER_SESSION = 500;
-  let questLog = { sessions: [] };
+  const MAX_EVENTS_PER_SESSION = 2000;
+  let questLog = { schema: LOG_SCHEMA, sessions: [] };
   let currentSession = null;
+  let openRuns = {}; // triggerId -> runId for the session in progress
   let currentSceneId = null;
   let logSaving = false;
   let logPending = false;
   let logSaveTimer = null;
+  let sessionStateCache = null;
+  let statsCache = null;
   let hardwareConfig = { enabled: false, url: "ws://localhost:12345", intensity: 0.4, durationMs: 1000 };
 
   function dayKey(timestamp) {
@@ -87,24 +105,201 @@
     return d.getFullYear() + "-" + month + "-" + day;
   }
 
+  function currentPlaybackSeconds() {
+    const video = document.querySelector("#VideoJsPlayer video");
+    if (!video || typeof video.currentTime !== "number" || !isFinite(video.currentTime)) return null;
+    return Math.round(video.currentTime * 10) / 10;
+  }
+
+  function runItemKey(runId, moveId) {
+    return runId + "\u0000" + moveId;
+  }
+
+  // Fold the append-only event list into the state the UI renders. Everything
+  // completion-related is derived here — there is no stored boolean, so an
+  // undo is just another event.
+  function foldEvents(events) {
+    const runs = [];
+    const byId = {};
+    const done = {};
+    for (const event of events) {
+      if (!event || typeof event !== "object") continue;
+      if (event.type === "trigger-activated" && event.runId) {
+        const run = {
+          id: event.runId,
+          triggerId: event.triggerId ? String(event.triggerId) : "",
+          triggerName: event.triggerName || "",
+          run: typeof event.run === "number" ? event.run : 0,
+          at: typeof event.at === "number" ? event.at : null,
+          atSeconds: typeof event.atSeconds === "number" ? event.atSeconds : null,
+          origin: event.origin || event.source || "unknown",
+          observedBy: event.observedBy || "state",
+          markerId: event.markerId || null,
+          closedAt: null,
+          closeReason: null,
+        };
+        runs.push(run);
+        byId[run.id] = run;
+      } else if (event.type === "trigger-deactivated" && event.runId) {
+        const run = byId[event.runId];
+        if (run) {
+          run.closedAt = typeof event.at === "number" ? event.at : null;
+          run.closeReason = event.reason || "unknown";
+        }
+      } else if (event.type === "move-completed" && event.runId && event.moveId) {
+        done[runItemKey(event.runId, event.moveId)] = typeof event.at === "number" ? event.at : null;
+      } else if (event.type === "move-uncompleted" && event.runId && event.moveId) {
+        delete done[runItemKey(event.runId, event.moveId)];
+      }
+    }
+    return { runs: runs, byId: byId, done: done };
+  }
+
+  // 1-based ordinal of this scene inside the log, so history can say
+  // "scene X, visit 2" without another API call.
+  function nextSceneVisit(sceneId) {
+    if (!sceneId) return null;
+    let count = 0;
+    const id = String(sceneId);
+    for (const session of questLog.sessions) {
+      if (session.sceneId === id) count++;
+    }
+    return count + 1;
+  }
+
+  // Trim whole runs, never a run in half: a surviving completion whose
+  // activation was dropped would be uncountable after the next fold.
+  function trimSessionEvents(session) {
+    if (!session || !Array.isArray(session.events)) return;
+    if (session.events.length <= MAX_EVENTS_PER_SESSION) return;
+    const groups = [];
+    for (const event of session.events) {
+      if (event.type === "trigger-activated" && event.runId) {
+        groups.push({ events: [event] });
+      } else if (groups.length > 0) {
+        groups[groups.length - 1].events.push(event);
+      } else {
+        groups.push({ events: [event] });
+      }
+    }
+    let total = session.events.length;
+    while (groups.length > 1 && total > MAX_EVENTS_PER_SESSION) {
+      total -= groups.shift().events.length;
+    }
+    const kept = [];
+    for (const group of groups) {
+      for (const event of group.events) kept.push(event);
+    }
+    session.events = kept;
+  }
+
+  function normalizeEvent(raw) {
+    if (!raw || typeof raw !== "object" || typeof raw.type !== "string") return null;
+    const event = {
+      at: typeof raw.at === "number" ? raw.at : null,
+      type: raw.type,
+      source: typeof raw.source === "string" ? raw.source : "manual",
+    };
+    if (typeof raw.runId === "string") event.runId = raw.runId;
+    if (typeof raw.run === "number") event.run = raw.run;
+    if (raw.triggerId) event.triggerId = String(raw.triggerId);
+    if (raw.triggerName) event.triggerName = String(raw.triggerName);
+    if (raw.moveId) event.moveId = String(raw.moveId);
+    if (raw.moveText) event.moveText = String(raw.moveText);
+    if (typeof raw.atSeconds === "number") event.atSeconds = raw.atSeconds;
+    if (raw.origin) event.origin = String(raw.origin);
+    if (raw.observedBy) event.observedBy = String(raw.observedBy);
+    if (raw.markerId) event.markerId = String(raw.markerId);
+    if (raw.reason) event.reason = String(raw.reason);
+    if (Array.isArray(raw.requiredMoveIds)) event.requiredMoveIds = raw.requiredMoveIds.map(String);
+    if (Array.isArray(raw.clearedMoveIds)) event.clearedMoveIds = raw.clearedMoveIds.map(String);
+    return event;
+  }
+
+  // Schema 1 kept one flat event list and a per-session `counts` map. Replay
+  // it to attach a runId to everything: a trigger's first activation opens a
+  // run, later completions join the run that is open for that trigger, and an
+  // orphan completion (activation trimmed away) opens a synthetic one.
+  // Precision is unrecoverable: v1 recorded a move once per session, so a
+  // migrated session can only ever show one run per trigger.
+  function upgradeLegacySession(session) {
+    const events = [];
+    const open = {};
+    const seq = {};
+    for (const raw of session.events) {
+      const event = normalizeEvent(raw);
+      if (!event) continue;
+      if (event.type === "trigger-activated" && event.triggerId) {
+        seq[event.triggerId] = (seq[event.triggerId] || 0) + 1;
+        event.runId = "legacy:" + session.id + ":" + event.triggerId + ":" + seq[event.triggerId];
+        event.run = seq[event.triggerId];
+        event.origin = event.origin || "legacy";
+        event.observedBy = "legacy";
+        open[event.triggerId] = event.runId;
+      } else if (event.type === "trigger-deactivated" && event.triggerId) {
+        event.runId = open[event.triggerId] || null;
+        event.reason = event.reason || "legacy";
+        delete open[event.triggerId];
+      } else if (event.type === "move-completed" && event.triggerId) {
+        if (!open[event.triggerId]) {
+          seq[event.triggerId] = (seq[event.triggerId] || 0) + 1;
+          const runId = "legacy:" + session.id + ":" + event.triggerId + ":" + seq[event.triggerId];
+          open[event.triggerId] = runId;
+          events.push({
+            at: event.at,
+            type: "trigger-activated",
+            source: "legacy",
+            runId: runId,
+            run: seq[event.triggerId],
+            triggerId: event.triggerId,
+            origin: "legacy",
+            observedBy: "legacy",
+          });
+        }
+        event.runId = open[event.triggerId];
+        event.run = seq[event.triggerId];
+      } else {
+        event.runId = event.triggerId ? open[event.triggerId] || null : null;
+      }
+      events.push(event);
+    }
+    return events;
+  }
+
   function normalizeQuestLog(value) {
     const log = value && typeof value === "object" ? value : {};
     const sessions = Array.isArray(log.sessions) ? log.sessions : [];
-    return {
-      sessions: sessions
-        .filter(function (s) { return s && typeof s === "object" && typeof s.id === "string"; })
-        .slice(-MAX_SESSIONS)
-        .map(function (s) {
-          return {
-            id: s.id,
-            sceneId: s.sceneId ? String(s.sceneId) : null,
-            startedAt: typeof s.startedAt === "number" ? s.startedAt : Date.now(),
-            endedAt: typeof s.endedAt === "number" ? s.endedAt : null,
-            events: Array.isArray(s.events) ? s.events.slice(-MAX_EVENTS_PER_SESSION) : [],
-            counts: s.counts && typeof s.counts === "object" ? s.counts : {},
-          };
-        }),
-    };
+    const visits = {};
+    const result = [];
+    for (const raw of sessions) {
+      if (!raw || typeof raw !== "object" || typeof raw.id !== "string") continue;
+      const rawEvents = Array.isArray(raw.events) ? raw.events : [];
+      const isCurrent = raw.schema === LOG_SCHEMA;
+      let events;
+      if (isCurrent) {
+        events = rawEvents.map(normalizeEvent).filter(function (event) { return !!event; });
+      } else {
+        events = upgradeLegacySession({ id: raw.id, events: rawEvents });
+      }
+      const session = {
+        id: raw.id,
+        schema: LOG_SCHEMA,
+        sceneId: raw.sceneId ? String(raw.sceneId) : null,
+        sceneTitle: raw.sceneTitle ? String(raw.sceneTitle) : null,
+        sceneVisit: typeof raw.sceneVisit === "number" ? raw.sceneVisit : null,
+        startedAt: typeof raw.startedAt === "number" ? raw.startedAt : Date.now(),
+        endedAt: typeof raw.endedAt === "number" ? raw.endedAt : null,
+        legacy: isCurrent ? false : true,
+        events: events,
+      };
+      if (!session.sceneVisit && session.sceneId) {
+        visits[session.sceneId] = (visits[session.sceneId] || 0) + 1;
+        session.sceneVisit = visits[session.sceneId];
+      }
+      trimSessionEvents(session);
+      result.push(session);
+    }
+    return { schema: LOG_SCHEMA, sessions: result.slice(-MAX_SESSIONS) };
   }
 
   async function loadQuestLog() {
@@ -113,31 +308,123 @@
       questLog = normalizeQuestLog(stored);
     } catch (err) {
       console.error("QuestingAdventurer: failed to load quest log:", err);
-      questLog = { sessions: [] };
+      questLog = { schema: LOG_SCHEMA, sessions: [] };
     }
+    sessionStateCache = null;
+    statsCache = null;
   }
 
   function ensureSession() {
     if (currentSession) return currentSession;
     const now = Date.now();
-    currentSession = {
+    const session = {
       id: generateId(),
+      schema: LOG_SCHEMA,
       sceneId: currentSceneId ? String(currentSceneId) : null,
+      sceneTitle: sceneContext && sceneContext.title ? String(sceneContext.title) : null,
+      sceneVisit: nextSceneVisit(currentSceneId),
       startedAt: now,
       endedAt: null,
       events: [],
-      counts: {
-        penalty: 0,
-        reward: 0,
-        manualActivate: 0,
-        attach: 0,
-        detach: 0,
-        moveCompleted: 0,
-      },
     };
-    questLog.sessions.push(currentSession);
+    questLog.sessions.push(session);
+    currentSession = session;
+    openRuns = {};
+    sessionStateCache = null;
+    statsCache = null;
+    // Triggers that were already active when the scene opened start their
+    // first run of this session. Origin "session" records why the run exists
+    // without pretending the trigger happened again on screen.
+    for (const trigger of state.triggers) {
+      if (trigger.active) startRun(trigger, { origin: "session", observedBy: "state" });
+    }
     trimQuestLog();
-    return currentSession;
+    return session;
+  }
+
+  function startRun(trigger, options) {
+    if (!trigger) return null;
+    // Idempotent: an open run for this trigger is the run we are joining.
+    if (openRuns[trigger.id]) return openRuns[trigger.id];
+    const session = ensureSession();
+    const opts = options || {};
+    let seq = 1;
+    for (const event of session.events) {
+      if (event.type === "trigger-activated" && event.triggerId === trigger.id) seq++;
+    }
+    const runId = generateId();
+    openRuns[trigger.id] = runId;
+    recordEvent("trigger-activated", {
+      runId: runId,
+      run: seq,
+      triggerId: trigger.id,
+      triggerName: trigger.name,
+      origin: opts.origin || "manual",
+      observedBy: opts.observedBy || "user",
+      markerId: opts.markerId || null,
+      requiredMoveIds: Array.isArray(trigger.attachedMoveIds) ? trigger.attachedMoveIds.slice() : [],
+      atSeconds: currentPlaybackSeconds(),
+    });
+    return runId;
+  }
+
+  function closeRun(triggerId, reason, extra) {
+    if (!currentSession || !openRuns[triggerId]) return;
+    const runId = openRuns[triggerId];
+    delete openRuns[triggerId];
+    recordEvent(
+      "trigger-deactivated",
+      Object.assign({}, extra || {}, {
+        runId: runId,
+        triggerId: triggerId,
+        reason: reason || "unknown",
+        atSeconds: currentPlaybackSeconds(),
+      })
+    );
+  }
+
+  function sessionState() {
+    if (!currentSession) return { runs: [], byId: {}, done: {} };
+    if (
+      sessionStateCache &&
+      sessionStateCache.sessionId === currentSession.id &&
+      sessionStateCache.length === currentSession.events.length
+    ) {
+      return sessionStateCache.state;
+    }
+    const folded = foldEvents(currentSession.events);
+    sessionStateCache = {
+      sessionId: currentSession.id,
+      length: currentSession.events.length,
+      state: folded,
+    };
+    return folded;
+  }
+
+  function currentRun(triggerId) {
+    if (!triggerId) return null;
+    const runId = openRuns[triggerId];
+    if (!runId) return null;
+    return sessionState().byId[runId] || null;
+  }
+
+  function isRunItemDone(runId, moveId) {
+    if (!runId || !moveId) return false;
+    return Object.prototype.hasOwnProperty.call(sessionState().done, runItemKey(runId, moveId));
+  }
+
+  // A move ticked off in an earlier run of the same trigger must not tick the
+  // current run, but the user still benefits from seeing that it happened.
+  // Return that run so the row can hint at it instead of blocking the button.
+  function earlierRunCompletion(triggerId, moveId) {
+    const folded = sessionState();
+    const current = currentRun(triggerId);
+    for (const run of folded.runs) {
+      if (run.triggerId !== triggerId) continue;
+      if (current && run.id === current.id) continue;
+      if (Object.prototype.hasOwnProperty.call(folded.done, runItemKey(run.id, moveId))) return run;
+    }
+    return null;
   }
 
   function trimQuestLog() {
@@ -145,44 +432,66 @@
       questLog.sessions = questLog.sessions.slice(-MAX_SESSIONS);
     }
     for (const session of questLog.sessions) {
-      if (session.events.length > MAX_EVENTS_PER_SESSION) {
-        session.events = session.events.slice(-MAX_EVENTS_PER_SESSION);
-      }
+      trimSessionEvents(session);
     }
   }
 
   function recordEvent(type, data) {
     const session = ensureSession();
-    const event = Object.assign(
-      { at: Date.now(), type: type, actor: "user", source: "manual" },
-      data || {}
-    );
+    const event = Object.assign({ at: Date.now(), type: type, source: "manual" }, data || {});
     session.events.push(event);
-    if (event.type === "move-completed") {
-      session.counts.moveCompleted = (session.counts.moveCompleted || 0) + 1;
-    }
     trimQuestLog();
+    sessionStateCache = null;
+    statsCache = null;
     scheduleQuestLogSave();
-  }
-
-  function countEvent(type) {
-    const session = ensureSession();
-    session.counts[type] = (session.counts[type] || 0) + 1;
-  }
-
-  function isMoveCompleted(moveId) {
-    if (!currentSession || !Array.isArray(currentSession.events)) return false;
-    return currentSession.events.some(function (e) {
-      return e.type === "move-completed" && e.moveId === moveId;
-    });
+    return event;
   }
 
   function completeMove(moveId, triggerId) {
-    if (!moveId || isMoveCompleted(moveId)) return;
-    recordEvent("move-completed", { moveId: moveId, triggerId: triggerId || null });
+    if (!moveId) return;
+    ensureSession();
+    let run = triggerId ? currentRun(triggerId) : null;
+    if (!run) {
+      // The settings page can activate a trigger without telling the open
+      // overlay. A row can therefore be visible with no run to record into —
+      // open one rather than leaving a dead button.
+      const trigger = state.triggers.find(function (t) { return t.id === triggerId; });
+      if (!trigger || !trigger.active) return;
+      startRun(trigger, { origin: "session", observedBy: "state" });
+      run = triggerId ? currentRun(triggerId) : null;
+      if (!run) return;
+    }
+    if (isRunItemDone(run.id, moveId)) return;
     const move = state.moves.find(function (m) { return m.id === moveId; });
+    const trigger = state.triggers.find(function (t) { return t.id === triggerId; });
+    recordEvent("move-completed", {
+      runId: run.id,
+      run: run.run,
+      triggerId: triggerId || null,
+      triggerName: trigger ? trigger.name : run.triggerName,
+      moveId: moveId,
+      moveText: move ? move.text : "",
+      source: "tap",
+      atSeconds: currentPlaybackSeconds(),
+    });
     dispatchHardwareCommand();
     announceToAria("Completed " + (move ? move.text : "move") + ".");
+    render();
+  }
+
+  // Undo appends instead of deleting: the fold neutralises the completion,
+  // while the log keeps the fact that it was ticked and then retracted.
+  function undoMove(moveId, triggerId) {
+    const run = triggerId ? currentRun(triggerId) : null;
+    if (!run || !isRunItemDone(run.id, moveId)) return;
+    recordEvent("move-uncompleted", {
+      runId: run.id,
+      run: run.run,
+      triggerId: triggerId || null,
+      moveId: moveId,
+      reason: "undo",
+    });
+    announceToAria("Completion undone.");
     render();
   }
 
@@ -245,12 +554,23 @@
     }
   }
 
-  function endSession() {
+  function endSession(reason, silent) {
     if (!currentSession) return;
+    // Close every open run first so the log never ends mid-run: an
+    // un-deactivated run is indistinguishable from "still going" on reload.
+    for (const triggerId of Object.keys(openRuns)) {
+      closeRun(triggerId, reason || "session-end");
+    }
     currentSession.endedAt = Date.now();
     currentSession = null;
+    openRuns = {};
+    sessionStateCache = null;
+    statsCache = null;
+    // A new session is a clean slate for automation too: "once" rules re-arm
+    // and a session-scoped × no longer suppresses anything.
+    resetAutoState();
     scheduleQuestLogSave(true);
-    render();
+    if (!silent) render();
   }
 
   function flushQuestLogSave() {
@@ -263,11 +583,14 @@
     const snapshot = JSON.parse(JSON.stringify(questLog));
     storage.saveKey(LOG_KEY, snapshot, LOG_CS_KEY, "Questing Adventurer quest log", function (latest) {
       // Merge by session id so a concurrent tab's sessions are not dropped.
+      // The snapshot wins per id: it is the tab that owns this session.
       const merged = normalizeQuestLog(latest);
       const byId = {};
       for (const s of merged.sessions) byId[s.id] = s;
       for (const s of snapshot.sessions) byId[s.id] = s;
-      return { sessions: Object.keys(byId).map(function (id) { return byId[id]; }).slice(-MAX_SESSIONS) };
+      const sessions = Object.keys(byId).map(function (id) { return byId[id]; });
+      sessions.sort(function (a, b) { return a.startedAt - b.startedAt; });
+      return { schema: LOG_SCHEMA, sessions: sessions.slice(-MAX_SESSIONS) };
     }).then(function () {
       logSaving = false;
       if (logPending) flushQuestLogSave();
@@ -290,32 +613,61 @@
     }, 800);
   }
 
-  function getQuestLogStats() {
-    const completedDays = new Set();
-    let totalCompleted = 0;
+  function sessionDoneCount(session) {
+    if (!session || !Array.isArray(session.events)) return 0;
+    return Object.keys(foldEvents(session.events).done).length;
+  }
+
+  // Recomputing 200 sessions on every render is wasteful; the signature is
+  // cheap to build and only changes when an event is appended or a session
+  // starts/ends, which is exactly when the numbers can change.
+  function logSignature() {
+    let signature = questLog.sessions.length + "|" + (currentSession ? currentSession.id : "-");
     for (const session of questLog.sessions) {
-      for (const event of session.events) {
-        if (event.type === "move-completed" && typeof event.at === "number") {
-          completedDays.add(dayKey(event.at));
-          totalCompleted++;
-        }
-      }
+      signature += "|" + session.id + ":" + session.events.length;
     }
+    return signature;
+  }
+
+  function getQuestLogStats() {
+    const signature = logSignature();
+    if (statsCache && statsCache.signature === signature) return statsCache.stats;
     const today = dayKey(Date.now());
-    let todayCompleted = 0;
+    const completedDays = {};
+    let todayDone = 0;
+    let totalDone = 0;
+    let totalRuns = 0;
     for (const session of questLog.sessions) {
-      for (const event of session.events) {
-        if (event.type === "move-completed" && dayKey(event.at) === today) todayCompleted++;
+      const folded = foldEvents(session.events);
+      totalRuns += folded.runs.length;
+      for (const key in folded.done) {
+        if (!Object.prototype.hasOwnProperty.call(folded.done, key)) continue;
+        totalDone++;
+        const at = folded.done[key];
+        if (typeof at !== "number") continue;
+        const day = dayKey(at);
+        completedDays[day] = true;
+        if (day === today) todayDone++;
       }
     }
     let cursor = new Date();
-    if (!completedDays.has(dayKey(cursor.getTime()))) cursor.setDate(cursor.getDate() - 1);
+    if (!completedDays[dayKey(cursor.getTime())]) cursor.setDate(cursor.getDate() - 1);
     let streak = 0;
-    while (completedDays.has(dayKey(cursor.getTime()))) {
+    while (completedDays[dayKey(cursor.getTime())]) {
       streak++;
       cursor.setDate(cursor.getDate() - 1);
     }
-    return { todayCompleted: todayCompleted, totalCompleted: totalCompleted, streak: streak };
+    const current = currentSession ? foldEvents(currentSession.events) : { runs: [], done: {} };
+    const stats = {
+      todayDone: todayDone,
+      totalDone: totalDone,
+      streak: streak,
+      totalRuns: totalRuns,
+      sessionDone: Object.keys(current.done).length,
+      sessionRuns: current.runs.length,
+    };
+    statsCache = { signature: signature, stats: stats };
+    return stats;
   }
 
   function renderQuestLog(panel) {
@@ -343,11 +695,13 @@
     // Metrics are laid out as label + value pairs rather than one sentence:
     // the numbers are the only thing the user scans here, so they get the
     // weight and the tabular alignment while the labels recede. The wording
-    // is unchanged ("Today: 4 done · Streak: 2 days").
+    // is unchanged ("Today: 4 done · Streak: 2 days"). "Done" counts
+    // completion events, so the same move can count twice in one scene —
+    // that is the point, not a duplicate.
     const summary = document.createElement("div");
     summary.className = "questing-adventurer-panel__quest-log-summary";
     const metrics = [
-      ["Today", stats.todayCompleted + " done"],
+      ["Today", stats.todayDone + " done"],
       ["Streak", stats.streak + " day" + (stats.streak === 1 ? "" : "s")],
     ];
     metrics.forEach(function (metric, index) {
@@ -372,13 +726,16 @@
     });
     box.appendChild(summary);
 
-    const completedNow = currentSession
-      ? currentSession.events.filter(function (e) { return e.type === "move-completed"; }).length
-      : 0;
+    // "runs", never "occurrences": a run is one stretch of a trigger being
+    // active, which is all the plugin can observe. Say so by using the word.
     if (currentSession) {
       const now = document.createElement("div");
       now.className = "questing-adventurer-panel__quest-log-current";
-      now.textContent = "This session: " + completedNow + " move" + (completedNow === 1 ? "" : "s") + " completed";
+      const doneWord = stats.sessionDone === 1 ? "move" : "moves";
+      const runWord = stats.sessionRuns === 1 ? "run" : "runs";
+      now.textContent =
+        "This session: " + stats.sessionDone + " " + doneWord + " · " +
+        stats.sessionRuns + " trigger " + runWord;
       box.appendChild(now);
     }
 
@@ -387,13 +744,18 @@
       const list = document.createElement("div");
       list.className = "questing-adventurer-panel__quest-log-recent";
       for (const session of recent) {
-        const done = session.events.filter(function (e) { return e.type === "move-completed"; }).length;
+        const done = sessionDoneCount(session);
         if (done === 0 && !session.endedAt) continue;
         const row = document.createElement("div");
         row.className = "questing-adventurer-panel__quest-log-row";
-        row.textContent =
-          new Date(session.startedAt).toLocaleDateString() +
-          " · " + done + " done";
+        const parts = [new Date(session.startedAt).toLocaleDateString()];
+        if (session.sceneTitle) parts.push(session.sceneTitle);
+        parts.push(done + " done");
+        row.textContent = parts.join(" \u00b7 ");
+        row.title =
+          (session.sceneId ? "Scene #" + session.sceneId : "No scene") +
+          (session.sceneVisit ? " \u00b7 visit " + session.sceneVisit : "") +
+          (session.legacy ? " \u00b7 legacy record (coarse)" : "");
         list.appendChild(row);
       }
       if (list.children.length > 0) box.appendChild(list);
@@ -403,7 +765,7 @@
   }
 
   // ── Scene-aware triggers ────────────────────────────────────────────
-  var sceneContext = { tagIds: [], markers: [] };
+  var sceneContext = { title: "", tagIds: [], markers: [] };
   var sceneContextSceneId = null;
   var timelineCleanup = null;
   var firedMarkerIds = {};
@@ -416,15 +778,18 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query:
-            "query ($id: ID!) { findScene(id: $id) { tags { id } scene_markers { id seconds title tags { id } } } }",
+            "query ($id: ID!) { findScene(id: $id) { title tags { id } scene_markers { id seconds title tags { id } } } }",
           variables: { id: String(sceneId) },
         }),
       });
       const payload = await response.json();
       if (payload.errors && payload.errors.length) throw new Error(payload.errors[0].message);
       const scene = payload.data && payload.data.findScene;
-      if (!scene) return { tagIds: [], markers: [] };
+      if (!scene) return { title: "", tagIds: [], markers: [] };
       return {
+        // The title is snapshotted onto the session so history stays readable
+        // after the scene is renamed or deleted; it is never re-queried.
+        title: scene.title || "",
         tagIds: (scene.tags || []).map(function (t) { return String(t.id); }),
         markers: (scene.scene_markers || []).map(function (m) {
           return {
@@ -437,7 +802,7 @@
       };
     } catch (err) {
       console.warn("QuestingAdventurer: scene context lookup failed", err);
-      return { tagIds: [], markers: [] };
+      return { title: "", tagIds: [], markers: [] };
     }
   }
 
@@ -456,16 +821,36 @@
     const video = document.querySelector("#VideoJsPlayer video");
     if (!video) return;
     const onTime = function () {
-      const t = video.currentTime || 0;
+      const raw = video.currentTime;
+      const t = typeof raw === "number" && isFinite(raw) ? raw : 0;
+      if (autoPrevTime === null) {
+        // A resume mid-scene must not replay every marker behind the playhead;
+        // start at 0 only when playback is actually still at the top.
+        autoPrevTime = t <= 1 ? 0 : t;
+      } else {
+        evaluateAutoMarkerRules(autoPrevTime, t);
+        autoPrevTime = t;
+      }
       for (const marker of sceneContext.markers) {
         if (firedMarkerIds[marker.id]) continue;
         if (t + 0.15 < marker.seconds) continue;
-        firedMarkerIds[marker.id] = true;
+        // A marker claimed by an auto rule never prompts: it already fired (or
+        // will, when the rule's own conditions allow), and prompting would ask
+        // the user to accept what just happened automatically.
+        if (isMarkerAutoHandled(marker.id)) {
+          firedMarkerIds[marker.id] = true;
+          continue;
+        }
         const trigger = getEligibleTriggers().find(function (tr) {
           const wanted = Array.isArray(tr.markerTagIds) ? tr.markerTagIds : [];
           return wanted.some(function (id) { return marker.tagIds.indexOf(String(id)) !== -1; });
         });
-        if (trigger) showMarkerPrompt(marker, trigger);
+        // Only burn the marker when a prompt is actually shown. Burning it on
+        // a miss (no matching trigger, or the trigger is already active) used
+        // to spend the marker for the whole session with nothing to show.
+        if (!trigger || trigger.active) continue;
+        firedMarkerIds[marker.id] = true;
+        showMarkerPrompt(marker, trigger);
       }
     };
     video.addEventListener("timeupdate", onTime);
@@ -524,12 +909,218 @@
       if (prompt) prompt.remove();
       return;
     }
+    // Session first: ensureSession records the carried runs before this
+    // trigger flips to active, so this activation is not double-counted.
+    ensureSession();
     trigger.active = true;
-    countEvent("manualActivate");
-    recordEvent("trigger-activated", { triggerId: trigger.id, source: "marker", markerId: markerId });
+    startRun(trigger, { origin: "marker", observedBy: "marker", markerId: markerId });
     queueSave();
     announceToAria("Activated " + trigger.name + " from a scene marker.");
     render();
+  }
+
+  // ── Automatic playback rules ────────────────────────────────────────
+  // A rule binds one scene (or one marker inside that scene) to one trigger,
+  // and optionally to one move that gets attached when the rule fires. Rules
+  // live on the trigger (`trigger.autoRules`) rather than in a separate config
+  // key, so the settings page can edit them with the trigger it already owns
+  // and the overlay can evaluate them with the trigger list it already loads.
+  //
+  // Semantics, deliberately boring:
+  // - Firing only ever means "make sure this trigger is active and this move
+  //   is attached". It never deactivates, detaches or reorders anything.
+  // - `repeat: "once"` (default) fires at most once per session.
+  // - `repeat: "every"` re-evaluates on every forward crossing, so a trigger
+  //   emptied by Reward comes back at the next marker. It stays idempotent
+  //   while the trigger is already active, so a repeated crossing is a no-op.
+  // - A manual × suppresses every rule of that trigger for the rest of the
+  //   session: an explicit "not now" beats automation.
+  // - Markers are crossed, not sampled: backwards playback and jumps larger
+  //   than AUTO_SEEK_GUARD are rejected, so scrubbing past a marker does not
+  //   fire it.
+  const AUTO_SEEK_GUARD = 2;
+  let autoPrevTime = null;
+  let autoFiredRules = {};
+  let autoSuppressed = {};
+  let autoWarnedRules = {};
+
+  function normalizeAutoRules(value) {
+    if (!Array.isArray(value)) return [];
+    const rules = [];
+    for (const raw of value) {
+      if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !raw.id) continue;
+      const sceneId = raw.sceneId ? String(raw.sceneId) : null;
+      // Scene-specific by design: "fire anywhere" would silently rewrite the
+      // whole library every time a scene opens.
+      if (!sceneId) continue;
+      rules.push({
+        id: raw.id,
+        sceneId: sceneId,
+        markerId: raw.markerId ? String(raw.markerId) : null,
+        atSeconds:
+          typeof raw.atSeconds === "number" && isFinite(raw.atSeconds) && raw.atSeconds >= 0
+            ? raw.atSeconds
+            : null,
+        moveId: raw.moveId ? String(raw.moveId) : null,
+        repeat: raw.repeat === "every" ? "every" : "once",
+      });
+    }
+    return rules;
+  }
+
+  function getAutoRules(trigger) {
+    return trigger && Array.isArray(trigger.autoRules) ? trigger.autoRules : [];
+  }
+
+  function resetAutoState() {
+    autoPrevTime = null;
+    autoFiredRules = {};
+    autoSuppressed = {};
+    autoWarnedRules = {};
+  }
+
+  function ruleAppliesToScene(rule) {
+    if (!rule || !rule.sceneId || !currentSceneId) return false;
+    return String(rule.sceneId) === String(currentSceneId);
+  }
+
+  // A rule can carry an explicit time instead of a marker id (useful when the
+  // marker was deleted after the rule was written); the marker wins otherwise.
+  function ruleMarkerSeconds(rule) {
+    if (rule.markerId) {
+      for (const marker of sceneContext.markers) {
+        if (marker.id === rule.markerId) {
+          return typeof marker.seconds === "number" ? marker.seconds : null;
+        }
+      }
+      return typeof rule.atSeconds === "number" ? rule.atSeconds : null;
+    }
+    return typeof rule.atSeconds === "number" ? rule.atSeconds : null;
+  }
+
+  function isMarkerAutoHandled(markerId) {
+    for (const trigger of state.triggers) {
+      for (const rule of getAutoRules(trigger)) {
+        if (!ruleAppliesToScene(rule)) continue;
+        if (autoSuppressed[trigger.id]) continue;
+        if (rule.markerId === markerId) return true;
+      }
+    }
+    return false;
+  }
+
+  // A rule pinned to this scene overrides `sceneTagIds` for display: the user
+  // named the scene explicitly, so an activated trigger must not vanish from
+  // the list just because its tag filter does not match. Random selection and
+  // marker prompts still honour `sceneTagIds`.
+  function isTriggerAutoPinned(trigger) {
+    for (const rule of getAutoRules(trigger)) {
+      if (ruleAppliesToScene(rule)) return true;
+    }
+    return false;
+  }
+
+  function canAttachMoveToTrigger(moveId, triggerId) {
+    let count = 0;
+    for (const trigger of state.triggers) {
+      if (trigger.id === triggerId) continue;
+      if (Array.isArray(trigger.attachedMoveIds) && trigger.attachedMoveIds.indexOf(moveId) !== -1) {
+        count++;
+        if (count >= MAX_MOVE_ATTACHMENTS) return false;
+      }
+    }
+    return true;
+  }
+
+  function fireAutoRule(trigger, rule, source) {
+    if (!trigger || !rule) return false;
+    if (autoSuppressed[trigger.id]) return false;
+    if (rule.repeat !== "every" && autoFiredRules[rule.id]) return false;
+    const move = rule.moveId
+      ? state.moves.find(function (m) { return m.id === rule.moveId; })
+      : null;
+    let changed = false;
+    ensureSession();
+    if (!trigger.active) {
+      trigger.active = true;
+      startRun(trigger, { origin: "auto-" + source, observedBy: "playback" });
+      changed = true;
+    }
+    if (move) {
+      if (!Array.isArray(trigger.attachedMoveIds)) trigger.attachedMoveIds = [];
+      const alreadyAttached = trigger.attachedMoveIds.indexOf(move.id) !== -1;
+      if (!alreadyAttached && canAttachMoveToTrigger(move.id, trigger.id)) {
+        trigger.attachedMoveIds.push(move.id);
+        recordEvent("move-attached", {
+          runId: openRuns[trigger.id] || null,
+          triggerId: trigger.id,
+          moveId: move.id,
+          moveText: move.text,
+          source: "auto-" + source,
+          atSeconds: currentPlaybackSeconds(),
+        });
+        changed = true;
+      }
+    }
+    // A firing that accomplished nothing (already active, move already
+    // attached, or the move was at its attachment cap) does not spend a
+    // "once" rule, so the next crossing can still apply it. A firing that
+    // activated the trigger counts as spent.
+    if (changed) {
+      autoFiredRules[rule.id] = true;
+      queueSave();
+      announceToAria(
+        "Auto-triggered " + trigger.name + (move ? ", attached " + move.text : "") + "."
+      );
+      render();
+    }
+    return changed;
+  }
+
+  // Scene rules run once per panel setup: the scene is already open, so there
+  // is no crossing to wait for.
+  function applyAutoSceneRules() {
+    if (!currentSceneId) return false;
+    let changed = false;
+    for (const trigger of state.triggers) {
+      for (const rule of getAutoRules(trigger)) {
+        if (rule.markerId) continue;
+        if (typeof rule.atSeconds === "number") continue;
+        if (!ruleAppliesToScene(rule)) continue;
+        if (fireAutoRule(trigger, rule, "scene")) changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function evaluateAutoMarkerRules(previous, time) {
+    if (typeof previous !== "number" || typeof time !== "number") return false;
+    const delta = time - previous;
+    // Backwards playback or a seek: not a crossing.
+    if (delta <= 0 || delta > AUTO_SEEK_GUARD) return false;
+    let changed = false;
+    for (const trigger of state.triggers) {
+      for (const rule of getAutoRules(trigger)) {
+        if (!rule.markerId && typeof rule.atSeconds !== "number") continue;
+        if (!ruleAppliesToScene(rule)) continue;
+        const seconds = ruleMarkerSeconds(rule);
+        if (seconds === null) {
+          // The marker was deleted (or moved to another scene) and the rule has
+          // no explicit time to fall back on. Warn once per rule, not per tick.
+          if (!autoWarnedRules[rule.id]) {
+            autoWarnedRules[rule.id] = true;
+            console.warn(
+              "QuestingAdventurer: auto rule " + rule.id + " points at a marker that is not in scene " + currentSceneId
+            );
+          }
+          continue;
+        }
+        const crossed = previous + 0.001 < seconds && seconds <= time + 0.25;
+        if (!crossed) continue;
+        if (fireAutoRule(trigger, rule, "marker")) changed = true;
+      }
+    }
+    return changed;
   }
 
   function generateId() {
@@ -590,7 +1181,6 @@
     let activatedANewTrigger = false;
     if (inactiveTriggers.length > 0) {
       trigger = inactiveTriggers[Math.floor(Math.random() * inactiveTriggers.length)];
-      trigger.active = true;
       activatedANewTrigger = true;
     } else {
       const eligible = getEligibleTriggers();
@@ -603,9 +1193,10 @@
     // Per-trigger move filter: a move is "available" for THIS trigger if
     // (a) it's not already attached to this trigger (no duplicates on the
     // same trigger), and (b) it's attached to fewer than MAX_MOVE_ATTACHMENTS
-    // triggers globally (the 0.9.7 cap). If no moves are available for
-    // this trigger, undo the activation (activation and move attachment are
-    // atomic per the v2 spec) and announce why.
+    // triggers globally (the 0.9.7 cap). Activation and attachment stay
+    // atomic: the availability check runs BEFORE anything is mutated, so the
+    // no-move case no longer has to undo an activation (which used to leave a
+    // phantom run in the log).
     const availableForTrigger = state.moves.filter(function (m) {
       if (trigger.attachedMoveIds.indexOf(m.id) !== -1) return false;
       let attachCount = 0;
@@ -618,10 +1209,6 @@
       return true;
     });
     if (availableForTrigger.length === 0) {
-      if (activatedANewTrigger) {
-        // Undo the activation — activation and move attachment are atomic.
-        trigger.active = false;
-      }
       announceToAria(
         "Penalty: all available moves are already attached to " +
           trigger.name +
@@ -632,12 +1219,22 @@
       return;
     }
     const attachedMove = availableForTrigger[Math.floor(Math.random() * availableForTrigger.length)];
-    trigger.attachedMoveIds.push(attachedMove.id);
-    countEvent("penalty");
+    // Session before mutation: ensureSession opens carried runs from the
+    // pre-activation state, so this trigger is not counted twice.
+    ensureSession();
     if (activatedANewTrigger) {
-      recordEvent("trigger-activated", { triggerId: trigger.id, source: "penalty" });
+      trigger.active = true;
+      startRun(trigger, { origin: "penalty", observedBy: "user" });
     }
-    recordEvent("move-attached", { triggerId: trigger.id, moveId: attachedMove.id, source: "penalty" });
+    trigger.attachedMoveIds.push(attachedMove.id);
+    recordEvent("move-attached", {
+      runId: openRuns[trigger.id] || null,
+      triggerId: trigger.id,
+      moveId: attachedMove.id,
+      moveText: attachedMove.text,
+      source: "penalty",
+      atSeconds: currentPlaybackSeconds(),
+    });
     queueSave();
     announceToAria(
       "Penalty: " + (activatedANewTrigger ? "activated " : "") + trigger.name + ", attached " + attachedMove.text + "."
@@ -647,13 +1244,16 @@
 
   // Reward: pick a random active trigger that still has attached moves →
   // remove a random attached move. If the trigger ends with zero attached
-  // moves, set it to inactive.
+  // moves, set it to inactive and close its run.
   function applyReward() {
     const eligible = state.triggers.filter(function (t) {
       return t.active && t.attachedMoveIds.length > 0;
     });
     if (eligible.length === 0) return;
     const trigger = eligible[Math.floor(Math.random() * eligible.length)];
+    // Session first: the trigger is still active here, so ensureSession opens
+    // its carried run and the detach below lands inside a run that exists.
+    ensureSession();
     const idx = Math.floor(Math.random() * trigger.attachedMoveIds.length);
     const removedMoveId = trigger.attachedMoveIds.splice(idx, 1)[0];
     let deactivated = false;
@@ -662,11 +1262,17 @@
       deactivated = true;
     }
     const removedMove = state.moves.find(function (m) { return m.id === removedMoveId; });
-    countEvent("reward");
-    recordEvent("move-detached", { triggerId: trigger.id, moveId: removedMoveId, source: "reward" });
-    if (deactivated) {
-      recordEvent("trigger-deactivated", { triggerId: trigger.id, source: "reward" });
-    }
+    recordEvent("move-detached", {
+      runId: openRuns[trigger.id] || null,
+      triggerId: trigger.id,
+      moveId: removedMoveId,
+      moveText: removedMove ? removedMove.text : "",
+      source: "reward",
+      atSeconds: currentPlaybackSeconds(),
+    });
+    // A detach is not a completion, and it no longer erases the run's
+    // completion history — it only closes the run when the trigger empties.
+    if (deactivated) closeRun(trigger.id, "empty");
     queueSave();
     if (removedMove) {
       announceToAria(
@@ -1093,6 +1699,7 @@
           attachedMoveIds: Array.isArray(t.attachedMoveIds) ? t.attachedMoveIds : [],
           sceneTagIds: Array.isArray(t.sceneTagIds) ? t.sceneTagIds.map(String) : [],
           markerTagIds: Array.isArray(t.markerTagIds) ? t.markerTagIds.map(String) : [],
+          autoRules: normalizeAutoRules(t.autoRules),
         };
       });
       } else {
@@ -1477,7 +2084,9 @@
     const list = document.createElement("div");
     list.className = "questing-adventurer-panel__list";
 
-    const activeTriggers = state.triggers.filter(function (t) { return t.active === true && isTriggerEligible(t); });
+    const activeTriggers = state.triggers.filter(function (t) {
+      return t.active === true && (isTriggerEligible(t) || isTriggerAutoPinned(t));
+    });
     if (activeTriggers.length === 0) {
       const empty = document.createElement("div");
       empty.className = "questing-adventurer-panel__empty";
@@ -1676,6 +2285,29 @@
     }
     row.appendChild(nameEl);
 
+    // "2/4" for the run this trigger is currently in. The denominator is the
+    // attached list, not a count of how often the trigger happened — see the
+    // Quest Log header comment for why that distinction matters.
+    const run = currentRun(trigger.id);
+    if (run) {
+      const attached = Array.isArray(trigger.attachedMoveIds) ? trigger.attachedMoveIds : [];
+      let doneCount = 0;
+      for (const moveId of attached) {
+        if (isRunItemDone(run.id, moveId)) doneCount++;
+      }
+      if (attached.length > 0) {
+        const badge = document.createElement("span");
+        badge.className = "questing-adventurer-panel__run-count";
+        badge.textContent = doneCount + "/" + attached.length;
+        badge.title = doneCount + " of " + attached.length + " moves completed in run #" + run.run;
+        badge.setAttribute(
+          "aria-label",
+          "Run " + run.run + ": " + doneCount + " of " + attached.length + " moves completed"
+        );
+        row.appendChild(badge);
+      }
+    }
+
     const controls = document.createElement("span");
     controls.className = "questing-adventurer-panel__controls";
 
@@ -1752,17 +2384,34 @@
     if (indented) {
       const doneBtn = document.createElement("button");
       doneBtn.type = "button";
-      doneBtn.dataset.action = "complete-move";
       doneBtn.dataset.id = move.id;
       doneBtn.dataset.triggerId = parentTriggerId || "";
-      const completed = isMoveCompleted(move.id);
+      const run = parentTriggerId ? currentRun(parentTriggerId) : null;
+      const completed = run ? isRunItemDone(run.id, move.id) : false;
+      // Completion is per (run, move). A tick in an earlier run of the same
+      // trigger is shown as a hint, not as a tick, and never blocks the
+      // button — that was the old bug where one tick marked the move done
+      // everywhere for the rest of the session.
+      const earlier = completed || !run ? null : earlierRunCompletion(parentTriggerId, move.id);
+      doneBtn.dataset.action = completed ? "uncomplete-move" : "complete-move";
       doneBtn.className =
         "questing-adventurer-panel__complete-button" +
-        (completed ? " questing-adventurer-panel__complete-button--done" : "");
-      doneBtn.title = completed ? "Completed in this session" : "Mark this move complete";
-      doneBtn.setAttribute("aria-label", completed ? "Move completed" : "Mark move complete");
+        (completed ? " questing-adventurer-panel__complete-button--done" : "") +
+        (earlier ? " questing-adventurer-panel__complete-button--earlier" : "");
+      doneBtn.title = completed
+        ? "Completed in this run \u2014 click to undo"
+        : earlier
+          ? "Completed in run #" + earlier.run + " \u2014 click to count this run"
+          : "Mark this move complete";
+      doneBtn.setAttribute(
+        "aria-label",
+        completed
+          ? "Move completed in this run, click to undo"
+          : earlier
+            ? "Completed in an earlier run, click to complete this run"
+            : "Mark move complete"
+      );
       doneBtn.textContent = completed ? "\u2713" : "\u25cb";
-      doneBtn.disabled = completed;
       controls.appendChild(doneBtn);
     }
 
@@ -1796,6 +2445,7 @@
       attachedMoveIds: [],
       sceneTagIds: [],
       markerTagIds: [],
+      autoRules: [],
     });
     queueSave();
     render();
@@ -1811,6 +2461,16 @@
       return n.type === "trigger" && n.id === id;
     });
     if (!trigger) return;
+    // The × also drops every attached move. Record that as a run end with the
+    // cleared ids, or the log would show a run that simply stops mid-air and
+    // a move list that vanished with no explanation.
+    // An explicit × is a decision for the rest of the session: automation must
+    // not undo it at the next marker.
+    autoSuppressed[trigger.id] = true;
+    const clearedMoveIds = Array.isArray(trigger.attachedMoveIds) ? trigger.attachedMoveIds.slice() : [];
+    if (currentSession && openRuns[trigger.id]) {
+      closeRun(trigger.id, "deactivated", { clearedMoveIds: clearedMoveIds });
+    }
     trigger.active = false;
     trigger.attachedMoveIds = [];
     queueSave();
@@ -1989,9 +2649,9 @@
       return n.type === "trigger" && n.id === id;
     });
     if (!trigger || trigger.active) return;
+    ensureSession();
     trigger.active = true;
-    countEvent("manualActivate");
-    recordEvent("trigger-activated", { triggerId: trigger.id, source: "manual" });
+    startRun(trigger, { origin: "manual", observedBy: "user" });
     queueSave();
     announceToAria("Activated " + trigger.name + ".");
     render();
@@ -2032,14 +2692,24 @@
       );
       return;
     }
+    // Session first, before the trigger flips to active: ensureSession only
+    // opens carried runs for triggers that were already active, so the
+    // activation below is the one that starts this run.
+    ensureSession();
     trigger.attachedMoveIds.push(moveId);
     const wasInactive = !trigger.active;
-    if (wasInactive) trigger.active = true;
-    countEvent("attach");
     if (wasInactive) {
-      recordEvent("trigger-activated", { triggerId: trigger.id, source: "manual-attach" });
+      trigger.active = true;
+      startRun(trigger, { origin: "manual-attach", observedBy: "user" });
     }
-    recordEvent("move-attached", { triggerId: trigger.id, moveId: moveId, source: "manual" });
+    recordEvent("move-attached", {
+      runId: openRuns[trigger.id] || null,
+      triggerId: trigger.id,
+      moveId: moveId,
+      moveText: move.text,
+      source: "manual",
+      atSeconds: currentPlaybackSeconds(),
+    });
     queueSave();
     announceToAria(
       "Attached " + move.text + " to " + trigger.name +
@@ -2192,8 +2862,11 @@
       case "complete-move":
         if (id) completeMove(id, el.dataset.triggerId);
         break;
+      case "uncomplete-move":
+        if (id) undoMove(id, el.dataset.triggerId);
+        break;
       case "end-session":
-        endSession();
+        endSession("manual");
         break;
       case "accept-marker-prompt":
         if (el.dataset.triggerId) acceptMarkerPrompt(el.dataset.triggerId, el.dataset.markerId);
@@ -2477,6 +3150,7 @@
     sceneContextSceneId = String(match[1]);
     sceneContext = await fetchSceneContext(match[1]);
     firedMarkerIds = {};
+    resetAutoState();
 
     // Use a plain <div> (not a <dialog>) so the rest of the page is NOT
     // made inert. The overlay is appended to the video player element
@@ -2516,6 +3190,9 @@
     panel.addEventListener("pointerdown", onPanelPointerDown);
     render();
     attachTimelinePrompts();
+    // Scene-level rules fire only after the first render: firing renders again,
+    // and doing it before the panel exists would leave the panel stale.
+    applyAutoSceneRules();
   }
 
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);
@@ -2528,7 +3205,7 @@
     window.PluginApi.Event.addEventListener("stash:location", function () {
       const nextMatch = window.location.pathname.match(/\/scenes\/(\d+)/);
       if (currentSession && (!nextMatch || String(currentSession.sceneId) !== nextMatch[1])) {
-        endSession();
+        endSession("navigation");
       }
       if (!nextMatch || (sceneContextSceneId && sceneContextSceneId !== nextMatch[1])) {
         if (timelineCleanup) timelineCleanup();
@@ -2542,10 +3219,9 @@
   }
 
   window.addEventListener("pagehide", function () {
-    if (currentSession) {
-      currentSession.endedAt = Date.now();
-      currentSession = null;
-      flushQuestLogSave();
-    }
+    // Silent: the page is going away, and render() would try to re-inject the
+    // panel into a player that is already being torn down.
+    endSession("pagehide", true);
+    flushQuestLogSave();
   });
 })();

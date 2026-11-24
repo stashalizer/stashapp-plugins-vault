@@ -72,8 +72,9 @@ Turns scene playback into a quest. While a scene plays, the viewer is a "questin
 - **Reward** — picks a random *active* trigger that still has attached moves and removes a random attached move. If a trigger ends up with zero attached moves, it's set back to `active: false`.
 - **➕ Add toggle** — reveals an inline footer for adding a new trigger or a new move on the fly without leaving the player.
 - **Manual Selection library** — for fine-grained control the random buttons can't give you: explicitly activate any inactive trigger, or attach any library move to any trigger via a dropdown. Lets you set up a specific configuration instead of relying on randomness.
-- **Quest Log** — mark attached moves Done; history, daily completed counts and streaks persist across reloads.
+- **Quest Log** — mark attached moves Done per run, click a tick to undo it; daily counts, streaks and the last three sessions persist across reloads. Completion is tracked per trigger run, so the same move can be ticked again when its trigger comes up a second time, and ticking it under one trigger no longer ticks it under another. Runs are a record of when a trigger was switched on, not a count of how often it appeared in the video — the plugin cannot observe that.
 - **Scene-aware triggers** — restrict a trigger to scenes with chosen tags, and show prompts when playback reaches markers with chosen tags.
+- **Playback rules** — bind a trigger to a scene (opens it automatically) or to one of that scene's markers (fires when the playhead crosses it), optionally attaching a move at the same moment. Configured per trigger under Settings: paste a scene ID or URL, pick "On scene open" or a marker, pick the move, and tick **Re-arm** if the trigger should come back after a Reward clears it. Crossings are detected, not sampled: scrubbing over a marker does not fire it, and an explicit × on the trigger suppresses its rules for the rest of the session.
 - **Partner deal** — create a one-time, 10-minute link so a partner signed in to the same Stash instance can draw one inactive trigger.
 - **Hardware bridge (experimental)** — opt-in local Intiface connection on move completion.
 

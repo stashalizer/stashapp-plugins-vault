@@ -127,15 +127,78 @@ AGENTS.md                   # architecture + conventions (this file)
   separate `log` / `deal` keys. Suite Data is preferred; csLib is the fallback.
   `config` holds moves, triggers and UI preferences; `log` holds sessions;
   `deal` holds the one-time partner code.
-- **Quest Log.** The overlay panel renders `Today` / `Streak` as label+value spans (`__quest-log-label` / `__quest-log-value`, tabular figures) rather than one sentence — keep the wording identical if you touch it. A session is created on the first activation and stores
-  `events` plus counts. The overlay adds an explicit Done button per attached
-  move; Reward is a detach event and must not be recorded as completion.
-  Streaks count local calendar days with at least one completed move. History
-  is capped at 200 sessions / 500 events per session.
+- **Quest Log.** Log schema 2, and the shape is the design: **session → run →
+  completion**. A session is one playthrough of one scene (`sceneId`,
+  `sceneTitle` snapshot, `sceneVisit`). A run is one stretch of a trigger
+  being active inside that session (`runId`, `run` = 1-based ordinal, `origin`
+  ∈ session / penalty / manual / manual-attach / marker / auto-scene /
+  auto-marker, `observedBy` ∈ state / user / marker / playback, plus
+  `markerId` and `requiredMoveIds` snapshot). A
+  completion is a `(runId, moveId)` pair; status is **folded from events on
+  every render** — no completion boolean is persisted, and undo appends
+  `move-uncompleted` rather than deleting anything.
+  **A run is not a count of how often the trigger happened on screen.** The
+  plugin cannot observe that: `active` is a persisted config flag (it survives
+  scene changes for days), and the only repeatable on-screen signal is a scene
+  marker, which currently fires once per session. Never add a field named
+  "occurrences" or copy that claims to count them; "runs" is the honest lower
+  bound, and the panel says "trigger runs" for exactly that reason.
+  **Judgement key is `(runId, moveId)`, never `moveId`.** A move may be
+  attached to two triggers (`MAX_MOVE_ATTACHMENTS`), and a trigger may run
+  more than once per session; keying on the move alone ticked it everywhere at
+  once and blocked the second run. `earlierRunCompletion()` exists to show a
+  dimmed "completed in run #1" hint without blocking the current run.
+  **Every state change that ends a run must be logged**: ✕ writes
+  `trigger-deactivated{reason:"deactivated", clearedMoveIds}`, Reward emptying
+  a trigger writes `reason:"empty"`, session end / navigation / pagehide write
+  `reason:"session-end"|"navigation"|"pagehide"|"manual"` before the session is
+  nulled. A trigger already active at session start gets a carried run
+  (`origin:"session"`), opened in `ensureSession()` **before** any activation
+  mutates `active`, or the same activation would be counted twice.
+  The overlay panel keeps the `Today` / `Streak` label+value spans
+  (`__quest-log-label` / `__quest-log-value`, tabular figures) and the original
+  wording — do not rewrite them as a sentence. "Done" counts completion
+  events, so the same move may count twice in one scene; that is the fix, not
+  a bug. Streaks count local calendar days with at least one net completion.
+  History is capped at 200 sessions / 2000 events per session, and trimming
+  drops **whole runs** (`trimSessionEvents`) so a surviving completion never
+  loses its activation. Legacy schema-1 sessions are migrated by replaying
+  their events into synthetic runIds and are flagged `legacy: true`; they can
+  only ever show one run per trigger because v1 recorded a move once per
+  session.
 - **Scene-aware triggers.** `sceneTagIds` restricts a trigger to scenes with a
   matching tag (empty = every scene). `markerTagIds` matches scene-marker tags;
   the overlay loads scene tags and markers and shows a prompt when playback
   reaches a matching marker. Prompts fire once per session and require Accept.
+- **Playback rules (auto-fire).** `trigger.autoRules: [{id, sceneId, markerId,
+  atSeconds, moveId, repeat}]` — per-trigger bindings, edited on the settings
+  page (scene id or `/scenes/<id>` URL, then a marker picker fetched from
+  `findScene.scene_markers`). Firing means only "make sure this trigger is
+  active and this move is attached": never deactivate, detach or reorder.
+  - **Scene rules** (`markerId === null` and no `atSeconds`) fire once per
+    panel setup, after the first render, and deliberately **bypass
+    `sceneTagIds`** — pinning a rule to a scene is more specific than a tag
+    filter. `isTriggerAutoPinned()` applies the same override to
+    `renderActiveList`, or the activated trigger would be hidden by its own tag
+    filter. Random selection and marker prompts still honour the tags.
+  - **Marker rules** fire on a forward crossing in
+    `evaluateAutoMarkerRules()`: `prev + 0.001 < seconds <= time + 0.25`,
+    rejecting `delta <= 0` (backwards) and `delta > AUTO_SEEK_GUARD` (2s, a
+    seek). `autoPrevTime` starts at the current playhead when a scene opens
+    mid-way, so resuming does not replay every marker behind it.
+  - `repeat: "once"` fires at most once per session and is consumed only by a
+    firing that changed something; `"every"` re-evaluates on each crossing, so
+    a trigger emptied by Reward comes back at the next marker while staying
+    idempotent when already active.
+  - A manual × sets `autoSuppressed[triggerId]`: automation must not undo an
+    explicit "not now" for the rest of the session. `resetAutoState()` runs on
+    scene setup and on `endSession()`, so both re-arm.
+  - A marker claimed by a matching rule never shows the manual prompt
+    (`isMarkerAutoHandled`), otherwise the user would be asked to accept what
+    already happened.
+  - Attaching respects the move's global `MAX_MOVE_ATTACHMENTS` cap: at the
+    cap the trigger still activates and the move is skipped. A deleted marker
+    with no `atSeconds` fallback warns once per rule, not per timeupdate.
 - **Partner deal.** The settings page creates an 8-character, 10-minute,
   single-use code and a `?deal=` link. The partner must be signed in to the same
   Stash instance. The draw only activates an inactive trigger; it does not edit

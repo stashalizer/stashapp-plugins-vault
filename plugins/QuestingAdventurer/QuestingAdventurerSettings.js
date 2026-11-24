@@ -266,6 +266,12 @@
     const [hardwareStatus, setHardwareStatus] = useState("");
     const [editingId, setEditingId] = useState(null);
     const [footerText, setFooterText] = useState("");
+    // Playback rules: per-trigger scene/marker bindings. `autoDraft` holds the
+    // uncommitted scene input per trigger, `sceneMarkerCache` the marker lists
+    // fetched from Stash so a rule can name a marker instead of a timecode.
+    const [autoDraft, setAutoDraft] = useState({});
+    const [sceneMarkerCache, setSceneMarkerCache] = useState({});
+    const markerRequests = useRef({});
     const inputRef = useRef(null);
     const editingIdRef = useRef(null);
 
@@ -340,6 +346,21 @@
       }
     }, [editingId]);
 
+    // A rule names its marker by id, so the picker needs that scene's marker
+    // list. Prefetch it for every scene any rule mentions; the loader is
+    // idempotent and cached per scene id.
+    useEffect(function () {
+      const scenes = {};
+      triggers.forEach(function (trigger) {
+        (trigger.autoRules || []).forEach(function (rule) {
+          if (rule && rule.sceneId) scenes[String(rule.sceneId)] = true;
+        });
+      });
+      Object.keys(scenes).forEach(function (sceneId) {
+        loadSceneMarkers(sceneId);
+      });
+    }, [triggers]);
+
     editingIdRef.current = editingId;
 
     function commitTriggers(nextTriggers) {
@@ -370,6 +391,7 @@
         attachedMoveIds: [],
         sceneTagIds: [],
         markerTagIds: [],
+        autoRules: [],
       }];
       commitTriggers(nextTriggers);
     }
@@ -778,6 +800,202 @@
       saveTriggers(next);
     }
 
+    // ── Playback rules ──────────────────────────────────────────────────
+    function makeRuleId() {
+      return "rule-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    }
+
+    function parseSceneId(text) {
+      if (!text) return null;
+      const url = String(text).match(/\/scenes\/(\d+)/);
+      if (url) return url[1];
+      const plain = String(text).trim().match(/^(\d+)$/);
+      return plain ? plain[1] : null;
+    }
+
+    function formatClock(seconds) {
+      const total = Math.max(0, Math.round(Number(seconds) || 0));
+      const minutes = Math.floor(total / 60);
+      const rest = total % 60;
+      return minutes + ":" + String(rest).padStart(2, "0");
+    }
+
+    async function loadSceneMarkers(sceneId) {
+      const id = sceneId ? String(sceneId) : "";
+      if (!id || markerRequests.current[id]) return;
+      markerRequests.current[id] = true;
+      setSceneMarkerCache(function (prev) {
+        return Object.assign({}, prev, { [id]: { status: "loading", title: "", markers: [] } });
+      });
+      try {
+        const response = await fetch("/graphql", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: "query ($id: ID!) { findScene(id: $id) { title scene_markers { id seconds title } } }",
+            variables: { id: id },
+          }),
+        });
+        const payload = await response.json();
+        if (payload.errors && payload.errors.length) throw new Error(payload.errors[0].message);
+        const scene = payload.data && payload.data.findScene;
+        setSceneMarkerCache(function (prev) {
+          return Object.assign({}, prev, {
+            [id]: {
+              status: "ready",
+              title: scene && scene.title ? scene.title : "",
+              markers: scene && Array.isArray(scene.scene_markers)
+                ? scene.scene_markers.map(function (m) {
+                    return {
+                      id: String(m.id),
+                      seconds: typeof m.seconds === "number" ? m.seconds : 0,
+                      title: m.title || "",
+                    };
+                  })
+                : [],
+            },
+          });
+        });
+      } catch (err) {
+        console.error("QuestingAdventurer settings: marker lookup failed for scene " + id, err);
+        markerRequests.current[id] = false;
+        setSceneMarkerCache(function (prev) {
+          return Object.assign({}, prev, { [id]: { status: "error", title: "", markers: [] } });
+        });
+      }
+    }
+
+    function updateAutoRules(triggerId, updater) {
+      const next = triggers.map(function (trigger) {
+        if (trigger.id !== triggerId) return trigger;
+        return Object.assign({}, trigger, { autoRules: updater(trigger.autoRules || []) });
+      });
+      setTriggers(next);
+      saveTriggers(next);
+    }
+
+    function addAutoRule(triggerId) {
+      const sceneId = parseSceneId(autoDraft[triggerId]);
+      if (!sceneId) return;
+      updateAutoRules(triggerId, function (rules) {
+        return rules.concat([{
+          id: makeRuleId(),
+          sceneId: sceneId,
+          markerId: null,
+          atSeconds: null,
+          moveId: null,
+          repeat: "once",
+        }]);
+      });
+      setAutoDraft(function (prev) {
+        const next = Object.assign({}, prev);
+        delete next[triggerId];
+        return next;
+      });
+      loadSceneMarkers(sceneId);
+    }
+
+    function patchAutoRule(triggerId, ruleId, patch) {
+      updateAutoRules(triggerId, function (rules) {
+        return rules.map(function (rule) {
+          return rule.id === ruleId ? Object.assign({}, rule, patch) : rule;
+        });
+      });
+    }
+
+    function removeAutoRule(triggerId, ruleId) {
+      updateAutoRules(triggerId, function (rules) {
+        return rules.filter(function (rule) { return rule.id !== ruleId; });
+      });
+    }
+
+    function renderAutoRule(trigger, rule) {
+      const cache = sceneMarkerCache[rule.sceneId] || { status: "idle", title: "", markers: [] };
+      const markers = cache.markers || [];
+      const hasTimeOnly = !rule.markerId && typeof rule.atSeconds === "number";
+      const markerValue = rule.markerId || (hasTimeOnly ? "time" : "");
+      return h(
+        "div",
+        { key: rule.id, className: "questing-adventurer-settings__auto-rule" },
+        h(
+          "span",
+          {
+            className: "questing-adventurer-settings__auto-scene",
+            title: "Scene #" + rule.sceneId + (cache.status === "error" ? " (markers unavailable)" : ""),
+          },
+          cache.title || ("#" + rule.sceneId)
+        ),
+        h(
+          "select",
+          {
+            className: "questing-adventurer-settings__auto-select",
+            value: markerValue,
+            onChange: function (e) {
+              const value = e.target.value;
+              if (value === "") {
+                patchAutoRule(trigger.id, rule.id, { markerId: null, atSeconds: null });
+              } else if (value === "time") {
+                patchAutoRule(trigger.id, rule.id, { markerId: null });
+              } else {
+                patchAutoRule(trigger.id, rule.id, { markerId: value, atSeconds: null });
+              }
+            },
+          },
+          h("option", { value: "" }, "On scene open"),
+          markers.map(function (marker) {
+            return h(
+              "option",
+              { key: marker.id, value: marker.id },
+              formatClock(marker.seconds) + " \u00b7 " + (marker.title || "Marker")
+            );
+          }),
+          hasTimeOnly
+            ? h("option", { value: "time" }, "At " + formatClock(rule.atSeconds) + " (no marker)")
+            : null
+        ),
+        h(
+          "select",
+          {
+            className: "questing-adventurer-settings__auto-select",
+            value: rule.moveId || "",
+            onChange: function (e) {
+              patchAutoRule(trigger.id, rule.id, { moveId: e.target.value || null });
+            },
+          },
+          h("option", { value: "" }, "Attach no move"),
+          moves.map(function (move) {
+            return h("option", { key: move.id, value: move.id }, move.text);
+          })
+        ),
+        h(
+          "label",
+          {
+            className: "questing-adventurer-settings__auto-repeat",
+            title: "Re-arm when the trigger is cleared before the marker is crossed again",
+          },
+          h("input", {
+            type: "checkbox",
+            checked: rule.repeat === "every",
+            onChange: function (e) {
+              patchAutoRule(trigger.id, rule.id, { repeat: e.target.checked ? "every" : "once" });
+            },
+          }),
+          "Re-arm"
+        ),
+        h(
+          "button",
+          {
+            className: "questing-adventurer-settings__auto-remove",
+            title: "Remove this playback rule",
+            "aria-label": "Remove playback rule for scene " + rule.sceneId,
+            onClick: function () { removeAutoRule(trigger.id, rule.id); },
+          },
+          "\u00d7"
+        )
+      );
+    }
+
     function renderTrigger(trigger) {
       const TagSelect = PluginApi.components && PluginApi.components.TagIDSelect;
       return h(
@@ -876,6 +1094,55 @@
               )
             )
           : null,
+        h(
+          "div",
+          { className: "questing-adventurer-settings__auto" },
+          h(
+            "div",
+            { className: "questing-adventurer-settings__auto-head" },
+            h("span", null, "Playback triggers"),
+            h(
+              "span",
+              { className: "questing-adventurer-settings__auto-hint" },
+              "Activate automatically and attach a move on scene open or at a marker"
+            )
+          ),
+          (trigger.autoRules || []).map(function (rule) {
+            return renderAutoRule(trigger, rule);
+          }),
+          h(
+            "div",
+            { className: "questing-adventurer-settings__auto-add" },
+            h("input", {
+              type: "text",
+              className: "questing-adventurer-settings__auto-input",
+              placeholder: "Scene ID or /scenes/123 URL",
+              "aria-label": "Scene to bind to " + trigger.name,
+              value: autoDraft[trigger.id] || "",
+              onChange: function (e) {
+                const value = e.target.value;
+                setAutoDraft(function (prev) {
+                  return Object.assign({}, prev, { [trigger.id]: value });
+                });
+              },
+              onKeyDown: function (e) {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addAutoRule(trigger.id);
+                }
+              },
+            }),
+            h(
+              "button",
+              {
+                className: "questing-adventurer-settings__auto-add-btn",
+                disabled: !parseSceneId(autoDraft[trigger.id]),
+                onClick: function () { addAutoRule(trigger.id); },
+              },
+              "Add scene"
+            )
+          )
+        ),
         (trigger.attachedMoveIds || []).map(function (moveId) {
           const move = moves.find(function (m) { return m.id === moveId; });
           if (!move) return null;
