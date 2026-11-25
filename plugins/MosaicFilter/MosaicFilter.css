@@ -14,8 +14,10 @@
  *     .mosaic-filter-rectangle            (the filtered region; absolute)
  *     .mosaic-filter-rectangle__resize    (bottom-right resize grip)
  *     .mosaic-filter-chrome               (inset:0 anchor, pointer-events:none)
- *       .mosaic-filter-pill               (collapsed launcher, bottom-right)
- *       .mosaic-filter-panel              (popover opened by the pill)
+ *       .mosaic-filter-pill               (collapsed launcher; also the drag handle —
+ *                                          inline left/top once the user moves it)
+ *       .mosaic-filter-panel              (popover opened by the pill; inline
+ *                                          left/top while it follows a moved pill)
  *       .mosaic-filter-toast              (transient state feedback)
  *
  * Layering inside the player:
@@ -26,9 +28,12 @@
  * panel is a foreground surface: on a narrow player the panel overlaps the
  * centre of the frame, and the big play button must not punch through it.
  *
- * Intrusion budget: at rest the plugin occupies one 28px pill in the bottom
- * right corner, clear of the control bar, and nothing else. It fades out with
- * the rest of the player chrome. The panel is only ever shown on request.
+ * Intrusion budget: at rest the plugin occupies one 28px pill, bottom-right by
+ * default and wherever the user drags it afterwards, and nothing else. It fades
+ * out with the rest of the player chrome. The panel is only ever shown on
+ * request. `right`/`bottom` below are the *un-dragged* placement only: once the
+ * pill has been moved, the script writes left/top and clears both, so never
+ * drop a `left`/`top` into these rules.
  */
 
 /* ---------------------------------------------------------------------------
@@ -316,6 +321,25 @@
   white-space: nowrap;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.22);
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+  /* The pill is also the drag handle: without this a touch drag on it would be
+     read as a scroll/zoom gesture instead of reaching the pointer handlers.
+     `cursor` stays `pointer` on purpose — opening the panel is still the pill's
+     primary action, and the tooltip advertises the drag. */
+  touch-action: none;
+}
+
+/* Dragging: no tap feedback, no fade, and a lifted shadow so the pill reads as
+   "held" rather than "pressed". The inline left/top written by the drag take it
+   out of the stylesheet's corner anchor. */
+.mosaic-filter-pill--dragging,
+.mosaic-filter-pill--dragging:hover,
+.mosaic-filter-pill--dragging:active {
+  transform: none;
+  transition: none;
+  color: var(--mf-text);
+  border-color: var(--mf-line-strong);
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .mosaic-filter-pill:hover {

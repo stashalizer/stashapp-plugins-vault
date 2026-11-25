@@ -96,12 +96,15 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 - **Follow-cursor.** Turn it on and the filter re-centers on your pointer as you move it — no dragging needed. Drag is disabled in this mode (resize still works).
 - **Blur, solid and pixelate** fill modes. Solid cannot leak shape or colour; pixelate uses a low-resolution video canvas and is opt-in.
 - **Global, scene and studio presets** — resolution order is scene > studio > global default.
+- **Movable pill** — drag the pill (mouse or touch) to park the launcher anywhere over the picture, out of the way of other overlays and of anything else in that corner. The open panel travels with it, and the placement is remembered per browser.
 - **Redacted screenshot** — copy or download the current frame with the filter applied.
 - **Panic screen** — Ctrl+Shift+X shows a local, network-free decoy article and pauses/mutes playback.
 
 ### How to use it
 
 **On the player** — a small **Mosaic** pill sits in the bottom-right corner, just above Stash's own control bar, and fades out with the rest of the player chrome while you watch. It is the only thing the plugin puts on the video. Click it to open the settings panel; click outside it, press `Esc`, or use the ✕ to close.
+
+**Moving the pill:** drag it anywhere over the picture — the panel follows and never covers it. A press that does not move is still a click, so clicking to open the panel works exactly as before. The pill stays inside the frame (it is re-clamped when the window or fullscreen size changes), and the position is remembered per browser rather than per scene, so it survives navigation and reloads.
 
 The pill's dot is the state read-out: hollow = off, blue = on, amber = reverse mode (everything outside the region is filtered).
 

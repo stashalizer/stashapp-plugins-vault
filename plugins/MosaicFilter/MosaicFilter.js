@@ -42,6 +42,25 @@
   const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
   const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
   const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
+
+  // Pill drag constants. Declared up here (not next to the drag functions)
+  // because `pillPos` calls loadPillPos() at module init, and a `const` further
+  // down would still be in its temporal dead zone at that point.
+  const PILL_POS_KEY = "MosaicFilter.pillPos";
+  // Pointer travel (px) before a press on the pill counts as a drag rather than
+  // a click. The pill is the panel's disclosure button, so the click has to
+  // survive a slightly shaky press.
+  const PILL_DRAG_THRESHOLD_PX = 4;
+  // Clicks that land on the player this long after a drag are swallowed, so the
+  // release over the picture is not read by videojs as play/pause.
+  const DRAG_CLICK_SWALLOW_MS = 400;
+  // Keeps the pill and the panel off the frame's edges when they are free.
+  const CHROME_INSET = 8;
+  // Distance between the pill and the panel that follows it.
+  const PILL_PANEL_GAP = 8;
+  // Floor for a floating panel's height. Below this it still scrolls, but the
+  // header and the first rows stay readable.
+  const PANEL_MIN_H = 120;
   const storage = window.MosaicFilterStorage || {
     loadConfig: function () { return csLib.getConfiguration(CONFIG_KEY).then(function (v) { return v || {}; }); },
     saveConfig: function (value) { return csLib.setConfiguration(CONFIG_KEY, value); },
@@ -136,6 +155,27 @@
 
   // Active pointer interaction. Either { type: "drag" } or { type: "resize" }.
   let dragState = null;
+
+  // Where the pill was dragged to, as fractions of the chrome box (0..1).
+  // `null` means "never dragged": the stylesheet's bottom-right anchor applies
+  // untouched, which is also the only case where --mf-cb-h matters. Kept in
+  // localStorage rather than in the plugin config — it is a per-browser UI
+  // preference, not preset data (see the "Pill drag" section).
+  let pillPos = loadPillPos();
+  // Active pill drag: { id, grabX, grabY, startX, startY, moved, captured, geom }.
+  let pillDrag = null;
+  // Latest cursor position queued for the coalesced drag frame.
+  let pillMovePoint = null;
+  let pillMoveFrame = 0;
+  // Set when a drag moved the pill, so the click pointerup produces does not
+  // also toggle the panel.
+  let suppressPillClick = false;
+  // Timestamp until which a click on the picture is swallowed after a drag.
+  let swallowClickUntil = 0;
+  // Natural (uncapped) height of the panel, measured by placePanel. The drag
+  // frame reuses it instead of measuring: with an inline max-height applied,
+  // offsetHeight only reports the capped height.
+  let panelNatH = 0;
 
   // Last known cursor position over the player. Used by snapRectToPointer
   // when toggling Follow on or mounting with Follow already enabled.
@@ -483,13 +523,16 @@
     pill.setAttribute("aria-expanded", panelOpen ? "true" : "false");
     pill.title =
       "Mosaic filter — " + (on ? "on" : "off") + " · " + sourceLabel() +
-      " (Alt+M toggles, Esc closes)";
+      " (drag to move · Alt+M toggles · Esc closes)";
 
     const focusKey = panelOpen ? capturePanelFocus() : null;
     panel.innerHTML = panelMarkup();
     statusEl = panel.querySelector(".mosaic-filter-panel__status");
     if (statusEl) statusEl.textContent = statusMessage;
     if (focusKey) restorePanelFocus(focusKey);
+    // The panel's content just changed, so its height did too: a floating
+    // panel has to be re-placed or it can end up half out of the frame.
+    placeChrome();
   }
 
   // ---------------------------------------------------------------------------
@@ -640,7 +683,7 @@
   function applyPendingFollow() {
     const p = pendingFollow;
     pendingFollow = null;
-    if (!p || !state.follow || dragState) return;
+    if (!p || !state.follow || dragState || pillDrag) return;
     if (!player || !rect) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
@@ -1044,6 +1087,22 @@
     stopPixelLoop();
     if (panicActive) togglePanicScreen();
     detachFollowListener();
+    // A pill drag in flight would keep its document listeners and its pending
+    // frame alive after the node is detached.
+    if (pillDrag) {
+      document.removeEventListener("pointermove", onPillPointerMove);
+      document.removeEventListener("pointerup", onPillPointerUp);
+      document.removeEventListener("pointercancel", onPillPointerUp);
+      pillDrag = null;
+    }
+    if (pillMoveFrame) {
+      window.cancelAnimationFrame(pillMoveFrame);
+      pillMoveFrame = 0;
+    }
+    pillMovePoint = null;
+    suppressPillClick = false;
+    swallowClickUntil = 0;
+    panelNatH = 0;
     if (toastTimer) {
       clearTimeout(toastTimer);
       toastTimer = null;
@@ -1104,8 +1163,14 @@
       attachChromeListeners();
       syncPlayerMetrics();
       // video.js may still be building its control bar on the first mount;
-      // re-measure once it has settled so the pill does not sit under it.
-      setTimeout(syncPlayerMetrics, 400);
+      // re-measure once it has settled so the pill does not sit under it. The
+      // second pass also places a dragged pill: the chrome can still be 0x0 at
+      // the first render (a player revealed a frame later), and then the first
+      // placeChrome() has nothing to measure against.
+      setTimeout(function () {
+        syncPlayerMetrics();
+        placeChrome();
+      }, 400);
     }
     // Always attach the follow listener while the overlay is mounted, so
     // that toggling Follow on later just flips the flag (and snaps the
@@ -1248,6 +1313,12 @@
     switch (action) {
       case "toggle-panel":
         e.preventDefault();
+        // The click that ends a pill drag lands on the pill, and it must not
+        // count as "show me the panel".
+        if (suppressPillClick) {
+          suppressPillClick = false;
+          break;
+        }
         setPanelOpen(!panelOpen);
         break;
       case "close-panel":
@@ -1365,6 +1436,351 @@
     chrome.addEventListener("click", onChromeClick);
     chrome.addEventListener("input", onChromeInput);
     chrome.addEventListener("change", onChromeChange);
+    // The pill is built once per mount and only restyled afterwards, so the
+    // listener survives every renderChrome() pass.
+    if (pill) pill.addEventListener("pointerdown", onPillPointerDown);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pill drag (mouse + touch)
+  //
+  // The pill is the only persistent chrome, and it sits in a corner that is not
+  // always free: Stash's own badges live at the top, other plugins mount their
+  // overlays wherever they like, and the bottom-right corner collides with
+  // whatever a user has already put there. Dragging it is the only answer a
+  // plugin can give to "that corner is taken" — it cannot know which corner is
+  // free.
+  //
+  // No separate grip: the pill is both the disclosure button and the handle. A
+  // press only becomes a drag after PILL_DRAG_THRESHOLD_PX of travel, so a
+  // click still opens the panel, and a keyboard Enter keeps working because it
+  // never produces a pointerdown.
+  //
+  // The position is stored as FRACTIONS of the chrome box, not pixels: Stash
+  // rebuilds the player on every navigation, and fullscreen turns the same
+  // corner into a different offset. It lives in localStorage because it is a
+  // per-browser UI preference — the config schema belongs to
+  // MosaicFilterShared.sanitizeState and the settings page, and a throwaway
+  // value there would be synced to Suite Data (same reasoning as
+  // SceneRotation's cluster). `pillPos === null` means "never dragged", and
+  // then the stylesheet's `right`/`bottom` anchor — the one built around
+  // --mf-cb-h — applies untouched.
+  // ---------------------------------------------------------------------------
+
+  function loadPillPos() {
+    try {
+      const raw = window.localStorage.getItem(PILL_POS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (!parsed) return null;
+      const x = Number(parsed.x);
+      const y = Number(parsed.y);
+      if (!isFinite(x) || !isFinite(y)) return null;
+      return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
+    } catch (err) {
+      // Storage disabled or full: the pill just stays in its corner and
+      // forgets where it was put.
+      return null;
+    }
+  }
+
+  function savePillPos() {
+    try {
+      if (pillPos) window.localStorage.setItem(PILL_POS_KEY, JSON.stringify(pillPos));
+      else window.localStorage.removeItem(PILL_POS_KEY);
+    } catch (err) {
+      // Non-fatal: the position does not survive the next navigation.
+    }
+  }
+
+  // The chrome box in CSS pixels — the frame the pill is clamped into. Null when
+  // it has no layout yet (before the player is sized, or while hidden).
+  function chromeBox() {
+    if (!chrome) return null;
+    const cw = chrome.clientWidth;
+    const ch = chrome.clientHeight;
+    if (cw === 0 || ch === 0) return null;
+    return { cw, ch };
+  }
+
+  // Clamp the stored fractions into the frame and write left/top. Only the
+  // dragged case writes anything: with no stored position the stylesheet's
+  // anchor is already correct, and clearing the inline values keeps it that
+  // way after a rebuild.
+  function placePill() {
+    if (!chrome || !pill) return;
+    // A drag writes left/top itself; writing here would snap the pill back
+    // under the pointer.
+    if (pillDrag) return;
+    if (!pillPos) {
+      pill.style.left = "";
+      pill.style.top = "";
+      pill.style.right = "";
+      pill.style.bottom = "";
+      return;
+    }
+    const box = chromeBox();
+    if (!box) return;
+    // Measure before writing: the pill is inline-flex, so its size comes from
+    // its content and the clamp needs it.
+    const w = pill.offsetWidth;
+    const h = pill.offsetHeight;
+    const left = clamp(Math.round(pillPos.x * box.cw), 0, Math.max(0, box.cw - w));
+    const top = clamp(Math.round(pillPos.y * box.ch), 0, Math.max(0, box.ch - h));
+    pill.style.left = left + "px";
+    pill.style.top = top + "px";
+    // Both anchors have to go: with right/bottom still set as well, the
+    // inline-flex pill would stretch between them across the player.
+    pill.style.right = "auto";
+    pill.style.bottom = "auto";
+  }
+
+  // Where the panel goes once the pill is no longer in its corner. The
+  // stylesheet anchors the panel above the pill with `bottom: calc(...)`, which
+  // only holds for the bottom-right corner, so a dragged pill needs real
+  // geometry: right-aligned with the pill, flipped below when there is more
+  // room there, and clamped into the frame.
+  //
+  // Neither side always has room (a 357px panel, a 600px frame, a pill parked
+  // in the middle), and letting the panel overflow would put it *over* the pill
+  // — the one control that can close or move it. So the panel is capped to the
+  // space that is actually free and scrolls inside it instead. Returns
+  // `maxHeight: 0` when the natural height fits and no cap is needed.
+  //
+  // `geom` carries the measurements (see measureDragGeom) so this stays pure
+  // and cheap inside a drag frame.
+  function panelSpot(pillLeft, pillTop, geom) {
+    const ch = geom.ch;
+    const natural = geom.panelH;
+    const spaceAbove = pillTop - PILL_PANEL_GAP - CHROME_INSET;
+    const spaceBelow = ch - (pillTop + geom.pillH) - PILL_PANEL_GAP - CHROME_INSET;
+    const useAbove = spaceAbove >= natural || spaceAbove >= spaceBelow;
+    const space = Math.max(0, useAbove ? spaceAbove : spaceBelow);
+    const height = Math.min(natural, Math.max(PANEL_MIN_H, space));
+    const capped = natural > space;
+    const rawTop = useAbove
+      ? pillTop - PILL_PANEL_GAP - height
+      : pillTop + geom.pillH + PILL_PANEL_GAP;
+    const maxTop = Math.max(CHROME_INSET, ch - height - CHROME_INSET);
+    // Right edges line up, exactly like the stylesheet's own anchor; near the
+    // left edge the clamp flips that to a left alignment.
+    const maxLeft = Math.max(CHROME_INSET, geom.cw - geom.panelW - CHROME_INSET);
+    const rawLeft = pillLeft + geom.pillW - geom.panelW;
+    return {
+      left: clamp(rawLeft, CHROME_INSET, maxLeft),
+      top: clamp(rawTop, CHROME_INSET, maxTop),
+      maxHeight: capped ? Math.max(PANEL_MIN_H, space) : 0,
+    };
+  }
+
+  // Write the panel's placement. `maxHeight` is set inline only while it bites,
+  // which keeps the stylesheet's own cap (60vh / the container query) in charge
+  // whenever the panel has room.
+  function applyPanelSpot(spot) {
+    if (!panel) return;
+    const cap = spot.maxHeight ? spot.maxHeight + "px" : "";
+    if (panel.style.maxHeight !== cap) panel.style.maxHeight = cap;
+    panel.style.left = spot.left + "px";
+    panel.style.top = spot.top + "px";
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+  }
+
+  function placePanel() {
+    if (!chrome || !panel || !pill) return;
+    if (pillDrag) return;
+    if (!pillPos) {
+      // Corner case: the stylesheet's formula (which knows about the control
+      // bar) is the correct placement, so drop anything a drag left behind.
+      panel.style.left = "";
+      panel.style.top = "";
+      panel.style.right = "";
+      panel.style.bottom = "";
+      panel.style.maxHeight = "";
+      return;
+    }
+    // A closed panel has no layout (display:none), so there is nothing to
+    // measure and nothing to see.
+    if (!panelOpen) return;
+    const box = chromeBox();
+    if (!box) return;
+    // Measure the *natural* height: drop any cap a previous placement applied,
+    // otherwise the panel would ratchet itself smaller and never grow back.
+    panel.style.maxHeight = "";
+    panelNatH = panel.offsetHeight;
+    const geom = {
+      cw: box.cw,
+      ch: box.ch,
+      pillW: pill.offsetWidth,
+      pillH: pill.offsetHeight,
+      panelW: panel.offsetWidth,
+      panelH: panelNatH,
+    };
+    applyPanelSpot(panelSpot(pill.offsetLeft, pill.offsetTop, geom));
+  }
+
+  // Keep both pieces of chrome where they belong. Called from renderChrome
+  // (panel rebuilt, panel opened/closed), resize, fullscreen change and drag
+  // end — never from a per-frame path, so the layout reads here are cheap.
+  function placeChrome() {
+    if (!chrome || !pill) return;
+    if (pillDrag) return;
+    placePill();
+    placePanel();
+  }
+
+  // Everything a drag frame needs, measured once when the drag starts: the
+  // position is recomputed up to 125 times a second, and re-measuring the panel
+  // on every one of those would be a reflow per event.
+  function measureDragGeom() {
+    const box = chromeBox();
+    if (!box || !pill) return null;
+    const panelMeasurable = panelOpen && panel && panel.offsetHeight > 0;
+    return {
+      cw: box.cw,
+      ch: box.ch,
+      pillW: pill.offsetWidth,
+      pillH: pill.offsetHeight,
+      panelOpen: !!panelMeasurable,
+      panelW: panelMeasurable ? panel.offsetWidth : 0,
+      // The natural height, remembered by placePanel: measuring here would
+      // report the height the current cap allows, not the height the panel
+      // wants.
+      panelH: panelMeasurable ? (panelNatH || panel.offsetHeight) : 0,
+    };
+  }
+
+  function onPillPointerDown(e) {
+    if (e.button !== undefined && e.button !== 0) return; // primary button only
+    if (!chrome || !pill) return;
+    // One gesture at a time.
+    if (pillDrag || dragState) return;
+    // Every click follows its own pointerup, so clearing the flag here cannot
+    // eat an unrelated click; it also stops a drag whose click never fired
+    // (pointer left the window) from swallowing the next press.
+    suppressPillClick = false;
+    // Keep the gesture away from videojs, which seeks/pauses on pointer events
+    // over the picture. preventDefault is deliberately NOT called: it would
+    // suppress the compatibility mouse events and take the pill's click — the
+    // panel toggle — down with it.
+    e.stopPropagation();
+    const box = pill.getBoundingClientRect();
+    pillDrag = {
+      id: e.pointerId,
+      // Where inside the pill the press landed, so the pill does not jump to
+      // put its corner under the cursor.
+      grabX: e.clientX - box.left,
+      grabY: e.clientY - box.top,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+      captured: false,
+      geom: null,
+    };
+    document.addEventListener("pointermove", onPillPointerMove);
+    document.addEventListener("pointerup", onPillPointerUp);
+    document.addEventListener("pointercancel", onPillPointerUp);
+  }
+
+  function onPillPointerMove(e) {
+    if (!pillDrag || e.pointerId !== pillDrag.id) return;
+    if (!pillDrag.moved) {
+      // Sub-threshold travel is a click on the pill, not a drag — the panel
+      // must still open on a slightly shaky press.
+      if (Math.hypot(e.clientX - pillDrag.startX, e.clientY - pillDrag.startY) < PILL_DRAG_THRESHOLD_PX) {
+        return;
+      }
+      pillDrag.geom = measureDragGeom();
+      if (!pillDrag.geom) return;
+      pillDrag.moved = true;
+      // Capture on the first movement rather than on pointerdown: while capture
+      // is active the click retargets to the pill, and a plain press has to
+      // stay a plain click.
+      if (pill.setPointerCapture) {
+        try { pill.setPointerCapture(e.pointerId); } catch (_) { /* older engines */ }
+      }
+      pillDrag.captured = true;
+      pill.classList.add("mosaic-filter-pill--dragging");
+    }
+    // No scroll/zoom gesture and no text selection while dragging on touch.
+    if (e.cancelable) e.preventDefault();
+    // Queue only the cursor: the frame below does the single read and the write
+    // for this batch of events.
+    pillMovePoint = { x: e.clientX, y: e.clientY };
+    schedulePillMove();
+  }
+
+  // One frame per burst of pointer events: one layout read, then writes.
+  function schedulePillMove() {
+    if (pillMoveFrame) return;
+    pillMoveFrame = window.requestAnimationFrame(function () {
+      pillMoveFrame = 0;
+      applyPillMove();
+    });
+  }
+
+  function applyPillMove() {
+    const p = pillMovePoint;
+    pillMovePoint = null;
+    if (!p || !pillDrag || !pillDrag.geom || !pill || !chrome || !panel) return;
+    // The chrome rect is the only measurement taken per frame: it tracks
+    // scrolling and any layout shift, while everything else was cached when the
+    // drag started.
+    const cr = chrome.getBoundingClientRect();
+    const g = pillDrag.geom;
+    const left = clamp(Math.round(p.x - cr.left - pillDrag.grabX), 0, Math.max(0, g.cw - g.pillW));
+    const top = clamp(Math.round(p.y - cr.top - pillDrag.grabY), 0, Math.max(0, g.ch - g.pillH));
+    pill.style.left = left + "px";
+    pill.style.top = top + "px";
+    pill.style.right = "auto";
+    pill.style.bottom = "auto";
+    // An open panel travels with the pill — otherwise it would be left behind
+    // in the corner with nothing pointing at it.
+    if (g.panelOpen) {
+      applyPanelSpot(panelSpot(left, top, g));
+    }
+  }
+
+  function onPillPointerUp(e) {
+    if (!pillDrag) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== pillDrag.id) return;
+    const moved = pillDrag.moved;
+    const captured = pillDrag.captured;
+    const pointerId = pillDrag.id;
+    // Flush the last queued position before tearing the frame down, otherwise a
+    // fast flick stops one frame short of where the cursor let go.
+    if (pillMoveFrame) {
+      window.cancelAnimationFrame(pillMoveFrame);
+      pillMoveFrame = 0;
+      applyPillMove();
+    }
+    if (captured && pill && pill.releasePointerCapture) {
+      try { pill.releasePointerCapture(pointerId); } catch (_) { /* already released */ }
+    }
+    document.removeEventListener("pointermove", onPillPointerMove);
+    document.removeEventListener("pointerup", onPillPointerUp);
+    document.removeEventListener("pointercancel", onPillPointerUp);
+    pillDrag = null;
+    pillMovePoint = null;
+    if (pill) pill.classList.remove("mosaic-filter-pill--dragging");
+    if (!moved || !pill || !chrome) return;
+    // A drag that moved the pointer is a drag even if there was nothing to
+    // store: the click it produces must not open the panel.
+    suppressPillClick = true;
+    swallowClickUntil = Date.now() + DRAG_CLICK_SWALLOW_MS;
+    // Without an inline position there is nothing to commit — that can only
+    // happen when the chrome had no measurable size, and storing 0,0 would park
+    // the pill in the corner for no reason.
+    if (!pill.style.left) return;
+    const box = chromeBox();
+    if (!box) return;
+    pillPos = {
+      x: clamp((parseFloat(pill.style.left) || 0) / box.cw, 0, 1),
+      y: clamp((parseFloat(pill.style.top) || 0) / box.ch, 0, 1),
+    };
+    savePillPos();
+    // Re-measure and re-clamp with fresh numbers: the cached drag geometry was
+    // taken before the last few pixels of travel.
+    placeChrome();
   }
 
   // ---------------------------------------------------------------------------
@@ -1377,6 +1793,8 @@
     lastPointer = { x: e.clientX, y: e.clientY };
     if (!state.follow) return;
     if (dragState) return;
+    // Moving the pill must not drag the filter along with it.
+    if (pillDrag) return;
     if (!player || !rect) return;
     // Defer the geometry to the scheduled render — see applyPendingFollow.
     pendingFollow = lastPointer;
@@ -1476,6 +1894,9 @@
     if (!rect || !player) return;
     syncPlayerMetrics();
     renderRect();
+    // A smaller frame can leave a dragged pill (and the panel under it) outside
+    // the picture.
+    placeChrome();
   });
 
   // Fullscreen swaps the player box for the viewport, so both the control-bar
@@ -1484,7 +1905,36 @@
     if (!rect || !player) return;
     syncPlayerMetrics();
     renderRect();
+    placeChrome();
   });
+
+  // Safety net for a pill drag that ends without a pointerup we can see: the
+  // drag listeners are on `document`, and if the browser never granted pointer
+  // capture a release outside the document — dragged out of the window, or
+  // cancelled by the OS on touch — reaches `window` only. A `pillDrag` left set
+  // would silently disable moving the pill *and* follow mode (both pointermove
+  // paths bail on it) until the page is reloaded. The handler is a no-op when
+  // no drag is active, so double delivery is harmless.
+  window.addEventListener("pointerup", onPillPointerUp);
+  window.addEventListener("pointercancel", onPillPointerUp);
+
+  // The click that ends a pill drag must not read as a gesture on the picture —
+  // videojs turns that into play/pause, and a drag across the video would pause
+  // it. Scoped three ways so nothing else pays for it: by time (a few hundred
+  // ms after the drag, so ordinary playback clicks keep working), by target
+  // (only clicks inside the player — an event that lands elsewhere never
+  // reaches videojs anyway), and by subtree (clicks inside the chrome are the
+  // user pressing a control right after moving the pill, which is exactly what
+  // a user does next).
+  document.addEventListener("click", function (e) {
+    if (Date.now() > swallowClickUntil) return;
+    const target = e.target;
+    if (!target || !target.closest) return;
+    if (chrome && chrome.contains(target)) return;
+    if (!player || !player.contains(target)) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 
   // Best-effort: persist any in-memory changes before the page is hidden.
   // Async saves may not complete before the page unloads, but the request
