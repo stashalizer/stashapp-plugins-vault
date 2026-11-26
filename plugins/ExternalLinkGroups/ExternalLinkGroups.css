@@ -42,15 +42,20 @@
   font-size: 0.72em;
   font-weight: 600;
   line-height: 1;
-  color: var(--bs-secondary-color, #6c757d);
+  /* Emphasis, not secondary: the secondary token is 3.9:1 on a light theme and
+     4.2:1 under Carbon Arc, both below AA for text this small. */
+  color: var(--bs-emphasis-color, #212529);
   background-color: rgba(127, 127, 127, 0.16);
   box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3);
 }
 
 .elg-count {
-  font-size: 0.68em;
+  /* Fixed px, not em: Carbon Arc sets `.btn { font-size: 0.8125rem }`, so an
+     em-based badge collapses to ~7.7px inside these buttons. */
+  font-size: 9px;
+  font-weight: 500;
   line-height: 1;
   vertical-align: super;
   margin-left: 1px;
-  opacity: 0.75;
+  opacity: 0.8;
 }

@@ -157,7 +157,9 @@
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
-  color: var(--bs-secondary-color, #6c757d);
+  /* Same contrast reasoning as the detail-page tile: the secondary token drops
+     below AA on a light theme and under Carbon Arc. */
+  color: var(--bs-emphasis-color, #212529);
   background-color: rgba(128, 128, 128, 0.16);
 }
 
