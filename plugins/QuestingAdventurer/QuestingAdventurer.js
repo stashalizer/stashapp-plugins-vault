@@ -33,6 +33,15 @@
     saveKey: function () { return Promise.resolve(false); },
   };
 
+  // Pure tag-binding model. Falls back to an inert stub so a stale cached
+  // `index.yml` (one that does not list QuestingAdventurerShared.js yet) costs
+  // the tag bindings, not the whole overlay.
+  const shared = window.QuestingAdventurerShared || {
+    normalizeTagBindings: function () { return []; },
+    resolveTagBindings: function () { return []; },
+    describeBindingProblems: function () { return []; },
+  };
+
   const CONFIG_KEY = "QuestingAdventurer";
   const LEGACY_CONFIG_KEY = "SceneRules";
   const DEFAULT_OPACITY = 0.6;
@@ -42,6 +51,12 @@
   let state = {
     moves: [],
     triggers: [],
+    // Tag → trigger/move bindings: `[{ id, tagId, triggerId, moveId }]`.
+    // Top-level rather than per-trigger because the settings page edits them
+    // as one table keyed by tag, and the overlay resolves them before it knows
+    // which trigger they point at. Owned by the settings page, but preserved
+    // verbatim by every overlay save.
+    tagBindings: [],
     collapsed: undefined,
     opacity: DEFAULT_OPACITY,
     panelPos: { ...DEFAULT_PANEL_POS },
@@ -1012,12 +1027,14 @@
   // A rule pinned to this scene overrides `sceneTagIds` for display: the user
   // named the scene explicitly, so an activated trigger must not vanish from
   // the list just because its tag filter does not match. Random selection and
-  // marker prompts still honour `sceneTagIds`.
+  // marker prompts still honour `sceneTagIds`. A tag binding is just as
+  // explicit — it names the tag, which this scene demonstrably carries — so it
+  // pins the same way.
   function isTriggerAutoPinned(trigger) {
     for (const rule of getAutoRules(trigger)) {
       if (ruleAppliesToScene(rule)) return true;
     }
-    return false;
+    return isTriggerTagBoundInScene(trigger);
   }
 
   function canAttachMoveToTrigger(moveId, triggerId) {
@@ -1032,14 +1049,15 @@
     return true;
   }
 
-  function fireAutoRule(trigger, rule, source) {
-    if (!trigger || !rule) return false;
-    if (autoSuppressed[trigger.id]) return false;
-    if (rule.repeat !== "every" && autoFiredRules[rule.id]) return false;
-    const move = rule.moveId
-      ? state.moves.find(function (m) { return m.id === rule.moveId; })
-      : null;
+  // Shared by every automatic activation path (scene rules, marker rules, tag
+  // bindings). Firing only ever means "make sure this trigger is active and
+  // this move is attached": it never deactivates, detaches or reorders.
+  // Returns true only when something actually changed, so a caller can decide
+  // whether its "once" bookkeeping has been spent.
+  function activateTriggerWithMove(trigger, move, source) {
     let changed = false;
+    // Session first: ensureSession records carried runs before this trigger
+    // flips to active, so the activation is not double-counted.
     ensureSession();
     if (!trigger.active) {
       trigger.active = true;
@@ -1062,18 +1080,29 @@
         changed = true;
       }
     }
-    // A firing that accomplished nothing (already active, move already
-    // attached, or the move was at its attachment cap) does not spend a
-    // "once" rule, so the next crossing can still apply it. A firing that
-    // activated the trigger counts as spent.
     if (changed) {
-      autoFiredRules[rule.id] = true;
       queueSave();
       announceToAria(
         "Auto-triggered " + trigger.name + (move ? ", attached " + move.text : "") + "."
       );
       render();
     }
+    return changed;
+  }
+
+  function fireAutoRule(trigger, rule, source) {
+    if (!trigger || !rule) return false;
+    if (autoSuppressed[trigger.id]) return false;
+    if (rule.repeat !== "every" && autoFiredRules[rule.id]) return false;
+    const move = rule.moveId
+      ? state.moves.find(function (m) { return m.id === rule.moveId; })
+      : null;
+    const changed = activateTriggerWithMove(trigger, move, source);
+    // A firing that accomplished nothing (already active, move already
+    // attached, or the move was at its attachment cap) does not spend a
+    // "once" rule, so the next crossing can still apply it. A firing that
+    // activated the trigger counts as spent.
+    if (changed) autoFiredRules[rule.id] = true;
     return changed;
   }
 
@@ -1119,6 +1148,69 @@
         if (!crossed) continue;
         if (fireAutoRule(trigger, rule, "marker")) changed = true;
       }
+    }
+    return changed;
+  }
+
+  // ── Tag bindings ────────────────────────────────────────────────────
+  // A binding is one row `{ id, tagId, triggerId, moveId }` saying "a scene
+  // carrying `tagId` activates `triggerId` and attaches `moveId`". Unlike
+  // `autoRules` it is not pinned to one scene, so it applies to every scene
+  // that carries the tag; and unlike `sceneTagIds` it names the combo to use
+  // instead of only filtering what the random buttons may pick.
+  //
+  // Evaluated once per panel setup, like scene rules: the scene is already
+  // open, so there is no crossing to wait for. That gives "once per scene
+  // open" semantics for free — a binding that re-fires is a no-op because the
+  // trigger is already active and the move already attached, so no second run
+  // is logged. Within one evaluation the shared resolver dedupes the same
+  // trigger+move reached through two tags.
+  function getSceneTagBindingFires() {
+    return shared.resolveTagBindings(state.tagBindings, sceneContext.tagIds);
+  }
+
+  // Tag bindings pin their trigger for display the same way a scene rule does:
+  // the user named the tag explicitly, so an activated trigger must not vanish
+  // from the list just because its own `sceneTagIds` filter excludes this scene.
+  function isTriggerTagBoundInScene(trigger) {
+    if (!trigger || !trigger.id) return false;
+    return getSceneTagBindingFires().some(function (fire) {
+      return fire.triggerId === trigger.id;
+    });
+  }
+
+  function warnTagBindingOnce(bindingId, message) {
+    const key = "tag-binding:" + (bindingId || "?");
+    if (autoWarnedRules[key]) return;
+    autoWarnedRules[key] = true;
+    console.warn("QuestingAdventurer: tag binding " + (bindingId || "(no id)") + " " + message);
+  }
+
+  function applyTagBindings() {
+    if (!currentSceneId) return false;
+    const fires = getSceneTagBindingFires();
+    let changed = false;
+    for (const fire of fires) {
+      const trigger = state.triggers.find(function (t) { return t.id === fire.triggerId; });
+      if (!trigger) {
+        // The trigger was deleted (or the config was hand-edited). Skipping is
+        // the only safe answer — inventing a trigger is not. Warn once so the
+        // console explains the silence.
+        warnTagBindingOnce(fire.bindingId, "points at a trigger that does not exist");
+        continue;
+      }
+      // A manual × on this trigger already said "not now" for this session.
+      if (autoSuppressed[trigger.id]) continue;
+      let move = null;
+      if (fire.moveId) {
+        move = state.moves.find(function (m) { return m.id === fire.moveId; });
+        if (!move) {
+          // Same as an auto rule with a deleted move: the trigger still fires,
+          // the missing move is skipped rather than aborting the activation.
+          warnTagBindingOnce(fire.bindingId, "points at a move that does not exist");
+        }
+      }
+      if (activateTriggerWithMove(trigger, move, "tag")) changed = true;
     }
     return changed;
   }
@@ -1710,6 +1802,11 @@
         // Persist the migrated form so the next load is a fast v2 read.
         queueSave();
       }
+      // Tag bindings are additive: absent in every config written before the
+      // feature existed (normalize returns []), and sanitized on every load so
+      // a hand-edited or half-written config cannot reach the firing path with
+      // a numeric id or a duplicated row.
+      state.tagBindings = shared.normalizeTagBindings(stored.tagBindings);
       // `collapsed`: first-load default is dynamic — expanded if there are
       // active triggers, collapsed otherwise. After the user manually toggles,
       // the stored boolean value is used.
@@ -1780,6 +1877,10 @@
       const result = storage.saveConfig({
         moves: state.moves,
         triggers: state.triggers,
+        // The overlay never edits bindings, but it must carry them: the save
+        // replaces the whole config object, so omitting this key would delete
+        // every binding the settings page wrote.
+        tagBindings: state.tagBindings,
         collapsed: state.collapsed,
         opacity: state.opacity,
         panelPos: state.panelPos,
@@ -1794,6 +1895,7 @@
         return Object.assign({}, latest || {}, {
           moves: state.moves,
           triggers: state.triggers,
+          tagBindings: state.tagBindings,
           collapsed: state.collapsed,
           opacity: state.opacity,
           panelPos: state.panelPos,
@@ -3193,6 +3295,11 @@
     // Scene-level rules fire only after the first render: firing renders again,
     // and doing it before the panel exists would leave the panel stale.
     applyAutoSceneRules();
+    // Tag bindings are scene-level too, so they run here and not on the
+    // timeline. Scene rules go first because a rule pinned to this exact scene
+    // is more specific than a tag; both paths are idempotent, so the order only
+    // decides which origin opens the run in the quest log.
+    applyTagBindings();
   }
 
   csLib.PathElementListener("/scenes/", "#VideoJsPlayer", setupPanel);

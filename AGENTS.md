@@ -84,7 +84,7 @@ All code comments, commit messages, documentation, and user-facing text in this 
 plugins/<PluginId>/
   <PluginId>.yml            # manifest: name, description, version, ui.requires/javascript/css
   <PluginId>.js             # entry surface: player overlay (vanilla) or component patch (React)
-  <PluginId>Shared.js       # optional pure model, loaded first (MosaicFilter, ExternalLinkGroups)
+  <PluginId>Shared.js       # optional pure model, loaded first (MosaicFilter, ExternalLinkGroups, QuestingAdventurer)
   <PluginId>Storage.js       # optional Suite Data + csLib fallback helper
   <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
   <PluginId>Store.js        # optional config helper, no player surface (CarbonArc, ExternalLinkGroups)
@@ -142,6 +142,12 @@ AGENTS.md                   # architecture + conventions (this file)
   `ExternalLinkButtons` patch — enough to prove the original renderer still
   receives the leftover URLs and that one URL produces a link while several
   produce a dropdown. It proves nothing about CSS or icon loading.
+- **QuestingAdventurer's tag bindings get the shared-module treatment.**
+  `questing-adventurer-tag-bindings.test.mjs` exercises
+  `QuestingAdventurerShared.js` (normalization, scene resolution, problem
+  reporting) and then asserts on the two surfaces' source that every config
+  write carries `tagBindings` — a data-loss bug that no DOM stub would catch,
+  because the overlay only ever *preserves* the key.
 - **The stub DOM is deliberately dumb.** `querySelector` only answers the
   lookups the overlay actually makes, `requestAnimationFrame` runs
   synchronously, and every node reports a 640x360 player. When the overlay
@@ -163,13 +169,13 @@ AGENTS.md                   # architecture + conventions (this file)
   ```
 
   Quote the value (`description: "… Optional: …"`, escaping inner `"` as `\"`) and keep it on one line. `build_site.sh` re-quotes what it emits, so the index itself tolerates a hostile description, but Stash parses the manifest independently — the source of truth has to be valid YAML on its own.
-- **Dependencies are read from a comment line, not from `ui.requires`.** Keep `# requires: PluginA, PluginB` (comma-separated) at the bottom of the yml in sync with `ui.requires`. See `QuestingAdventurer.yml:7,14`. The two locations must agree.
+- **Dependencies are read from a comment line, not from `ui.requires`.** Keep `# requires: PluginA, PluginB` (comma-separated) at the bottom of the yml in sync with `ui.requires`. See `QuestingAdventurer.yml:7,16`. The two locations must agree.
 - `ui.javascript` / `ui.css` entries are paths relative to the plugin directory.
 - **Runtime globals are not bundled.** The plugin expects `window.csLib` and `window.PluginApi` to be provided by Stash; users must install **CommunityScriptsUILibrary** first (declared in `ui.requires`).
 
 ## QuestingAdventurer
 
-- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds,sceneTagIds,markerTagIds}], collapsed, opacity, panelPos: {top,right}, panelSize, showAddControls, showManualControls, hardware }`.
+- **Two UIs, one config key** `"QuestingAdventurer"`. State shape: `{ moves: [{id,text}], triggers: [{id,name,active,attachedMoveIds,sceneTagIds,markerTagIds}], tagBindings: [{id,tagId,triggerId,moveId}], collapsed, opacity, panelPos: {top,right}, panelSize, showAddControls, showManualControls, hardware }`.
 - **Storage.** `QuestingAdventurerStorage.js` owns config reads/writes and the
   separate `log` / `deal` keys. Suite Data is preferred; csLib is the fallback.
   `config` holds moves, triggers and UI preferences; `log` holds sessions;
@@ -179,7 +185,7 @@ AGENTS.md                   # architecture + conventions (this file)
   `sceneTitle` snapshot, `sceneVisit`). A run is one stretch of a trigger
   being active inside that session (`runId`, `run` = 1-based ordinal, `origin`
   ∈ session / penalty / manual / manual-attach / marker / auto-scene /
-  auto-marker, `observedBy` ∈ state / user / marker / playback, plus
+  auto-marker / auto-tag, `observedBy` ∈ state / user / marker / playback, plus
   `markerId` and `requiredMoveIds` snapshot). A
   completion is a `(runId, moveId)` pair; status is **folded from events on
   every render** — no completion boolean is persisted, and undo appends
@@ -246,6 +252,51 @@ AGENTS.md                   # architecture + conventions (this file)
   - Attaching respects the move's global `MAX_MOVE_ATTACHMENTS` cap: at the
     cap the trigger still activates and the move is skipped. A deleted marker
     with no `atSeconds` fallback warns once per rule, not per timeupdate.
+- **Tag bindings (tag → trigger/move).** `tagBindings: [{id, tagId, triggerId,
+  moveId}]` sits at the **top level** of the config — not on the trigger, unlike
+  `autoRules` — because the settings page edits one table keyed by tag and the
+  overlay resolves a tag to a trigger id before it can look the trigger up.
+  Edited on the settings page under **Tag Bindings**: picking a tag appends a
+  row and pre-selects the first trigger. A row without a trigger is kept and
+  flagged, never silently deleted.
+  - **When it fires.** Once per panel setup, in `applyTagBindings()`, right
+    after `applyAutoSceneRules()`. Every binding whose tag is in
+    `sceneContext.tagIds` activates its trigger and attaches its move through
+    the same `activateTriggerWithMove()` path the playback rules use — never
+    deactivates, detaches or reorders. A scene with no matching tag does
+    nothing at all (no prompt, no warning, no run).
+  - **Several tags matching.** All matching bindings fire, in config order. The
+    shared resolver dedupes by `(triggerId, moveId)`, so two tags naming the
+    same combo start one run, while two tags naming the same trigger with
+    different moves attach both moves (dropping one would discard half of what
+    the user configured without telling them).
+  - **Repeats.** A second evaluation finds the trigger already active and the
+    move already attached, so it is a no-op and logs no second run. A manual ✕
+    still sets `autoSuppressed[triggerId]`, which wins over a tag binding for
+    the rest of the session.
+  - **Invalid config.** `QuestingAdventurerShared.js` normalizes on load: rows
+    without a `tagId` are dropped (they can never match a scene), numeric ids
+    from a hand-edited config are coerced to strings, identical rows collapse,
+    ids stay unique, and the table is capped at `MAX_TAG_BINDINGS` (200). At
+    runtime a binding whose trigger no longer exists is skipped with one
+    `console.warn` per binding per panel setup (`autoWarnedRules`, the same
+    counter the marker warnings use); a binding whose move was deleted still
+    activates its trigger and only loses the move. Deleting a trigger removes
+    the bindings that point at it in the same save and says so in the confirm
+    prompt.
+  - **Display pinning.** `isTriggerTagBoundInScene()` extends
+    `isTriggerAutoPinned()`, so a trigger activated by a tag binding is not
+    hidden by its own `sceneTagIds` filter — same reasoning as a scene rule.
+  - **Both surfaces must write the key.** `tagBindings` is settings-owned, but
+    every save replaces the whole config object, so the overlay's `queueSave`
+    (payload *and* Suite Data merge callback) and the settings page's
+    `saveTriggersNow` both carry it. `tests/questing-adventurer-tag-bindings.test.mjs`
+    asserts that in the source; the failure mode is silently deleting every
+    binding the first time the overlay saves.
+  - `saveTriggersNow` falls back to the **stored** `triggers`/`moves` when
+    `latestTriggers`/`latestMoves` are still null. Without that, adding a tag
+    binding as the first action on the settings page wrote an empty trigger
+    list, because the save ran before any trigger edit had populated them.
 - **Partner deal.** The settings page creates an 8-character, 10-minute,
   single-use code and a `?deal=` link. The partner must be signed in to the same
   Stash instance. The draw only activates an inactive trigger; it does not edit
@@ -279,7 +330,7 @@ AGENTS.md                   # architecture + conventions (this file)
   1. `migrateFromLegacy()` — v0 (`SceneRules`) → v2 (`QuestingAdventurer`). Both surfaces run it. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is migrated (`category` → `trigger`, `rule` → `move`, all moves go into the global library, triggers get `attachedMoveIds`) and the old key is cleared. Writes v2 format directly. Safe to run repeatedly; no-ops once migration is done.
   2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
 - `editingIdRef` in the settings page is a deliberate stale-closure guard for blur/Enter handlers. Do not "simplify" it away.
-- **Files**: `QuestingAdventurer.yml` (manifest) · `QuestingAdventurerStorage.js` (Suite Data + csLib helper) · `QuestingAdventurer.js` (overlay panel + Quest Log + scene prompts) · `QuestingAdventurerSettings.js` (React CRUD + deals + hardware) · `QuestingAdventurer.css` · `QuestingAdventurerSettings.css`.
+- **Files**: `QuestingAdventurer.yml` (manifest) · `QuestingAdventurerStorage.js` (Suite Data + csLib helper) · `QuestingAdventurerShared.js` (pure tag-binding model: normalize + resolve + problem list) · `QuestingAdventurer.js` (overlay panel + Quest Log + scene prompts + tag firing) · `QuestingAdventurerSettings.js` (React CRUD + deals + hardware + tag bindings) · `QuestingAdventurer.css` · `QuestingAdventurerSettings.css`.
 
 ### Overlay CSS / collapse-drag regression checklist
 

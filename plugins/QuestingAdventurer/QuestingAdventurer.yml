@@ -1,12 +1,13 @@
 name: Questing Adventurer
-description: "Turns scene playback into a quest — build a move/trigger library, then activate triggers via random Penalty/Reward or manual selection. Collapsible, draggable, lockable player overlay plus a full settings page. Optional: install SuiteData for versioned per-key storage; without it, data falls back to the plugin config."
-version: 0.15.0
+description: "Turns scene playback into a quest — build a move/trigger library, bind scene tags to trigger/move combos, then activate triggers via random Penalty/Reward or manual selection. Collapsible, draggable, lockable player overlay plus a full settings page. Optional: install SuiteData for versioned per-key storage; without it, data falls back to the plugin config."
+version: 0.16.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   requires:
     - CommunityScriptsUILibrary
   javascript:
     - QuestingAdventurerStorage.js
+    - QuestingAdventurerShared.js
     - QuestingAdventurer.js
     - QuestingAdventurerSettings.js
   css:

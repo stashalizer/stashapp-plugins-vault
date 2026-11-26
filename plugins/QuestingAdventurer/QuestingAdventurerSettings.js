@@ -77,11 +77,24 @@
     saveKey: function (key, value, csKey) { return csLib.setConfiguration(csKey, value); },
   };
 
+  // Shared, pure tag-binding model (validation + scene resolution). The overlay
+  // uses the same file, so a binding means exactly one thing on both surfaces.
+  const shared = window.QuestingAdventurerShared || {
+    normalizeTagBindings: function () { return []; },
+    resolveTagBindings: function () { return []; },
+    describeBindingProblems: function () {
+      return [{ code: "unavailable", message: "Tag bindings are unavailable", blocking: true }];
+    },
+  };
+
   let settingsToolsCallCount = 0;
   let saving = false;
   let pendingSave = false;
   let latestTriggers = null;
   let latestMoves = null;
+  // Loaded once with the config and treated like `latestTriggers`: a save from
+  // any control writes it back, so editing a trigger cannot drop bindings.
+  let latestTagBindings = null;
 
   function generateId() {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -190,12 +203,31 @@
     saving = true;
     pendingSave = false;
     try {
-      const triggersToSave = latestTriggers || [];
-      const movesToSave = latestMoves || [];
       const stored = (await storage.loadConfig()) || {};
+      // Falling back to the stored arrays (not `[]`) matters now that this
+      // function is also called by controls that never touch triggers: adding
+      // a tag binding as the first action on the page used to write an empty
+      // trigger list, because `latestTriggers` was still null.
+      const triggersToSave = Array.isArray(latestTriggers)
+        ? latestTriggers
+        : Array.isArray(stored.triggers)
+        ? stored.triggers
+        : [];
+      const movesToSave = Array.isArray(latestMoves)
+        ? latestMoves
+        : Array.isArray(stored.moves)
+        ? stored.moves
+        : [];
+      const bindingsToSave = Array.isArray(latestTagBindings)
+        ? latestTagBindings
+        : shared.normalizeTagBindings(stored.tagBindings);
       const merged = {
         moves: movesToSave,
         triggers: triggersToSave,
+        // Sanitize on the way out as well as on the way in: a row the page
+        // created can still be half-configured, and the overlay would rather
+        // receive nulls it understands than undefined fields.
+        tagBindings: shared.normalizeTagBindings(bindingsToSave),
         collapsed: typeof stored.collapsed === "boolean" ? stored.collapsed : true,
         opacity:
           typeof stored.opacity === "number" && !Number.isNaN(stored.opacity)
@@ -228,6 +260,7 @@
         return Object.assign({}, latest || {}, {
           moves: movesToSave,
           triggers: triggersToSave,
+          tagBindings: shared.normalizeTagBindings(bindingsToSave),
         });
       }, "Questing Adventurer settings");
       await result;
@@ -253,6 +286,14 @@
   function QuestingAdventurerSettingsPage() {
     const [moves, setMoves] = useState([]);
     const [triggers, setTriggers] = useState([]);
+    // Tag → trigger/move bindings, stored at the top level of the config.
+    // `tagAddSeq` is only a React key: the "add a tag" picker keeps its own
+    // internal selection, so it is remounted (and therefore cleared) after
+    // each added row. `tagPickerEpoch` does the same job for the per-row
+    // pickers when a clear is refused.
+    const [tagBindings, setTagBindings] = useState([]);
+    const [tagAddSeq, setTagAddSeq] = useState(0);
+    const [tagPickerEpoch, setTagPickerEpoch] = useState(0);
     const [loading, setLoading] = useState(true);
     const [deal, setDeal] = useState(null);
     const [partnerMode, setPartnerMode] = useState(false);
@@ -278,10 +319,15 @@
     useEffect(function () {
       let mounted = true;
 
-      function finish(movesArr, triggersArr) {
+      function finish(movesArr, triggersArr, bindingsArr) {
         if (!mounted) return;
         setMoves(movesArr);
         setTriggers(triggersArr);
+        const bindings = shared.normalizeTagBindings(bindingsArr);
+        // Seed the module-level copy too: the first save from any control
+        // writes it back, so it must already hold the loaded rows.
+        latestTagBindings = bindings;
+        setTagBindings(bindings);
         setLoading(false);
       }
 
@@ -291,13 +337,14 @@
           const stored = await storage.loadConfig();
           if (stored && Array.isArray(stored.moves) && Array.isArray(stored.triggers)) {
             // v2 format
-            finish(stored.moves, stored.triggers);
+            finish(stored.moves, stored.triggers, stored.tagBindings);
           } else {
             // v1' format → migrate to v2
             const migrated = migrateV1ToV2(stored);
-            finish(migrated.moves, migrated.triggers);
-            // Persist the migrated form
-            saveMoves(migrated.moves);
+            finish(migrated.moves, migrated.triggers, stored && stored.tagBindings);
+            // Persist the migrated form. Both arrays are seeded first so the
+            // save writes the migrated shape, not the v1' one it replaced.
+            latestMoves = migrated.moves;
             saveTriggers(migrated.triggers);
           }
           if (stored && stored.hardware && typeof stored.hardware === "object") {
@@ -330,7 +377,7 @@
           }
         } catch (err) {
           console.error("QuestingAdventurer settings: load failed:", err);
-          finish([], []);
+          finish([], [], []);
         }
       })();
 
@@ -441,13 +488,29 @@
       });
       if (!q) return;
       const itemCount = Array.isArray(q.attachedMoveIds) ? q.attachedMoveIds.length : 0;
+      // Bindings are stored outside the trigger, so deleting the trigger would
+      // otherwise leave rows pointing at nothing. Removing them is part of the
+      // delete, and the prompt says so instead of doing it silently.
+      const boundCount = tagBindings.filter(function (b) { return b.triggerId === id; }).length;
       const confirmed = window.confirm(
-        'Delete trigger "' + q.name + '" and its ' + itemCount + " move(s)?"
+        'Delete trigger "' +
+          q.name +
+          '" and its ' +
+          itemCount +
+          " move(s)?" +
+          (boundCount > 0 ? " " + boundCount + " tag binding(s) pointing at it will be removed too." : "")
       );
       if (!confirmed) return;
       const nextTriggers = triggers.filter(function (n) {
         return !(n.type === "trigger" && n.id === id);
       });
+      if (boundCount > 0) {
+        // Update the module-level copy before the save below so one write
+        // carries both changes.
+        const nextBindings = tagBindings.filter(function (b) { return b.triggerId !== id; });
+        latestTagBindings = nextBindings;
+        setTagBindings(nextBindings);
+      }
       commitTriggers(nextTriggers);
     }
 
@@ -996,6 +1059,230 @@
       );
     }
 
+    // ── Tag bindings ────────────────────────────────────────────────────
+    // One row per "this tag → this trigger (+ optional move)". Rows are stored
+    // at the top level of the config, not on the trigger, because the table is
+    // keyed by tag and the overlay has to resolve a tag to a trigger id before
+    // it can look the trigger up.
+    //
+    // The whole table is edited in place: picking a tag in the add picker
+    // appends a row and immediately pre-selects the first trigger, so there is
+    // no half-built draft to discard and an incomplete row stays visible (with
+    // its warning) instead of silently vanishing.
+    function makeTagBindingId() {
+      return "tag-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    }
+
+    // TagIDSelect returns Tag[] in every build this plugin targets, but a
+    // single-select variant has returned one Tag in the past. Both shapes are
+    // accepted here so a component change cannot write "[object Object]" as a
+    // tag id into the config.
+    function tagIdsFromSelect(value) {
+      if (!value) return [];
+      const list = Array.isArray(value) ? value : [value];
+      const ids = [];
+      for (const item of list) {
+        if (item === null || item === undefined) continue;
+        const raw = item && item.id !== undefined && item.id !== null ? item.id : item;
+        const text = String(raw).trim();
+        if (text) ids.push(text);
+      }
+      return ids;
+    }
+
+    function commitTagBindings(next) {
+      const normalized = shared.normalizeTagBindings(next);
+      latestTagBindings = normalized;
+      setTagBindings(normalized);
+      saveTriggersNow();
+    }
+
+    function addTagBinding(value) {
+      const ids = tagIdsFromSelect(value);
+      const tagId = ids[0];
+      // No tag, nothing to bind. (Clearing the picker fires this with [].)
+      if (!tagId) return;
+      const firstTrigger = triggers.find(function (t) { return t.type === "trigger"; });
+      setTagAddSeq(function (n) { return n + 1; });
+      commitTagBindings(tagBindings.concat([{
+        id: makeTagBindingId(),
+        tagId: tagId,
+        triggerId: firstTrigger ? firstTrigger.id : null,
+        moveId: null,
+      }]));
+    }
+
+    function patchTagBinding(id, patch) {
+      commitTagBindings(tagBindings.map(function (binding) {
+        return binding.id === id ? Object.assign({}, binding, patch) : binding;
+      }));
+    }
+
+    function removeTagBinding(id) {
+      commitTagBindings(tagBindings.filter(function (binding) {
+        return binding.id !== id;
+      }));
+    }
+
+    function renderTagBinding(binding) {
+      const TagSelect = PluginApi.components && PluginApi.components.TagIDSelect;
+      const trigger = triggers.find(function (t) {
+        return t.type === "trigger" && t.id === binding.triggerId;
+      });
+      const move = binding.moveId
+        ? moves.find(function (m) { return m.id === binding.moveId; })
+        : null;
+      const problems = shared.describeBindingProblems(
+        binding,
+        function (id) {
+          return triggers.some(function (t) { return t.type === "trigger" && t.id === id; });
+        },
+        function (id) { return moves.some(function (m) { return m.id === id; }); }
+      );
+      const blocked = problems.some(function (p) { return p.blocking; });
+      const rowClass =
+        "questing-adventurer-settings__tag-binding" +
+        (problems.length > 0 ? " questing-adventurer-settings__tag-binding--invalid" : "");
+      return h(
+        "div",
+        { key: binding.id, className: rowClass },
+        TagSelect
+          ? h(
+              "div",
+              { className: "questing-adventurer-settings__tag-binding-picker" },
+              h(TagSelect, {
+                key: "row-tag-" + binding.id + "-" + tagPickerEpoch,
+                ids: [binding.tagId],
+                isMulti: false,
+                onSelect: function (tags) {
+                  const ids = tagIdsFromSelect(tags);
+                  // A row without a tag can never fire, and dropping the whole
+                  // row because of a stray clear would lose its trigger/move.
+                  // Keep the stored tag and remount the picker so it shows it
+                  // again instead of sitting blank.
+                  if (ids.length === 0) {
+                    setTagPickerEpoch(function (n) { return n + 1; });
+                    return;
+                  }
+                  patchTagBinding(binding.id, { tagId: ids[0] });
+                },
+              })
+            )
+          : h(
+              "div",
+              { className: "questing-adventurer-settings__tag-binding-id" },
+              "#" + binding.tagId
+            ),
+        h(
+          "select",
+          {
+            className: "questing-adventurer-settings__auto-select",
+            "aria-label": "Trigger bound to tag " + binding.tagId,
+            value: binding.triggerId || "",
+            onChange: function (e) {
+              patchTagBinding(binding.id, { triggerId: e.target.value || null });
+            },
+          },
+          h("option", { value: "" }, "Select a trigger\u2026"),
+          binding.triggerId && !trigger
+            ? h("option", { value: binding.triggerId }, "Missing trigger #" + binding.triggerId)
+            : null,
+          triggers
+            .filter(function (t) { return t.type === "trigger"; })
+            .map(function (t) {
+              return h("option", { key: t.id, value: t.id }, t.name);
+            })
+        ),
+        h(
+          "select",
+          {
+            className: "questing-adventurer-settings__auto-select",
+            "aria-label": "Move attached by the binding for tag " + binding.tagId,
+            value: binding.moveId || "",
+            onChange: function (e) {
+              patchTagBinding(binding.id, { moveId: e.target.value || null });
+            },
+          },
+          h("option", { value: "" }, "Attach no move"),
+          binding.moveId && !move
+            ? h("option", { value: binding.moveId }, "Missing move #" + binding.moveId)
+            : null,
+          moves.map(function (m) {
+            return h("option", { key: m.id, value: m.id }, m.text);
+          })
+        ),
+        h(
+          "button",
+          {
+            className: "questing-adventurer-settings__auto-remove",
+            title: "Remove this tag binding",
+            "aria-label": "Remove tag binding for tag " + binding.tagId,
+            onClick: function () { removeTagBinding(binding.id); },
+          },
+          "\u00d7"
+        ),
+        problems.length > 0
+          ? h(
+              "span",
+              { className: "questing-adventurer-settings__tag-binding-warning" },
+              problems.map(function (p) { return p.message; }).join(" \u00b7 ") +
+                (blocked
+                  ? " \u2014 this binding will not fire."
+                  : " \u2014 the trigger still fires, without the move.")
+            )
+          : null
+      );
+    }
+
+    function renderTagBindingsSection() {
+      const TagSelect = PluginApi.components && PluginApi.components.TagIDSelect;
+      return h(
+        "div",
+        { className: "questing-adventurer-settings__section" },
+        h("h3", { className: "questing-adventurer-settings__section-header" }, "Tag Bindings"),
+        h(
+          "p",
+          { className: "questing-adventurer-settings__section-hint" },
+          "When a scene carries a bound tag, the trigger is activated and the move attached as playback starts. ",
+          "Each binding fires once per scene open; a scene carrying several bound tags fires each of them, ",
+          "and two tags naming the same trigger/move pair still fire once."
+        ),
+        tagBindings.length === 0
+          ? h(
+              "div",
+              { className: "questing-adventurer-settings__empty" },
+              "No tag bindings yet. Pick a tag below to create the first one."
+            )
+          : tagBindings.map(function (binding) {
+              return renderTagBinding(binding);
+            }),
+        h(
+          "div",
+          { className: "questing-adventurer-settings__tag-binding-add" },
+          h("span", { className: "questing-adventurer-settings__tag-binding-add-label" }, "Bind a tag"),
+          TagSelect
+            ? h(
+                "div",
+                { className: "questing-adventurer-settings__tag-binding-add-picker" },
+                h(TagSelect, {
+                  // Remount after each add: the picker keeps its own internal
+                  // selection, so without a fresh key it would still show the
+                  // tag that was just bound.
+                  key: "tag-add-" + tagAddSeq,
+                  ids: [],
+                  isMulti: false,
+                  onSelect: addTagBinding,
+                })
+              )
+            : h(
+                "span",
+                { className: "questing-adventurer-settings__tag-binding-warning" },
+                "TagIDSelect is unavailable in this Stash build, so tags cannot be picked here."
+              )
+        )
+      );
+    }
+
     function renderTrigger(trigger) {
       const TagSelect = PluginApi.components && PluginApi.components.TagIDSelect;
       return h(
@@ -1345,13 +1632,26 @@
                           : "Delete move",
                       className: "questing-adventurer-settings__delete-btn",
                       onClick: function () {
-                        if (referencedBy.length > 0) {
+                        const boundTags = tagBindings.filter(function (b) {
+                          return b.moveId === move.id;
+                        }).length;
+                        if (referencedBy.length > 0 || boundTags > 0) {
+                          const parts = [];
+                          if (referencedBy.length > 0) {
+                            parts.push(
+                              "It is currently attached to " +
+                                referencedBy.length +
+                                " trigger(s) and will be detached from all of them."
+                            );
+                          }
+                          if (boundTags > 0) {
+                            parts.push(
+                              boundTags +
+                                " tag binding(s) use it and will keep firing without the move."
+                            );
+                          }
                           const ok = window.confirm(
-                            'Delete move "' +
-                              move.text +
-                              '"? It is currently attached to ' +
-                              referencedBy.length +
-                              " trigger(s) and will be detached from all of them."
+                            'Delete move "' + move.text + '"? ' + parts.join(" ")
                           );
                           if (!ok) return;
                         }
@@ -1390,6 +1690,7 @@
         renderDealPanel(),
         renderHardwarePanel(),
         renderMoveLibrary(),
+        renderTagBindingsSection(),
             h("h3", { className: "questing-adventurer-settings__section-header" }, "Triggers"),
             triggers.length === 0
               ? h(

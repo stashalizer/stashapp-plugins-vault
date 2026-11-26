@@ -407,12 +407,99 @@
   white-space: nowrap;
 }
 
+/* Tag bindings: one row per scene tag → trigger (+ move). Same visual language
+   as a playback rule, because they are the same kind of statement; the tag
+   picker takes the place of the scene label. */
+.questing-adventurer-settings__section-hint {
+  margin: -2px 0 2px;
+  font-size: 0.85em;
+  line-height: 1.4;
+  opacity: 0.7;
+}
+
+.questing-adventurer-settings__tag-binding {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.6fr) minmax(120px, 1.4fr) minmax(120px, 1.4fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.questing-adventurer-settings__tag-binding--invalid {
+  margin-left: -10px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255, 207, 122, 0.7);
+}
+
+.questing-adventurer-settings__tag-binding-picker {
+  min-width: 0;
+  font-size: 0.85em;
+}
+
+/* The tag picker is a react-select wrapper; it has no intrinsic width, so
+   without this the grid column collapses to the placeholder's width. */
+.questing-adventurer-settings__tag-binding-picker > div,
+.questing-adventurer-settings__tag-binding-add-picker > div {
+  width: 100%;
+  min-width: 0;
+}
+
+.questing-adventurer-settings__tag-binding-id {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.85em;
+  color: rgba(147, 184, 224, 0.95);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Warning text owns a full grid row so a long message never squeezes the
+   selects. Non-blocking problems (a deleted move) use the same colour: the row
+   still fires and the message says what is missing. */
+.questing-adventurer-settings__tag-binding-warning {
+  grid-column: 1 / -1;
+  font-size: 0.8em;
+  line-height: 1.35;
+  color: #ffcf7a;
+  opacity: 0.95;
+}
+
+.questing-adventurer-settings__tag-binding-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.questing-adventurer-settings__tag-binding-add-label {
+  font-size: 0.8em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.questing-adventurer-settings__tag-binding-add-picker {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 0.85em;
+}
+
 @media (max-width: 640px) {
   .questing-adventurer-settings__auto-rule {
     grid-template-columns: 1fr 1fr;
   }
 
   .questing-adventurer-settings__auto-scene {
+    grid-column: 1 / -1;
+  }
+
+  .questing-adventurer-settings__tag-binding {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .questing-adventurer-settings__tag-binding-picker {
     grid-column: 1 / -1;
   }
 }
