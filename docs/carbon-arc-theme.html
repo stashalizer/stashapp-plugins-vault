@@ -1,0 +1,1696 @@
+<!DOCTYPE html>
+<html lang="en" data-accent="arc">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carbon Arc — a desktop Stash theme</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Carbon Arc — theme specification
+   Tokens first, then the live mock. Nothing here is decorative
+   for its own sake: every value below is meant to be copied into
+   the plugin stylesheet.
+   ============================================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces — L* stays under 16 so the screen never glares */
+  --sunken:  #0C0E0F;  /* L* 3.9  inputs, wells, video letterbox */
+  --canvas:  #101213;  /* L* 5.3  app background */
+  --panel:   #16191B;  /* L* 8.5  navbar, filter rail, detail rail */
+  --card:    #1B1E20;  /* L* 11.0 cards, list rows */
+  --raised:  #23272A;  /* L* 15.4 modals, menus, popovers, toasts */
+
+  /* hairlines — soft separation, never a drawn box */
+  --line:    #2A2E31;  /* L* 18.7 default border */
+  --line-2:  #3A3F43;  /* L* 26.3 hover / focused container border */
+
+  /* text — bone, not white; 90.6 L* is the ceiling */
+  --tx-1:    #E6E4DE;  /* 13.2:1 on card */
+  --tx-2:    #A9ABA8;  /*  7.2:1 on card */
+  --tx-3:    #8C8F90;  /*  5.1:1 on card — smallest legible step */
+
+  /* one warm signal, low chroma */
+  --arc:      #C2A176;
+  --arc-ink:  #17140F;
+  --arc-a12:  rgba(194,161,118,.12);
+  --arc-a24:  rgba(194,161,118,.24);
+  --arc-a40:  rgba(194,161,118,.40);
+
+  --danger:  #C96A60;
+  --ok:      #7F9F79;
+  --warn:    #C6A25E;
+
+  --shadow-float: 0 18px 48px -14px rgba(0,0,0,.62), 0 2px 6px rgba(0,0,0,.35);
+
+  --r-card: 6px;
+  --r-ctl: 4px;
+
+  --nav-h: 56px;
+  --rail-w: 280px;
+  --gutter: 28px;
+  --gap: 16px;
+
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+html[data-accent="patina"] {
+  --arc: #8AA79A; --arc-ink: #0F1513;
+  --arc-a12: rgba(138,167,154,.12); --arc-a24: rgba(138,167,154,.24); --arc-a40: rgba(138,167,154,.40);
+}
+html[data-accent="dusk"] {
+  --arc: #A79CB8; --arc-ink: #14111A;
+  --arc-a12: rgba(167,156,184,.12); --arc-a24: rgba(167,156,184,.24); --arc-a40: rgba(167,156,184,.40);
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 15px; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--tx-1);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--arc-a40); color: var(--tx-1); }
+
+a { color: var(--arc); text-decoration: none; }
+a:hover { color: var(--tx-1); }
+
+/* ---------- page shell ---------- */
+
+.sheet {
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 0 48px 120px;
+}
+
+.strip {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 52px;
+  padding: 0 48px;
+  background: #0E1011;
+  background: color-mix(in srgb, var(--canvas) 88%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.strip .mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.strip .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--arc);
+}
+.strip nav { display: flex; gap: 22px; margin-left: 12px; }
+.strip nav a { color: var(--tx-2); font-size: .8125rem; }
+.strip nav a:hover { color: var(--tx-1); }
+.strip .right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+
+.swatches { display: flex; gap: 6px; align-items: center; }
+.sw {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background: var(--sw);
+  cursor: pointer;
+  padding: 0;
+}
+.sw[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--canvas); border-color: var(--tx-1); }
+
+/* ---------- masthead ---------- */
+
+.mast { padding: 76px 0 40px; border-bottom: 1px solid var(--line); }
+.mast .kicker {
+  font-family: var(--mono);
+  font-size: .75rem;
+  color: var(--tx-3);
+  letter-spacing: .02em;
+  margin: 0 0 18px;
+}
+.mast-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 780px) 1fr;
+  gap: 72px;
+  align-items: end;
+}
+.mast h1 {
+  font-size: 3.4rem;
+  line-height: 1.04;
+  letter-spacing: -0.028em;
+  font-weight: 600;
+  margin: 0 0 20px;
+  max-width: 18ch;
+}
+.mast h1 em { font-style: normal; color: var(--arc); }
+.mast .lede {
+  max-width: 64ch;
+  color: var(--tx-2);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  margin: 0;
+}
+.terms {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 420px;
+  justify-self: end;
+  border-top: 1px solid var(--line);
+}
+.terms li {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .8125rem;
+  color: var(--tx-2);
+}
+.terms b {
+  font-family: var(--mono);
+  font-size: .6875rem;
+  font-weight: 400;
+  color: var(--tx-3);
+  padding-top: 2px;
+}
+.mast .facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin-top: 40px;
+  border-top: 1px solid var(--line);
+}
+.mast .facts div {
+  padding: 14px 28px 0 0;
+  margin-right: 28px;
+  border-right: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: .75rem;
+  color: var(--tx-3);
+}
+.mast .facts div:last-child { border-right: 0; }
+.mast .facts b {
+  display: block;
+  font-family: var(--font);
+  font-size: .875rem;
+  font-weight: 500;
+  color: var(--tx-1);
+  margin-top: 4px;
+}
+
+/* ---------- sections ---------- */
+
+section { padding: 56px 0; border-bottom: 1px solid var(--line); }
+
+.shead { display: flex; gap: 48px; align-items: baseline; margin-bottom: 36px; }
+.shead .kicker {
+  font-family: var(--mono);
+  font-size: .75rem;
+  color: var(--tx-3);
+  width: 120px;
+  flex: none;
+  padding-top: 6px;
+}
+.shead h2 {
+  font-size: 1.75rem;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  font-weight: 500;
+  margin: 0;
+  max-width: 46ch;
+}
+.shead p { margin: 0; color: var(--tx-2); max-width: 58ch; }
+
+.prose { max-width: 68ch; color: var(--tx-2); }
+.prose p { margin: 0 0 18px; }
+.prose strong { color: var(--tx-1); font-weight: 500; }
+.prose code, .mono {
+  font-family: var(--mono);
+  font-size: .8125rem;
+  color: var(--tx-1);
+}
+
+h3.sub {
+  font-size: .8125rem;
+  font-weight: 500;
+  font-family: var(--mono);
+  color: var(--tx-3);
+  margin: 0 0 14px;
+}
+
+/* ---------- palette ---------- */
+
+.ladder { display: grid; gap: 2px; border-radius: var(--r-card); overflow: hidden; }
+.rung {
+  display: grid;
+  grid-template-columns: 88px 1fr 120px 92px;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 16px 14px 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--canvas);
+}
+.rung:last-child { border-bottom: 0; }
+.rung .swatch { height: 44px; border-right: 1px solid var(--canvas); }
+.rung .name { font-size: .9375rem; }
+.rung .name span { color: var(--tx-3); font-size: .8125rem; margin-left: 10px; }
+.rung .hex, .rung .L { font-family: var(--mono); font-size: .75rem; color: var(--tx-3); }
+.rung .L { text-align: right; }
+
+.swatch { background: var(--c); }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 34px; }
+
+.text-ladder { display: grid; gap: 14px; }
+.tl-row { display: flex; align-items: baseline; gap: 16px; }
+.tl-row .sample { flex: 1; color: var(--c); }
+.tl-row .meta { font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); width: 92px; text-align: right; flex: none; }
+
+.signals { display: flex; gap: 10px; flex-wrap: wrap; }
+.signal {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px 7px 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: .6875rem;
+  color: var(--tx-2);
+}
+.signal i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+
+.ratio-table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+.ratio-table th {
+  text-align: left;
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: .6875rem;
+  color: var(--tx-3);
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+.ratio-table td {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--tx-2);
+}
+.ratio-table td:last-child, .ratio-table th:last-child { text-align: right; font-family: var(--mono); color: var(--tx-1); }
+
+/* ---------- type ---------- */
+
+.specimen {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 20px 48px;
+  align-items: baseline;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+.specimen:first-of-type { border-top: 1px solid var(--line); }
+.specimen .label { font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); line-height: 1.7; }
+.specimen .label b { display: block; color: var(--tx-2); font-weight: 400; }
+.specimen .demo { color: var(--tx-1); }
+.s-detail { font-size: 2rem; line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; }
+.s-page { font-size: 1.375rem; line-height: 1.25; letter-spacing: -0.012em; font-weight: 500; }
+.s-section { font-size: 1.0625rem; font-weight: 500; }
+.s-body { font-size: 1rem; color: var(--tx-2); max-width: 62ch; }
+.s-meta { font-family: var(--mono); font-size: .8125rem; color: var(--tx-3); }
+.s-micro { font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); }
+
+/* ---------- metrics ---------- */
+
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.metric {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 18px 18px 20px;
+}
+.metric b {
+  display: block;
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--tx-1);
+  letter-spacing: -0.02em;
+}
+.metric span { font-size: .8125rem; color: var(--tx-3); }
+
+.rule-list { list-style: none; padding: 0; margin: 34px 0 0; display: grid; gap: 0; }
+.rule-list li {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 24px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  font-size: .875rem;
+  color: var(--tx-2);
+}
+.rule-list li b { font-family: var(--mono); font-weight: 400; font-size: .75rem; color: var(--tx-3); padding-top: 2px; }
+
+/* ============================================================
+   THE MOCK — a 1920-wide Stash window, recreated
+   ============================================================ */
+
+.frame {
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--canvas);
+  box-shadow: var(--shadow-float);
+}
+.frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: .6875rem;
+  color: var(--tx-3);
+}
+.frame-bar .lights { display: flex; gap: 6px; }
+.frame-bar .lights i { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+.frame-bar .addr {
+  flex: 1; max-width: 420px; margin: 0 auto;
+  padding: 3px 10px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  text-align: center;
+  color: var(--tx-3);
+}
+
+.app { display: flex; flex-direction: column; }
+
+/* nav */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: var(--nav-h);
+  padding: 0 22px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 1rem; letter-spacing: -0.01em; }
+.brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--arc); }
+.nav-links { display: flex; gap: 2px; align-self: stretch; }
+.nav-links a {
+  display: flex; align-items: center;
+  padding: 0 13px;
+  font-size: .875rem;
+  color: var(--tx-2);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .12s ease, border-color .12s ease;
+}
+.nav-links a:hover { color: var(--tx-1); background: #1B1E20; }
+.nav-links a[aria-current="page"] { color: var(--tx-1); border-bottom-color: var(--arc); }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--tx-2);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--card); color: var(--tx-1); }
+.icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+/* buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  font-family: var(--font);
+  font-size: .8125rem;
+  font-weight: 500;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--tx-1);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease;
+}
+.btn:hover { background: var(--card); border-color: var(--tx-3); }
+.btn--primary { background: var(--tx-1); border-color: var(--tx-1); color: #17140F; }
+.btn--primary:hover { background: #D9D6CE; border-color: #D9D6CE; }
+.btn--quiet { border-color: transparent; color: var(--tx-2); }
+.btn--quiet:hover { background: var(--card); color: var(--tx-1); }
+.btn--danger { border-color: transparent; color: var(--danger); }
+.btn--danger:hover { background: rgba(201,106,96,.1); border-color: rgba(201,106,96,.35); }
+
+/* body split */
+.app-body { display: flex; min-height: 640px; }
+
+/* filter rail */
+.rail {
+  width: var(--rail-w);
+  flex: none;
+  padding: 18px 16px 40px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.rail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.rail-head h4 { margin: 0; font-size: .875rem; font-weight: 500; }
+.rail-head button { background: none; border: 0; color: var(--tx-3); font-size: .75rem; cursor: pointer; font-family: var(--font); }
+.rail-head button:hover { color: var(--tx-1); }
+
+.fgroup { padding: 12px 0; border-top: 1px solid var(--line); }
+.fgroup:first-of-type { border-top: 0; padding-top: 0; }
+.fgroup h5 {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: .6875rem;
+  font-weight: 400;
+  letter-spacing: .02em;
+  color: var(--tx-3);
+}
+.fgroup h5 svg { width: 12px; height: 12px; stroke: var(--tx-3); fill: none; stroke-width: 1.5; }
+
+.flist { display: grid; gap: 1px; }
+.frow {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 30px; padding: 0 8px;
+  border-radius: var(--r-ctl);
+  font-size: .8125rem;
+  color: var(--tx-2);
+  cursor: pointer;
+}
+.frow:hover { background: var(--card); color: var(--tx-1); }
+.frow[aria-current="true"] { background: var(--arc-a12); color: var(--tx-1); box-shadow: inset 2px 0 0 var(--arc); }
+.frow .n { font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 9px;
+  border-radius: 3px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  color: var(--tx-2);
+  font-size: .75rem;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--line-2); color: var(--tx-1); }
+.chip--on { background: var(--arc-a12); border-color: var(--arc-a40); color: var(--tx-1); }
+.chip .x { color: var(--tx-3); font-family: var(--mono); font-size: .6875rem; }
+.chip--on .x:hover { color: var(--danger); }
+
+.field {
+  display: flex; align-items: center; gap: 8px;
+  height: 32px; padding: 0 10px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+}
+.field:focus-within { border-color: var(--arc-a40); box-shadow: 0 0 0 3px var(--arc-a12); }
+.field svg { width: 14px; height: 14px; stroke: var(--tx-3); fill: none; stroke-width: 1.5; flex: none; }
+.field input {
+  flex: 1; min-width: 0;
+  background: none; border: 0; outline: 0;
+  color: var(--tx-1);
+  font-family: var(--font);
+  font-size: .8125rem;
+}
+.field input::placeholder { color: var(--tx-3); }
+
+/* main */
+.main { flex: 1; min-width: 0; padding: 18px var(--gutter) 28px; }
+
+.toolbar {
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+.count { font-family: var(--mono); font-size: .8125rem; color: var(--tx-1); }
+.count span { color: var(--tx-3); }
+.toolbar .spacer { flex: 1; }
+.seg { display: flex; border: 1px solid var(--line-2); border-radius: var(--r-ctl); overflow: hidden; }
+.seg button {
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  background: transparent; border: 0;
+  color: var(--tx-3); cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--tx-1); }
+.seg svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+/* card grid */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); gap: var(--gap); }
+
+.card {
+  background: var(--card);
+  border: 1px solid transparent;
+  border-radius: var(--r-card);
+  overflow: hidden;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.card:hover { background: #212427; border-color: var(--line-2); }
+.card[aria-selected="true"] { border-color: var(--arc-a40); background: #20211F; }
+
+.thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background:
+    radial-gradient(110% 85% at 28% 18%, hsl(var(--h) 5% 25% / .8), transparent 62%),
+    radial-gradient(95% 90% at 78% 82%, hsl(var(--h) 7% 17% / .9), transparent 66%),
+    linear-gradient(158deg, hsl(var(--h) 4% 13%), hsl(var(--h) 3% 8%));
+  border-bottom: 1px solid #0B0D0E;
+}
+.thumb::after {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(to top, rgba(0,0,0,.45), transparent 42%),
+    radial-gradient(120% 120% at 50% 50%, transparent 55%, rgba(0,0,0,.28));
+}
+.dur {
+  position: absolute; right: 8px; bottom: 7px; z-index: 2;
+  font-family: var(--mono); font-size: .6875rem;
+  color: var(--tx-2);
+  background: rgba(12,14,15,.72);
+  border: 1px solid rgba(58,63,67,.7);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+.thumb .res {
+  position: absolute; left: 8px; bottom: 7px; z-index: 2;
+  font-family: var(--mono); font-size: .6875rem;
+  color: var(--tx-3);
+}
+
+.card-body { padding: 11px 12px 12px; }
+.card-title {
+  margin: 0 0 7px;
+  font-size: .875rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--tx-1);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.8em;
+}
+.card-meta {
+  margin: 0;
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--mono);
+  font-size: .75rem;
+  color: var(--tx-3);
+}
+.card-meta .sep { color: #4A4F53; }
+.card-meta .star { color: var(--arc); letter-spacing: -1px; }
+
+.pager { display: flex; align-items: center; gap: 8px; margin-top: 26px; }
+.pager .pg {
+  min-width: 28px; height: 28px; padding: 0 8px;
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: .75rem;
+  color: var(--tx-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.pager .pg:hover { background: var(--card); color: var(--tx-1); }
+.pager .pg[aria-current="true"] { border-color: var(--line-2); color: var(--tx-1); background: var(--card); }
+.pager .of { margin-left: 8px; font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); }
+
+/* ============================================================
+   detail view mock
+   ============================================================ */
+
+.detail-top {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 32px;
+  padding: 16px var(--gutter) 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.detail-top h3 { margin: 0 0 8px; font-size: 1.375rem; font-weight: 500; letter-spacing: -0.012em; }
+.detail-top .dmeta { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: .6875rem; color: var(--tx-3); }
+.detail-actions { display: flex; gap: 8px; flex: none; }
+
+.detail-body { display: grid; grid-template-columns: 1fr 320px; }
+
+.stage { padding: 18px var(--gutter) 0; }
+.player {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  overflow: hidden;
+  background:
+    radial-gradient(80% 70% at 62% 34%, hsl(28 12% 26% / .8), transparent 60%),
+    radial-gradient(90% 80% at 22% 78%, hsl(206 12% 20% / .85), transparent 64%),
+    linear-gradient(150deg, #17191A, #0B0D0E);
+  border: 1px solid #000;
+}
+.player .grain {
+  position: absolute; inset: 0;
+  background: radial-gradient(130% 130% at 50% 50%, transparent 45%, rgba(0,0,0,.5));
+}
+.big-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 66px; height: 66px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(230,228,222,.55);
+  background: rgba(12,14,15,.28);
+  cursor: pointer;
+  transition: border-color .14s ease, background .14s ease;
+}
+.big-play:hover { border-color: var(--tx-1); background: rgba(12,14,15,.45); }
+.big-play svg { width: 22px; height: 22px; fill: var(--tx-1); margin-left: 3px; }
+
+.vjs {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 26px 14px 10px;
+  background: linear-gradient(to top, rgba(8,10,11,.92), transparent);
+  display: flex; align-items: center; gap: 12px;
+}
+.vjs .ctrl { width: 16px; height: 16px; fill: var(--tx-2); flex: none; }
+.vjs .track { position: relative; flex: 1; height: 3px; background: rgba(230,228,222,.18); border-radius: 2px; }
+.vjs .played { position: absolute; inset: 0 62% 0 0; background: var(--arc); border-radius: 2px; }
+.vjs .knob { position: absolute; left: 38%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--tx-1); }
+.vjs .tc { font-family: var(--mono); font-size: .6875rem; color: var(--tx-2); }
+
+.tabs { display: flex; gap: 22px; margin: 22px 0 0; border-bottom: 1px solid var(--line); }
+.tabs a {
+  padding: 0 0 10px;
+  font-size: .8125rem;
+  color: var(--tx-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tabs a[aria-selected="true"] { color: var(--tx-1); border-bottom-color: var(--arc); }
+.tabs a:hover { color: var(--tx-1); }
+.tabs .n { font-family: var(--mono); font-size: .625rem; color: var(--tx-3); margin-left: 5px; }
+
+.stage p.desc {
+  margin: 18px 0 16px;
+  max-width: 68ch;
+  font-size: .875rem;
+  line-height: 1.7;
+  color: var(--tx-2);
+}
+
+.side {
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  padding: 18px 18px 0;
+}
+.side h6 {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: .6875rem;
+  font-weight: 400;
+  color: var(--tx-3);
+}
+.dl { display: grid; gap: 0; margin: 0 0 22px; }
+.dl div {
+  display: grid; grid-template-columns: 96px 1fr; gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: .8125rem;
+}
+.dl dt { color: var(--tx-3); }
+.dl dd { margin: 0; color: var(--tx-1); }
+.dl dd.mono { font-size: .6875rem; color: var(--tx-2); word-break: break-all; }
+.dl .stars { color: var(--arc); letter-spacing: 2px; }
+.side .btn { width: 100%; }
+
+/* ============================================================
+   components
+   ============================================================ */
+
+.comp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 18px;
+}
+.panel > h4 {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: .6875rem;
+  font-weight: 400;
+  color: var(--tx-3);
+}
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.stars-lg { color: var(--arc); letter-spacing: 3px; font-size: 1rem; }
+.stars-lg .off { color: #4A4F53; }
+
+.toggle { display: flex; align-items: center; gap: 10px; font-size: .8125rem; color: var(--tx-2); }
+.track-t {
+  width: 34px; height: 18px; border-radius: 999px;
+  background: var(--sunken);
+  border: 1px solid var(--line-2);
+  position: relative;
+  flex: none;
+}
+.track-t i {
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--tx-3);
+}
+.track-t[data-on="true"] { background: var(--arc-a24); border-color: var(--arc-a40); }
+.track-t[data-on="true"] i { left: auto; right: 2px; background: var(--arc); }
+
+.focus-demo {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 14px;
+  border: 1px solid var(--line-2); border-radius: var(--r-ctl);
+  font-size: .8125rem; color: var(--tx-1);
+  outline: 2px solid var(--arc); outline-offset: 2px;
+}
+
+.toast {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-float);
+  font-size: .8125rem;
+}
+.toast .bar { width: 2px; align-self: stretch; background: var(--ok); border-radius: 2px; }
+.toast b { display: block; font-weight: 500; margin-bottom: 2px; }
+.toast span { color: var(--tx-3); font-size: .75rem; }
+
+.empty {
+  text-align: center;
+  padding: 26px 12px;
+  color: var(--tx-3);
+  font-size: .8125rem;
+}
+.empty b { display: block; color: var(--tx-2); font-weight: 500; margin-bottom: 4px; }
+.empty .btn { margin-top: 12px; }
+
+.menu {
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-float);
+  padding: 5px;
+  width: 100%;
+}
+.menu a {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 9px;
+  border-radius: 3px;
+  font-size: .8125rem;
+  color: var(--tx-2);
+}
+.menu a:hover { background: var(--card); color: var(--tx-1); }
+.menu a[aria-checked="true"] { color: var(--tx-1); }
+.menu a[aria-checked="true"]::after { content: "✓"; color: var(--arc); font-size: .75rem; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 0; }
+
+/* ============================================================
+   coverage
+   ============================================================ */
+
+.cov-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.cov {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 20px;
+}
+.cov h4 { margin: 0 0 4px; font-size: .9375rem; font-weight: 500; }
+.cov p { margin: 0 0 14px; font-size: .8125rem; color: var(--tx-3); line-height: 1.55; }
+.cov ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.cov li {
+  font-family: var(--mono);
+  font-size: .75rem;
+  color: var(--tx-2);
+  line-height: 1.55;
+  padding-left: 12px;
+  position: relative;
+}
+.cov li::before { content: ""; position: absolute; left: 0; top: .55em; width: 4px; height: 1px; background: var(--tx-3); }
+
+/* self check */
+.check-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+.check-grid h4 {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: .6875rem;
+  font-weight: 400;
+  color: var(--tx-3);
+}
+.check-grid ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.check-grid li { font-size: .875rem; color: var(--tx-2); line-height: 1.55; padding-left: 14px; position: relative; }
+.check-grid li::before { content: ""; position: absolute; left: 0; top: .62em; width: 5px; height: 5px; border-radius: 50%; background: var(--line-2); }
+.check-grid li b { color: var(--tx-1); font-weight: 500; }
+.check-grid .no li::before { background: #4A4F53; }
+
+footer { padding: 40px 0 0; color: var(--tx-3); font-size: .75rem; font-family: var(--mono); display: flex; justify-content: space-between; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="strip">
+  <div class="mark"><span class="dot"></span>Carbon Arc</div>
+  <nav>
+    <a href="#premise">premise</a>
+    <a href="#palette">palette</a>
+    <a href="#type">type</a>
+    <a href="#metrics">metrics</a>
+    <a href="#app">list view</a>
+    <a href="#detail">detail view</a>
+    <a href="#coverage">coverage</a>
+  </nav>
+  <div class="right">
+    <span class="mono" style="color:var(--tx-3);font-size:.6875rem">signal</span>
+    <div class="swatches" role="group" aria-label="Signal colour">
+      <button class="sw" style="--sw:#C2A176" data-set="arc" aria-pressed="true" aria-label="Arc brass"></button>
+      <button class="sw" style="--sw:#8AA79A" data-set="patina" aria-pressed="false" aria-label="Patina"></button>
+      <button class="sw" style="--sw:#A79CB8" data-set="dusk" aria-pressed="false" aria-label="Dusk"></button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet">
+
+  <header class="mast">
+    <div class="mast-grid">
+      <div>
+        <p class="kicker">stash ui theme · desktop only · build 0.1</p>
+        <h1>The room goes dark, the <em>frame</em> stays lit.</h1>
+        <p class="lede">
+          Carbon Arc is a single-purpose dark theme for a 24-inch screen at arm’s length.
+          The chrome is graphite and quietly stepped; the signal is one low-chroma warm tone,
+          used for four things only. Nothing in the interface is brighter than the picture
+          you are looking at.
+        </p>
+      </div>
+      <ul class="terms">
+        <li><b>no</b> pure black ground, no pure white text</li>
+        <li><b>one</b> signal tone, in four places: active, focus, stars, playhead</li>
+        <li><b>no</b> shadow anywhere except floating surfaces</li>
+        <li><b>no</b> motion on hover beyond a surface tone change</li>
+        <li><b>no</b> mobile breakpoints — this is one screen size, on purpose</li>
+      </ul>
+    </div>
+    <div class="facts">
+      <div>target<b>1920 × 1080 · 24 in</b></div>
+      <div>surface ceiling<b>L* 15.4</b></div>
+      <div>text ceiling<b>L* 90.6 (no #fff)</b></div>
+      <div>type<b>Plex Sans / Plex Mono</b></div>
+      <div>base size<b>15 px</b></div>
+    </div>
+  </header>
+
+  <!-- ================= premise ================= -->
+  <section id="premise">
+    <div class="shead">
+      <div class="kicker">01 / premise</div>
+      <h2>A library app is a dark room with a bright rectangle in it. Design the room, not the rectangle.</h2>
+    </div>
+    <div class="two-col">
+      <div class="prose">
+        <p>
+          Stash is used at night, close to the screen, for long sessions of scanning thumbnails
+          and judging them. That gives one hard constraint: <strong>the interface must never
+          compete with the imagery.</strong> Pure black is out — it turns every thumbnail edge into
+          a hard cut-out and makes thin text shimmer. So the base is graphite: dark enough to
+          disappear, light enough that a 1 px hairline still reads and card edges dissolve into
+          the field instead of being drawn.
+        </p>
+        <p>
+          The second constraint is <strong>a single warm signal</strong>. Warmth in a dark UI reads
+          as lamplight, and lamplight is exactly the metaphor — but warmth spread across the screen
+          becomes a wash. So the warm tone is rationed to four jobs: the active nav underline,
+          the focus ring, filled rating stars, and the playhead. Everything else is neutral.
+        </p>
+      </div>
+      <div class="prose">
+        <p>
+          The third is <strong>hierarchy by luminance, not by colour</strong>. Five surfaces, two
+          hairlines, three text steps. A card is legible against the canvas because it is 5 L*
+          lighter, not because it has a border and a shadow. Menus float because they are the
+          lightest surface plus a soft shadow — the only place a shadow is allowed.
+        </p>
+        <p>
+          The typography carries the rest. All numbers — durations, counts, resolutions, dates,
+          file paths — are monospaced, so a row of cards aligns on its data instead of its prose.
+          That one decision does more for scanability than any amount of card polish.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= palette ================= -->
+  <section id="palette">
+    <div class="shead">
+      <div class="kicker">02 / palette</div>
+      <h2>Five surfaces, two hairlines, three text steps, one signal.</h2>
+    </div>
+
+    <h3 class="sub">surface ladder — keep every value at or under L* 16</h3>
+    <div class="ladder">
+      <div class="rung"><div class="swatch" style="--c:#0C0E0F"></div>
+        <div class="name">sunken<span>inputs, wells, letterbox</span></div>
+        <div class="hex">#0C0E0F</div><div class="L">L* 3.9</div></div>
+      <div class="rung"><div class="swatch" style="--c:#101213"></div>
+        <div class="name">canvas<span>app background</span></div>
+        <div class="hex">#101213</div><div class="L">L* 5.3</div></div>
+      <div class="rung"><div class="swatch" style="--c:#16191B"></div>
+        <div class="name">panel<span>navbar, filter rail, detail rail</span></div>
+        <div class="hex">#16191B</div><div class="L">L* 8.5</div></div>
+      <div class="rung"><div class="swatch" style="--c:#1B1E20"></div>
+        <div class="name">card<span>cards, rows, controls at rest</span></div>
+        <div class="hex">#1B1E20</div><div class="L">L* 11.0</div></div>
+      <div class="rung"><div class="swatch" style="--c:#23272A"></div>
+        <div class="name">raised<span>menus, modals, popovers, toasts</span></div>
+        <div class="hex">#23272A</div><div class="L">L* 15.4</div></div>
+      <div class="rung"><div class="swatch" style="--c:#2A2E31"></div>
+        <div class="name">line<span>default hairline</span></div>
+        <div class="hex">#2A2E31</div><div class="L">L* 18.7</div></div>
+      <div class="rung"><div class="swatch" style="--c:#3A3F43"></div>
+        <div class="name">line strong<span>hover borders, control outlines</span></div>
+        <div class="hex">#3A3F43</div><div class="L">L* 26.3</div></div>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <h3 class="sub">text ladder — bone, not white</h3>
+        <div class="text-ladder">
+          <div class="tl-row"><div class="sample" style="--c:#E6E4DE;font-size:1rem">Titles, values, active labels</div><div class="meta">#E6E4DE · 13.2</div></div>
+          <div class="tl-row"><div class="sample" style="--c:#A9ABA8;font-size:.875rem">Body copy, nav, secondary labels</div><div class="meta">#A9ABA8 · 7.2</div></div>
+          <div class="tl-row"><div class="sample" style="--c:#8C8F90;font-size:.8125rem">Metadata, captions, placeholders</div><div class="meta">#8C8F90 · 5.1</div></div>
+        </div>
+        <h3 class="sub" style="margin-top:32px">signal &amp; states</h3>
+        <div class="signals">
+          <span class="signal"><i style="--c:#C2A176"></i>arc · focus, active, playhead, stars</span>
+          <span class="signal"><i style="--c:#C96A60"></i>danger · 4.6:1</span>
+          <span class="signal"><i style="--c:#7F9F79"></i>ok · 5.7:1</span>
+          <span class="signal"><i style="--c:#C6A25E"></i>warn · 7.0:1</span>
+        </div>
+        <p class="prose" style="margin-top:20px;font-size:.8125rem">
+          Warning is deliberately close to the signal hue but slightly cooler and duller, so a
+          warning never looks like a selection. Danger and success never fill a surface larger
+          than a badge or a toast bar.
+        </p>
+      </div>
+      <div>
+        <h3 class="sub">measured contrast — WCAG AA in every pairing</h3>
+        <table class="ratio-table">
+          <thead><tr><th>pair</th><th>ratio</th></tr></thead>
+          <tbody>
+            <tr><td>text 1 on card</td><td>13.18</td></tr>
+            <tr><td>text 1 on canvas</td><td>14.77</td></tr>
+            <tr><td>text 2 on card</td><td>7.24</td></tr>
+            <tr><td>text 3 on card</td><td>5.14</td></tr>
+            <tr><td>signal on canvas</td><td>7.74</td></tr>
+            <tr><td>ink on signal</td><td>7.57</td></tr>
+            <tr><td>danger on card</td><td>4.56</td></tr>
+            <tr><td>hairline on canvas</td><td>1.37</td></tr>
+          </tbody>
+        </table>
+        <p class="prose" style="margin-top:18px;font-size:.8125rem">
+          The hairline is intentionally below 3:1: at this size a border that reads as a drawn
+          box is the exact glare we are avoiding. Structure comes from the surface step; the
+          hairline only confirms it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= type ================= -->
+  <section id="type">
+    <div class="shead">
+      <div class="kicker">03 / type</div>
+      <h2>One superfamily. Prose in Sans, every number in Mono.</h2>
+    </div>
+
+    <div class="specimen">
+      <div class="label"><b>detail title</b>32 / 1.15 / −0.02em<br>Plex Sans 600</div>
+      <div class="demo s-detail">Scene, performer, group headers</div>
+    </div>
+    <div class="specimen">
+      <div class="label"><b>page heading</b>22 / 1.25 / −0.012em<br>Plex Sans 500</div>
+      <div class="demo s-page">Scenes</div>
+    </div>
+    <div class="specimen">
+      <div class="label"><b>section</b>17 / 1.35<br>Plex Sans 500</div>
+      <div class="demo s-section">Filter sections, card group headers</div>
+    </div>
+    <div class="specimen">
+      <div class="label"><b>body</b>15 / 1.6<br>Plex Sans 400 · 62ch max</div>
+      <div class="demo s-body">Descriptions, notes, settings help text. Measure is capped at 62 characters so a wide screen does not produce a 190-character line.</div>
+    </div>
+    <div class="specimen">
+      <div class="label"><b>metadata</b>13 / 1.45<br>Plex Mono 400</div>
+      <div class="demo s-meta">4,182 scenes · 24:31 · 1920×1080 · 1.84 GB · 14 Jun 2026</div>
+    </div>
+    <div class="specimen">
+      <div class="label"><b>micro label</b>11 / 1.4 / +0.02em<br>Plex Mono 400 · lowercase</div>
+      <div class="demo s-micro">sort by · saved filters · added · resolution · path</div>
+    </div>
+    <p class="prose" style="margin-top:26px">
+      Micro labels are lowercase mono rather than uppercase tracking. Uppercase at 11 px on a
+      dark ground turns into a picket fence; lowercase mono keeps the archival tone without
+      shouting, and it sits naturally next to file paths and durations.
+    </p>
+  </section>
+
+  <!-- ================= metrics ================= -->
+  <section id="metrics">
+    <div class="shead">
+      <div class="kicker">04 / metrics</div>
+      <h2>A 4 px grid, tuned for one screen size.</h2>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric"><b>56</b><span>navbar height, px</span></div>
+      <div class="metric"><b>280</b><span>filter rail width, px</span></div>
+      <div class="metric"><b>28</b><span>content gutter, px</span></div>
+      <div class="metric"><b>16</b><span>grid gap, px</span></div>
+      <div class="metric"><b>212</b><span>min card width → 5 cols at 1920</span></div>
+      <div class="metric"><b>6 / 4</b><span>radius, cards / controls</span></div>
+      <div class="metric"><b>2</b><span>focus ring width, px + 2 offset</span></div>
+      <div class="metric"><b>62</b><span>max measure, characters</span></div>
+    </div>
+
+    <ul class="rule-list">
+      <li><b>density</b><span>Row height 30 px in the rail, 40 px in tables, 32 px for controls. Nothing goes below 28 px: this is pointer-only, but a 24-inch screen is still read at 60 cm.</span></li>
+      <li><b>columns</b><span>Grid is <code>auto-fill, minmax(212px, 1fr)</code> — five columns at 1920, four at 1440. The rail never collapses and never overlays; it is fixed furniture, so the eye can learn one layout.</span></li>
+      <li><b>vertical rhythm</b><span>Sections of the detail page step in 8 / 16 / 24 / 32. There is no spacing above 48 inside the app; large gaps on a desktop read as missing content.</span></li>
+      <li><b>prose</b><span>Descriptions cap at 68 characters. Long metadata (paths, hashes) is mono and allowed to truncate with a middle ellipsis plus a tooltip.</span></li>
+    </ul>
+  </section>
+
+  <!-- ================= list view ================= -->
+  <section id="app">
+    <div class="shead">
+      <div class="kicker">05 / list view</div>
+      <h2>The library: fixed rail, one accent line, cards that get out of the way.</h2>
+    </div>
+
+    <div class="frame">
+      <div class="frame-bar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="addr">localhost:9999/scenes</div>
+        <div style="width:44px"></div>
+      </div>
+
+      <div class="app">
+        <header class="nav">
+          <div class="brand"><span class="dot"></span>Stash</div>
+          <nav class="nav-links">
+            <a href="#app" aria-current="page">Scenes</a>
+            <a href="#app">Images</a>
+            <a href="#app">Galleries</a>
+            <a href="#app">Performers</a>
+            <a href="#app">Studios</a>
+            <a href="#app">Tags</a>
+            <a href="#app">Groups</a>
+          </nav>
+          <div class="nav-right">
+            <div class="field" style="width:210px">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+              <input placeholder="Search scenes" aria-label="Search scenes">
+            </div>
+            <button class="icon-btn" aria-label="Tasks">
+              <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
+            </button>
+            <button class="icon-btn" aria-label="Settings">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"></circle><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"></path></svg>
+            </button>
+            <button class="btn btn--primary">Scan</button>
+          </div>
+        </header>
+
+        <div class="app-body">
+          <aside class="rail">
+            <div class="rail-head">
+              <h4>Filters</h4>
+              <button>Reset</button>
+            </div>
+
+            <div class="fgroup">
+              <h5>saved<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"></path></svg></h5>
+              <div class="flist">
+                <div class="frow" aria-current="true">All scenes <span class="n">6,904</span></div>
+                <div class="frow">Recently added <span class="n">128</span></div>
+                <div class="frow">Unorganized <span class="n">37</span></div>
+                <div class="frow">Favourites <span class="n">412</span></div>
+              </div>
+            </div>
+
+            <div class="fgroup">
+              <h5>sort<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"></path></svg></h5>
+              <div class="field" style="justify-content:space-between">
+                <span style="font-size:.8125rem;color:var(--tx-1)">Date · newest first</span>
+                <svg viewBox="0 0 24 24" style="stroke:var(--tx-3)"><path d="M6 9l6 6 6-6"></path></svg>
+              </div>
+            </div>
+
+            <div class="fgroup">
+              <h5>performer<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"></path></svg></h5>
+              <div class="field" style="margin-bottom:8px">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+                <input placeholder="Add performer" aria-label="Add performer">
+              </div>
+              <div class="chips">
+                <span class="chip chip--on">A. Vance <span class="x">×</span></span>
+                <span class="chip chip--on">M. Okada <span class="x">×</span></span>
+                <span class="chip">+2 more</span>
+              </div>
+            </div>
+
+            <div class="fgroup">
+              <h5>tags<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"></path></svg></h5>
+              <div class="chips">
+                <span class="chip chip--on">4K <span class="x">×</span></span>
+                <span class="chip">Interview</span>
+                <span class="chip">Outdoor</span>
+                <span class="chip">Vintage</span>
+                <span class="chip">POV</span>
+              </div>
+            </div>
+
+            <div class="fgroup">
+              <h5>resolution<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"></path></svg></h5>
+              <div class="chips">
+                <span class="chip chip--on">2160p</span>
+                <span class="chip chip--on">1080p</span>
+                <span class="chip">720p</span>
+                <span class="chip">SD</span>
+              </div>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="toolbar">
+              <div class="count">4,182 <span>/ 6,904 scenes</span></div>
+              <div class="spacer"></div>
+              <button class="btn btn--quiet">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.5"><path d="M4 7h16M7 12h10M10 17h4"></path></svg>
+                Date · newest
+              </button>
+              <div class="seg" role="group" aria-label="View">
+                <button aria-pressed="true" aria-label="Grid view">
+                  <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7"></rect><rect x="13" y="4" width="7" height="7"></rect><rect x="4" y="13" width="7" height="7"></rect><rect x="13" y="13" width="7" height="7"></rect></svg>
+                </button>
+                <button aria-pressed="false" aria-label="List view">
+                  <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="grid">
+              <article class="card">
+                <div class="thumb" style="--h:24"><span class="res">2160p</span><span class="dur">24:31</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Long title that runs onto a second line to test the clamp</h4>
+                  <p class="card-meta"><span>24:31</span><span class="sep">·</span><span>2160p</span><span class="sep">·</span><span>h264</span></p>
+                </div>
+              </article>
+              <article class="card" aria-selected="true">
+                <div class="thumb" style="--h:206"><span class="res">1080p</span><span class="dur">41:08</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Selected state — hairline plus a 12% tint, no glow</h4>
+                  <p class="card-meta"><span>41:08</span><span class="sep">·</span><span>1080p</span><span class="sep">·</span><span class="star">★★★★<span style="color:#4A4F53">★</span></span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:342"><span class="res">2160p</span><span class="dur">12:02</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Two-line title, second line truncated if it keeps going on</h4>
+                  <p class="card-meta"><span>12:02</span><span class="sep">·</span><span>2160p</span><span class="sep">·</span><span>hevc</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:96"><span class="res">720p</span><span class="dur">08:47</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Unorganized</h4>
+                  <p class="card-meta"><span>08:47</span><span class="sep">·</span><span>720p</span><span class="sep">·</span><span>no studio</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:18"><span class="res">1080p</span><span class="dur">33:19</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Cards never scale on hover — only the surface lightens</h4>
+                  <p class="card-meta"><span>33:19</span><span class="sep">·</span><span>1080p</span><span class="sep">·</span><span>h264</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:268"><span class="res">1080p</span><span class="dur">17:55</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Another scene title for the row</h4>
+                  <p class="card-meta"><span>17:55</span><span class="sep">·</span><span>1080p</span><span class="sep">·</span><span>h264</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:152"><span class="res">2160p</span><span class="dur">52:40</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Footer data is one baseline, always</h4>
+                  <p class="card-meta"><span>52:40</span><span class="sep">·</span><span>2160p</span><span class="sep">·</span><span>hevc</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:312"><span class="res">1080p</span><span class="dur">05:12</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Short title</h4>
+                  <p class="card-meta"><span>05:12</span><span class="sep">·</span><span>1080p</span><span class="sep">·</span><span>h264</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:44"><span class="res">2160p</span><span class="dur">28:06</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Missing cover falls back to the studio mark</h4>
+                  <p class="card-meta"><span>28:06</span><span class="sep">·</span><span>2160p</span><span class="sep">·</span><span>hevc</span></p>
+                </div>
+              </article>
+              <article class="card">
+                <div class="thumb" style="--h:190"><span class="res">1080p</span><span class="dur">19:33</span></div>
+                <div class="card-body">
+                  <h4 class="card-title">Tenth card, same rhythm as the first</h4>
+                  <p class="card-meta"><span>19:33</span><span class="sep">·</span><span>1080p</span><span class="sep">·</span><span>h264</span></p>
+                </div>
+              </article>
+            </div>
+
+            <div class="pager">
+              <button class="pg">‹</button>
+              <button class="pg" aria-current="true">1</button>
+              <button class="pg">2</button>
+              <button class="pg">3</button>
+              <button class="pg">4</button>
+              <button class="pg">›</button>
+              <span class="of">4,182 scenes · 60 per page</span>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <p class="prose" style="margin-top:16px;font-size:.8125rem">
+      The only things that move on hover are three surfaces: nav item, card, control. No scale,
+      no lift, no image zoom — at 24 inches, motion on a 200 px thumbnail is a lot of motion.
+    </p>
+  </section>
+
+  <!-- ================= detail view ================= -->
+  <section id="detail">
+    <div class="shead">
+      <div class="kicker">06 / detail view</div>
+      <h2>Video first. Metadata in a fixed right rail, numbers aligned.</h2>
+    </div>
+
+    <div class="frame">
+      <div class="detail-top">
+        <div>
+          <h3>Scene title, kept short enough to sit on one line</h3>
+          <div class="dmeta">
+            <span>Studio name</span><span>·</span><span>14 Jun 2026</span><span>·</span>
+            <span class="stars-lg">★★★★<span class="off">★</span></span>
+            <span>·</span><span>organized</span>
+          </div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn btn--primary">Edit</button>
+          <button class="btn">Organize</button>
+          <button class="btn btn--quiet">⋯</button>
+        </div>
+      </div>
+
+      <div class="detail-body">
+        <div class="stage">
+          <div class="player">
+            <div class="grain"></div>
+            <button class="big-play" aria-label="Play">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>
+            </button>
+            <div class="vjs">
+              <svg class="ctrl" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"></path></svg>
+              <div class="track"><div class="played"></div><div class="knob"></div></div>
+              <span class="tc">10:42 / 24:31</span>
+              <svg class="ctrl" viewBox="0 0 24 24"><path d="M4 9h3l4-4v14l-4-4H4zM16 9a4 4 0 0 1 0 6"></path></svg>
+              <svg class="ctrl" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"></path></svg>
+            </div>
+          </div>
+
+          <div class="tabs">
+            <a href="#detail" aria-selected="true">Details</a>
+            <a href="#detail">Markers <span class="n">14</span></a>
+            <a href="#detail">File info</a>
+            <a href="#detail">History</a>
+          </div>
+
+          <p class="desc">
+            Description body copy at 15 px, 68-character measure. Tags sit below as chips on the
+            sunken surface, so they read as data rather than as decoration. Long descriptions
+            collapse to six lines with a quiet “more” — no gradient fade, which on this ground
+            looks like a smudge.
+          </p>
+
+          <div class="chips" style="margin-bottom:24px">
+            <span class="chip">Tag one</span>
+            <span class="chip">Tag two</span>
+            <span class="chip">Longer tag label</span>
+            <span class="chip">Another</span>
+            <span class="chip">+6</span>
+          </div>
+        </div>
+
+        <aside class="side">
+          <h6>details</h6>
+          <dl class="dl">
+            <div><dt>Studio</dt><dd>Studio name</dd></div>
+            <div><dt>Date</dt><dd>14 Jun 2026</dd></div>
+            <div><dt>Performers</dt><dd>A. Vance, M. Okada</dd></div>
+            <div><dt>Duration</dt><dd class="mono">24:31</dd></div>
+            <div><dt>Resolution</dt><dd class="mono">1920 × 1080</dd></div>
+            <div><dt>Codec</dt><dd class="mono">h264 · aac</dd></div>
+            <div><dt>Size</dt><dd class="mono">1.84 GB</dd></div>
+            <div><dt>Path</dt><dd class="mono">/media/scenes/2026/06/…</dd></div>
+          </dl>
+          <h6>o count</h6>
+          <div class="chips" style="margin-bottom:24px">
+            <span class="chip">1</span><span class="chip">2</span><span class="chip">3</span>
+            <span class="chip">4</span><span class="chip chip--on">5</span>
+          </div>
+          <button class="btn" style="margin-bottom:10px">Add to playlist</button>
+          <button class="btn btn--danger" style="margin-bottom:24px">Delete scene</button>
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= components ================= -->
+  <section>
+    <div class="shead">
+      <div class="kicker">07 / components</div>
+      <h2>Controls: light fill for the primary act, hairlines for everything else.</h2>
+    </div>
+
+    <div class="comp-grid">
+      <div class="panel">
+        <h4>buttons</h4>
+        <div class="row" style="margin-bottom:12px">
+          <button class="btn btn--primary">Save</button>
+          <button class="btn">Cancel</button>
+          <button class="btn btn--quiet">Options</button>
+        </div>
+        <div class="row">
+          <button class="btn btn--danger">Delete</button>
+          <button class="btn" disabled style="opacity:.42;cursor:not-allowed">Disabled</button>
+        </div>
+        <p class="s-micro" style="margin:14px 0 0">Primary is bone-filled, not coloured: the highest-contrast object on the page is always the thing to do next.</p>
+      </div>
+
+      <div class="panel">
+        <h4>inputs &amp; chips</h4>
+        <div class="field" style="margin-bottom:10px">
+          <input placeholder="Search tags" aria-label="Search tags">
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <input value="Query with a value" aria-label="Query">
+        </div>
+        <div class="chips">
+          <span class="chip chip--on">Selected <span class="x">×</span></span>
+          <span class="chip">Rest</span>
+        </div>
+        <p class="s-micro" style="margin:14px 0 0">Inputs are sunk below the canvas; focus is a 12% tint ring plus a 40% border, never a glow.</p>
+      </div>
+
+      <div class="panel">
+        <h4>states</h4>
+        <div class="row" style="margin-bottom:14px">
+          <span class="focus-demo">Keyboard focus</span>
+        </div>
+        <div class="row" style="margin-bottom:14px">
+          <div class="toggle"><span class="track-t" data-on="true"><i></i></span> Organised</div>
+          <div class="toggle"><span class="track-t"><i></i></span> Off</div>
+        </div>
+        <div class="row">
+          <span class="stars-lg">★★★★<span class="off">★</span></span>
+          <span class="s-micro">rating, filled = signal</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>menu</h4>
+        <div class="menu">
+          <a href="#app" aria-checked="true">Date · newest first</a>
+          <a href="#app">Date · oldest first</a>
+          <a href="#app">Rating</a>
+          <a href="#app">Duration</a>
+          <hr>
+          <a href="#app">Clear sort</a>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>toast</h4>
+        <div class="toast">
+          <div class="bar"></div>
+          <div><b>Scan finished</b><span>128 new scenes · 3 errors</span></div>
+        </div>
+        <div class="toast" style="margin-top:14px">
+          <div class="bar" style="background:var(--warn)"></div>
+          <div><b>3 files could not be read</b><span>Open the task log</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>empty state</h4>
+        <div class="empty">
+          <b>No scenes match these filters</b>
+          Four filters are active.
+          <div><button class="btn">Clear filters</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= coverage ================= -->
+  <section id="coverage">
+    <div class="shead">
+      <div class="kicker">08 / coverage</div>
+      <h2>What the plugin stylesheet has to reach.</h2>
+    </div>
+    <p class="prose" style="margin-top:-16px;margin-bottom:32px">
+      Stash ships Bootstrap 5 under a set of hand-authored SCSS classes, so a theme cannot be
+      done by variables alone. The plugin needs both: a token layer on <code>:root</code> that
+      remaps the framework variables, and selector overrides where colours are hard-coded.
+      Everything below is what “complete” looks like.
+    </p>
+
+    <div class="cov-grid">
+      <div class="cov">
+        <h4>Shell &amp; navigation</h4>
+        <p>Every surface the app sits on, and the one accent line that tells you where you are.</p>
+        <ul>
+          <li>html, body, #root</li>
+          <li>.top-nav, .navbar.bg-dark, .nav-link</li>
+          <li>.navbar-brand, .nav-utility</li>
+          <li>.sidebar-pane .sidebar</li>
+          <li>.main, .content-container</li>
+          <li>::selection, ::placeholder</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Lists, grid &amp; cards</h4>
+        <p>Where 90% of the time is spent. Card surface, one metadata baseline, no decoration.</p>
+        <ul>
+          <li>.grid-card, .card, .card-section</li>
+          <li>.scene-card, .performer-card, .tag-card, .studio-card, .group-card</li>
+          <li>.scene-card-preview, .thumbnail-section</li>
+          <li>.overlay-duration, .overlay-resolution, .scene-specs-overlay</li>
+          <li>.card-popovers .btn, .minimal</li>
+          <li>.card.selected, .card-check</li>
+          <li>.table, .table-striped, .table-hover</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Filters &amp; toolbar</h4>
+        <p>The rail is furniture: same width on every page, same section rhythm, quiet counts.</p>
+        <ul>
+          <li>.filtered-list-toolbar</li>
+          <li>.sidebar-section, .collapse-header .btn</li>
+          <li>.filter-item, .filter-tags</li>
+          <li>.tag-item, .tag-item.unsupported</li>
+          <li>.btn-group, .pagination .btn</li>
+          <li>.dropdown-menu, .dropdown-item</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Detail pages</h4>
+        <p>Title, tab row, description measure, metadata rail, sticky action cluster.</p>
+        <ul>
+          <li>.detail-header, .detail-item-title/value</li>
+          <li>.detail-body, .scene-tabs</li>
+          <li>.nav-tabs .nav-link(.active)</li>
+          <li>.rating-stars .filled-star / .unfilled-star</li>
+          <li>.organized-button.organized</li>
+          <li>.edit-buttons-container</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Player &amp; lightbox</h4>
+        <p>The only region allowed near-black, because the picture is the light source.</p>
+        <ul>
+          <li>.video-js .vjs-control-bar</li>
+          <li>.vjs-play-progress, .vjs-volume-level</li>
+          <li>.vjs-big-play-button</li>
+          <li>.scrubber-wrapper, .scrubber-item</li>
+          <li>#scrubber-position-indicator</li>
+          <li>.Lightbox, .Lightbox-navbutton, .Lightbox-footer</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Forms &amp; overlays</h4>
+        <p>Sunk inputs, raised overlays, soft shadow. This is where a dark theme usually breaks.</p>
+        <ul>
+          <li>.form-control, .text-input, textarea</li>
+          <li>div.react-select__control / __menu / __option</li>
+          <li>.input-group-text, .custom-select</li>
+          <li>.modal-content, .modal-header/body/footer</li>
+          <li>.popover, .tooltip-inner, .toast</li>
+          <li>.alert-*, .badge-*, .progress-bar</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Settings &amp; tasks</h4>
+        <p>Long forms and log output: the place that exposes every missed variable.</p>
+        <ul>
+          <li>#settings-container .setting-section .card</li>
+          <li>#settings-menu-container .nav-link</li>
+          <li>.setting .sub-heading, .text-muted</li>
+          <li>pre, code, .log-viewer</li>
+          <li>.custom-control-label::before</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>Scrollbars &amp; chrome</h4>
+        <p>Thin, dark, and stable — a shifting gutter reflows the grid on every filter change.</p>
+        <ul>
+          <li>html { scrollbar-gutter: stable }</li>
+          <li>* { scrollbar-color, scrollbar-width }</li>
+          <li>::-webkit-scrollbar-thumb(:hover)</li>
+          <li>::-webkit-scrollbar-track</li>
+          <li>img.onerror placeholder background</li>
+        </ul>
+      </div>
+
+      <div class="cov">
+        <h4>States &amp; accessibility</h4>
+        <p>The parts that make a dark theme usable rather than just attractive.</p>
+        <ul>
+          <li>:focus-visible on every control</li>
+          <li>:disabled, [readonly], .text-muted</li>
+          <li>@media (prefers-reduced-motion: reduce)</li>
+          <li>contrast ≥ 4.5:1 for all text</li>
+          <li>active filter / selection tints</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= self check ================= -->
+  <section style="border-bottom:0">
+    <div class="shead">
+      <div class="kicker">09 / self check</div>
+      <h2>What this deliberately is not.</h2>
+    </div>
+    <div class="check-grid">
+      <div class="no">
+        <h4>rejected</h4>
+        <ul>
+          <li><b>Pure black + neon.</b> The default “gamer dark”: crushing blacks, one saturated accent, glow on hover. It fights every thumbnail.</li>
+          <li><b>Stash’s own blue graphite.</b> #202B33 with #137CBD is the built-in Blueprint palette; a theme that lands near it has not made a decision.</li>
+          <li><b>Warm paper-and-ink.</b> Beautiful, but already taken by Flexoki and it turns the grid into a document. Carbon Arc keeps the shell cool and spends warmth only on the signal.</li>
+          <li><b>Glass panels, blur, gradients on cards.</b> Each one adds a bright edge; at 24 inches they read as smudges over the imagery.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>kept</h4>
+        <ul>
+          <li><b>A five-step surface ladder.</b> Elevation is luminance; borders confirm, never draw.</li>
+          <li><b>One signal, four jobs.</b> Active underline, focus ring, stars, playhead.</li>
+          <li><b>Mono for all numbers.</b> Card rows align on data; file paths and durations stop jittering.</li>
+          <li><b>Bone instead of white.</b> #E6E4DE at 13:1 — legible without the halo that #FFF gets on dark.</li>
+          <li><b>Bone-filled primary buttons.</b> The clearest possible “next action”, with zero colour saturation.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>open questions</h4>
+        <ul>
+          <li><b>Signal hue.</b> Brass is the proposal; patina and dusk are already tokenised. Pick one before writing the CSS — the swap is three variables.</li>
+          <li><b>Root size.</b> 15 px assumes 1920×1080 at 24 in. On a 1440p 24-inch panel, drop to 14 px and raise the grid minimum to 230 px.</li>
+          <li><b>Login page.</b> Stash does not load plugins there; it needs the same tokens pasted into Interface → Custom CSS, or it will flash a default blue-grey form.</li>
+          <li><b>Third-party plugins.</b> Overlay plugins that hard-code colours will need a small compatibility block, as with any theme.</li>
+        </ul>
+      </div>
+    </div>
+
+    <footer>
+      <span>Carbon Arc · theme specification v0.1</span>
+      <span>desktop · dark only · no mobile breakpoints by design</span>
+    </footer>
+  </section>
+
+</div>
+
+<script>
+  const root = document.documentElement;
+  document.querySelectorAll('.sw').forEach(function (b) {
+    b.addEventListener('click', function () {
+      root.dataset.accent = b.dataset.set;
+      document.querySelectorAll('.sw').forEach(function (o) {
+        o.setAttribute('aria-pressed', String(o === b));
+      });
+    });
+  });
+</script>
+</body>
+</html>
