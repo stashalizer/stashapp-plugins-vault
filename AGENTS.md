@@ -696,8 +696,13 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **`patch.instead`, not `patch.before`.** `patch.before` transforms the
   **arguments** of a render function (`args = beforeFn.apply(...)` in
   `patch.tsx`) — it cannot inject elements. `instead` receives
-  `(props, ctx, next)` where `next()` returns the next render function, and the
-  original is only reached if we call it.
+  `(props, ctx, next)` where **`next` *is* the next render function** — not a
+  factory that returns it. `runInstead` builds the call as
+  `fns[0].apply(thisArg, argArray.concat(next()))`, so the last argument is
+  already the original renderer. Call it **with props** (`original(merged)`);
+  `original()` invokes Stash's `({ urls }) => …` with `undefined` and throws
+  `Cannot destructure property 'urls' of 'undefined'` from inside the detail
+  header. This shipped in 0.1.1 and broke every performer/studio/group page.
 - **The original renderer is called unconditionally, on every render.** It
   contains a `useMemo`. Skipping it while the config loads and calling it on the
   second render changes the hook count of `PatchedButtons` and React throws.
@@ -775,7 +780,9 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
     icon box should scale (it sits next to 1em FontAwesome glyphs and must track
     them), the count badge should not — it is pinned to 9px.
 - **Do not run it beside External Links Enhanced.** Both `instead`-patch
-  `ExternalLinkButtons`; that plugin never calls `next()`, so depending on
+  `ExternalLinkButtons`, and `runInstead` chains them by appending the next
+  renderer to the call: the second patch receives our merged props plus the
+  chain, not the `(props, ctx, next)` shape it expects, so depending on
   registration order the two either fight over the list or both render
   twitter/instagram groups. This is a known incompatibility, not a bug to
   paper over.

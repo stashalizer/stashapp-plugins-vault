@@ -8,8 +8,12 @@
  *
  * Why `instead` and not `before`: `patch.before` transforms the **arguments** of
  * a render function (`args = beforeFn.apply(...)` in patch.tsx), it does not
- * inject elements. `instead` receives `(props, ctx, next)`, and `next()` is the
- * original render function.
+ * inject elements. `instead` receives the original call arguments plus the rest
+ * of the chain appended as the **last** argument (patch.tsx `runInstead`:
+ * `fns[0].apply(thisArg, argArray.concat(next()))`). That last argument is the
+ * original render function itself — not a factory that returns it. It has to be
+ * called *with* props: `original()` renders Stash's `({ urls }) => …` with
+ * `undefined` and throws "Cannot destructure property 'urls' of 'undefined'".
  *
  * The original renderer is called on **every** render, from a fixed position
  * after our hooks: it contains a `useMemo`, so skipping it on the first paint
@@ -230,8 +234,9 @@
   /**
    * The replacement for Stash's `ExternalLinkButtons`.
    *
-   * `renderOriginal` is invoked unconditionally: see the hook-order note in the
-   * file header. Everything it receives is rendered by Stash exactly as before.
+   * `renderOriginal` is the original render function, invoked with props on
+   * every render: see the hook-order note in the file header. Everything it
+   * receives is rendered by Stash exactly as before.
    */
   function PatchedButtons(props) {
     var config = useConfig();
@@ -270,13 +275,22 @@
   }
 
   try {
-    PluginApi.patch.instead("ExternalLinkButtons", function (props, _ctx, next) {
+    PluginApi.patch.instead("ExternalLinkButtons", function (props) {
+      // The chain is appended after the original call arguments, so the last
+      // argument is the remaining chain: the original render function when no
+      // other plugin patches this component. Take it by position rather than
+      // naming a third parameter — React calls a function component with
+      // `(props, secondArg)`, and a future change to that arity must not move
+      // the original into `ctx` where this patch would call the wrong thing.
+      var callArgs = Array.prototype.slice.call(arguments);
+      var renderOriginal = callArgs[callArgs.length - 1];
+
       return h(PatchedButtons, {
         urls: props && props.urls,
         // Passed through so a future Stash prop reaches the original renderer
         // instead of being silently dropped by this patch.
         originalProps: props,
-        renderOriginal: next(),
+        renderOriginal: renderOriginal,
       });
     });
   } catch (err) {

@@ -16,7 +16,10 @@
  *      direct link, several render a dropdown.
  *
  * It does not replace installing the plugin in a live Stash: CSS, dropdown
- * placement and icon loading are outside what a stub renderer can prove.
+ * placement and icon loading are outside what a stub renderer can prove. The
+ * `instead` call itself is reproduced with Stash's arguments (React's props,
+ * then the remaining chain appended last), because that signature is what the
+ * plugin gets wrong most expensively — see the note at the call site.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -86,7 +89,7 @@ function makeReact(records) {
 }
 
 function loadPlugin(urls, config) {
-  const records = { cleanups: [], elements: [], originalCalls: [] };
+  const records = { cleanups: [], elements: [], originalCalls: [], originalProps: [] };
   const storage = {};
   if (config) storage["externalLinkGroups.config.v1"] = JSON.stringify(config);
 
@@ -178,13 +181,26 @@ function loadPlugin(urls, config) {
   }
 
   const original = function OriginalButtons(props) {
+    // Stash's own `ExternalLinkButtons` destructures `urls` from these props, so
+    // an invocation with `undefined` is the exact failure this module shipped
+    // once: it throws inside Stash's header image, not here.
+    if (!props) {
+      throw new Error("the patch called the original renderer with no props");
+    }
+    records.originalProps.push(props);
     // Array.from copies the sandbox-realm array into this realm so a strict
     // deep equality compares values rather than prototypes.
     records.originalCalls.push(Array.from(props.urls || []));
     return React.createElement("span", { "data-original": "1" });
   };
 
-  const tree = records.insteadFn({ urls }, {}, () => original);
+  // Stash's `instead` contract, from patch.tsx `runInstead`:
+  //   fns[0].apply(thisArg, argArray.concat(next()))
+  // React calls a function component with `(props, secondArg)`, and the rest of
+  // the chain — the original render function itself — is appended last. A stub
+  // that hands over `() => original` instead would prove a contract Stash does
+  // not have, and would call `next()` where the plugin must call `original`.
+  const tree = records.insteadFn({ urls }, undefined, original);
 
   // Flatten the returned element tree, invoking function components.
   function flatten(node, out) {
@@ -261,6 +277,17 @@ const urls = [
 test("patches the ExternalLinkButtons component", () => {
   const { records } = loadPlugin(urls, config);
   assert.equal(records.insteadName, "ExternalLinkButtons");
+});
+
+test("the original renderer receives props, once per render", () => {
+  const { records } = loadPlugin(urls, config);
+
+  assert.equal(records.originalProps.length, 1, "one render calls it once");
+  assert.equal(typeof records.originalProps[0], "object");
+  assert.ok(
+    "urls" in records.originalProps[0],
+    "the prop Stash destructures is present on the object it is handed"
+  );
 });
 
 test("one URL per configured site renders a direct link", () => {
