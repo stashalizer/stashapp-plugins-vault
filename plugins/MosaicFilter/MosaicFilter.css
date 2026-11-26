@@ -3,25 +3,32 @@
  *
  * Namespace prefix: .mosaic-filter-*
  * Custom properties read here, set from JS:
- *   --mf-blur        blur radius in px          (player)
- *   --mf-fill-color  solid fill colour          (player)
+ *   --mf-blur        blur radius in px          (each region and mask element)
+ *   --mf-fill-color  solid fill colour          (each region and mask element)
  *   --mf-cb-h        measured .vjs-control-bar height (player, see
  *                    syncPlayerMetrics in MosaicFilter.js)
  *
- * Structure:
+ * --mf-blur and --mf-fill-color are set inline on each region (and each reverse
+ * mask) rather than once on the player, because every region carries its own
+ * parameters. The var() fallbacks below still apply when a region has not been
+ * laid out yet.
+ *
+ * Structure (one set of region nodes per filter in the layer):
  *   #VideoJsPlayer (relative)
  *     .mosaic-filter-mask-layer           (full-cover backdrop-filter, reverse mode)
- *     .mosaic-filter-rectangle            (the filtered region; absolute)
+ *     .mosaic-filter-rectangle            (one filtered region; absolute)
  *     .mosaic-filter-rectangle__resize    (bottom-right resize grip)
+ *     ... repeated for every filter ...
  *     .mosaic-filter-chrome               (inset:0 anchor, pointer-events:none)
  *       .mosaic-filter-pill               (collapsed launcher; also the drag handle —
  *                                          inline left/top once the user moves it)
  *       .mosaic-filter-panel              (popover opened by the pill; inline
  *                                          left/top while it follows a moved pill)
+ *         .mosaic-filter-filters          (one row per region + "Add filter")
  *       .mosaic-filter-toast              (transient state feedback)
  *
  * Layering inside the player:
- *   mask layer 7 < rectangle 8 < Stash's control bar / big play button 10
+ *   mask layers 7 < rectangles 8 < Stash's control bar / big play button 10
  *   < chrome 11
  * The control bar is lifted above the plugin's effect layers on purpose — see
  * the rule at the top of this file. The chrome sits above it because an open
@@ -123,6 +130,19 @@
     0 0 0 1px rgba(0, 0, 0, 0.18),
     0 0 16px rgba(0, 0, 0, 0.22),
     inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* The region the panel is pointed at. With one filter this is invisible (it is
+   also the only one), with several it is the difference between editing the
+   right region and the wrong one. `--mf-accent` is declared on the chrome, so it
+   is not inherited here — the literal value matches it. */
+.mosaic-filter-rectangle--selected,
+.mosaic-filter-rectangle--selected:hover {
+  border-color: #7cc4ff;
+  box-shadow:
+    0 0 0 1px rgba(124, 196, 255, 0.5),
+    0 0 16px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(124, 196, 255, 0.25);
 }
 
 /* Resize handle in the bottom-right corner of the rectangle. The handle is
@@ -518,6 +538,164 @@
   color: var(--mf-text);
 }
 
+/* ---------- Filter list (one row per region) ---------- */
+
+/* The list is what makes several regions editable: selection, per-region
+   visibility and deletion live here, and everything below it in the panel
+   applies to the selected row. It always ends with the add button, which is
+   also the only way to discover the feature — hence its dashed "slot" look
+   rather than another solid button. */
+.mosaic-filter-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 9px;
+  padding: 0 0 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.mosaic-filter-filters__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+/* The selected row is the target of every control below it, so it is the one
+   piece of the list that has to read as "active" from a glance. */
+.mosaic-filter-filters__row--selected {
+  border-color: rgba(124, 196, 255, 0.45);
+  background: var(--mf-accent-soft);
+}
+
+.mosaic-filter-filters__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.mosaic-filter-filters__select:hover {
+  color: var(--mf-text);
+}
+
+.mosaic-filter-filters__row--selected .mosaic-filter-filters__select {
+  color: var(--mf-text);
+  font-weight: 600;
+}
+
+.mosaic-filter-filters__select:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: -2px;
+}
+
+.mosaic-filter-filters__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.42);
+  background: transparent;
+}
+
+.mosaic-filter-filters__dot--on {
+  border-color: var(--mf-accent);
+  background: var(--mf-accent);
+}
+
+.mosaic-filter-filters__name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Visibility and delete share one small icon-button shape so the row stays a
+   single line at 288px wide. */
+.mosaic-filter-filters__icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  min-width: 24px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mosaic-filter-filters__icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--mf-text);
+}
+
+.mosaic-filter-filters__icon[aria-pressed="true"] {
+  color: var(--mf-accent);
+}
+
+.mosaic-filter-filters__icon--danger:hover {
+  background: rgba(255, 120, 120, 0.16);
+  color: #ff9b9b;
+}
+
+.mosaic-filter-filters__icon:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: 1px;
+}
+
+.mosaic-filter-filters__add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 24px;
+  margin-top: 3px;
+  padding: 0 8px;
+  border: 1px dashed var(--mf-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mf-text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.mosaic-filter-filters__add:hover:not([disabled]) {
+  border-color: var(--mf-line-strong);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--mf-text);
+}
+
+.mosaic-filter-filters__add[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mosaic-filter-filters__add:focus-visible {
+  outline: 2px solid var(--mf-accent);
+  outline-offset: 1px;
+}
+
 /* Primary switches: On/Off and Follow. Full-height targets, first in the
    panel, so the two things people actually toggle are one click away. */
 .mosaic-filter-switches {
@@ -855,6 +1033,23 @@
   .mosaic-filter-panel__header {
     padding-bottom: 6px;
     margin-bottom: 7px;
+  }
+
+  /* The filter list is the first thing to give up space on a short player:
+     the rows shrink and lose their padding rhythm before the effect controls
+     do. It still scrolls with the panel when there are many regions. */
+  .mosaic-filter-filters {
+    margin-bottom: 7px;
+    padding-bottom: 7px;
+  }
+
+  .mosaic-filter-filters__select {
+    height: 23px;
+  }
+
+  .mosaic-filter-filters__add {
+    height: 22px;
+    margin-top: 2px;
   }
 
   .mosaic-filter-switches {

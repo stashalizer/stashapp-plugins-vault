@@ -41,6 +41,71 @@
   opacity: 0.7;
 }
 
+/* Sub-heading inside a section: the filter list sits above the style form but
+   belongs to the same "what am I editing" block. */
+.mosaic-filter-settings__subhead {
+  font-size: 15px;
+  margin: 16px 0 6px;
+}
+
+/* One row per filter region. The selected row is the one the form below
+   edits, so it carries the only strong accent on the page. */
+.mosaic-filter-settings__region-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.mosaic-filter-settings__region {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+}
+
+.mosaic-filter-settings__region--selected {
+  border-color: rgba(70, 130, 220, 0.85);
+  background: rgba(70, 130, 220, 0.1);
+}
+
+.mosaic-filter-settings__region-pick {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.mosaic-filter-settings__region-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+
+.mosaic-filter-settings__region-name:focus {
+  outline: 2px solid rgba(100, 150, 255, 0.6);
+  outline-offset: 1px;
+}
+
+.mosaic-filter-settings__region-state {
+  flex: none;
+  min-width: 22px;
+  font-size: 12px;
+  text-align: right;
+  opacity: 0.7;
+}
+
+.mosaic-filter-settings__add {
+  align-self: flex-start;
+}
+
 .mosaic-filter-settings__section {
   margin: 0 0 32px;
   padding: 16px;

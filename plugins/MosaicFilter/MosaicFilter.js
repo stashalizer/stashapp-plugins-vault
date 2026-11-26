@@ -7,27 +7,39 @@
  * - Adds an extra window.PluginApi.Event "stash:location" safety net to
  *   re-inject the overlay if React re-renders remove it. There can be a brief
  *   flash between removal and re-injection.
- * - Single global config — all scenes share one set of mosaic settings. The
- *   most common use case is follow-cursor, so the rectangle's position is
- *   normally derived from the cursor at runtime, not stored per scene.
+ * - A scene resolves ONE layer, and a layer holds a LIST of independent filter
+ *   regions: { filters: [...], selectedId }. Each region owns its own
+ *   geometry, effect parameters and visibility, so editing one can never
+ *   overwrite another. The shared module owns the schema and the list
+ *   operations (add / update / reset / remove / select); this file only maps
+ *   that list onto DOM nodes and persists it.
+ * - Legacy data (one flat filter per layer, the 0.7.0 shape) is upgraded by
+ *   MosaicFilterShared.sanitizeLayer on read and written back in the current
+ *   shape on the next save, so a single-filter user notices nothing but the
+ *   new "Add filter" row.
  * - UI surface is two-tier, deliberately quiet: a 28px pill in the bottom-right
  *   corner (clear of Stash's own control bar) is the only persistent chrome,
  *   and it fades out with the player chrome when the user goes idle. Every
  *   control lives in a popover that only opens on request — see renderChrome
  *   and setPanelOpen. Nothing is written to config about the panel's state.
- * - Geometry is stored as percentages of the player so the rectangle scales
+ * - Geometry is stored as percentages of the player so the regions scale
  *   correctly across viewport sizes and fullscreen.
- * - All state mutations are persisted via
- *   csLib.setConfiguration("MosaicFilter", state) wrapped in a lock to avoid
- *   concurrent saves. csLib.getConfiguration and setConfiguration are BOTH
- *   async — always await them.
- * - Shared constants and pure functions (FALLBACK_DEFAULTS, clamp, etc.) live
- *   in MosaicFilterShared.js, which MUST be loaded first per the manifest.
+ * - All state mutations are persisted through
+ *   MosaicFilterStorage.saveConfig("MosaicFilter", layer) wrapped in a lock to
+ *   avoid concurrent saves. csLib.getConfiguration and setConfiguration are
+ *   BOTH async — always await them.
+ * - Shared constants and pure functions (FALLBACK_DEFAULTS, clamp, the layer
+ *   CRUD helpers, ...) live in MosaicFilterShared.js, which MUST be loaded
+ *   first per the manifest.
  * - Write policy: writes happen at user-driven boundaries (toggle, drag end,
  *   resize end, slider release, scene transition, pagehide). The blur slider
  *   updates the visual on every `input` event but only persists on `change`
  *   (slider release). Follow-mode position updates are in-memory only and
  *   persist at the boundaries.
+ * - Per-region effect parameters reach CSS as inline custom properties on the
+ *   region element itself (`--mf-blur`, `--mf-fill-color`). They used to be
+ *   set once on #VideoJsPlayer, which cannot work once two regions blur by
+ *   different amounts.
  */
 (function () {
   "use strict";
@@ -42,6 +54,7 @@
   const FALLBACK_DEFAULTS = window.MosaicFilterShared.FALLBACK_DEFAULTS;
   const MIN_SIZE_PCT = window.MosaicFilterShared.MIN_SIZE_PCT;
   const MAX_BLUR = window.MosaicFilterShared.MAX_BLUR;
+  const MAX_FILTERS = window.MosaicFilterShared.MAX_FILTERS;
 
   // Pill drag constants. Declared up here (not next to the drag functions)
   // because `pillPos` calls loadPillPos() at module init, and a `const` further
@@ -71,38 +84,48 @@
   // ---------------------------------------------------------------------------
 
   var clamp = window.MosaicFilterShared.clamp;
-  var isFiniteNumber = window.MosaicFilterShared.isFiniteNumber;
-  var makeDefaultState = window.MosaicFilterShared.makeDefaultState;
+  var makeDefaultLayer = window.MosaicFilterShared.makeDefaultLayer;
   var makeDefaultConfig = window.MosaicFilterShared.makeDefaultConfig;
-  var mergeStored = window.MosaicFilterShared.mergeStored;
-  var sanitizeState = window.MosaicFilterShared.sanitizeState;
   var normalizeConfig = window.MosaicFilterShared.normalizeConfig;
   var resolveState = window.MosaicFilterShared.resolveState;
-  var makePreset = window.MosaicFilterShared.makePreset;
+  var makePresetLayer = window.MosaicFilterShared.makePresetLayer;
   var presetSource = window.MosaicFilterShared.presetSource;
+  var findFilter = window.MosaicFilterShared.findFilter;
+  var selectedFilter = window.MosaicFilterShared.selectedFilter;
+  var selectFilter = window.MosaicFilterShared.selectFilter;
+  var spawnFilter = window.MosaicFilterShared.spawnFilter;
+  var updateFilter = window.MosaicFilterShared.updateFilter;
+  var resetFilter = window.MosaicFilterShared.resetFilter;
+  var removeFilter = window.MosaicFilterShared.removeFilter;
+  var filterName = window.MosaicFilterShared.filterName;
+
+  // Filter names are user input and end up in innerHTML, so every interpolation
+  // of a name (or an id read back from an older config) goes through this.
+  function esc(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
 
   // Module-level state. `config` owns the persisted layers (default + scene
-  // and studio presets); `state` is the effective flat state for the current
-  // scene. Every user edit updates the effective layer and then persists.
+  // and studio presets); `layer` is the effective layer for the current scene
+  // — its filter list is what the DOM below is built from. Every user edit
+  // updates the effective layer and then persists.
   let config = makeDefaultConfig();
-  let state = makeDefaultState();
+  let layer = makeDefaultLayer();
   let context = { sceneId: null, studioId: null, source: "default" };
   let studioLookupToken = 0;
   let pixelLoopActive = false;
   let pixelVideoFrameCallback = null;
 
-  // Cached DOM references and geometry for the pixelation loop. The video
-  // frame callback runs up to 60x/second, and every `querySelector` or
-  // `clientWidth` read in there lands on the main thread — so the canvas,
-  // its 2D context and the video element are resolved once per mount, and
-  // the rect size is derived from state (see `renderRect`) instead of
-  // measured. Nothing in the frame path touches the DOM query API or forces
-  // a layout any more.
-  let pixelCanvasEl = null;
-  let pixelCanvasCtx = null;
+  // Cached DOM references for the pixelation loop. The video frame callback
+  // runs up to 60x/second, so the video element is resolved once per mount and
+  // each region's canvas + 2D context are held in its `rects` entry. The rect
+  // size is derived from the layer (see `layoutFilter`) instead of measured.
+  // Nothing in the frame path touches the DOM query API or forces a layout.
   let pixelVideoEl = null;
-  let rectW = 0;
-  let rectH = 0;
 
   // Coalesced-render flag. Pointer events arrive faster than the compositor
   // paints (a 125 Hz mouse delivers several per frame), so renders are
@@ -118,9 +141,16 @@
 
   // Live DOM references; null when the overlay is not mounted.
   let player = null;
-  let rect = null;
-  let resizeHandle = null;
-  let maskLayer = null;
+
+  // Per-region DOM, keyed by filter id. An entry is
+  // { el, surface, canvas, ctx, w, h, pixelOn }. Keyed by id rather than by
+  // index so reordering, deleting a neighbour or a selection change never
+  // re-binds a node to a different region — the id is the identity.
+  const rects = new Map();
+  // Per-region reverse-mode mask layers, keyed by the same ids. One mask per
+  // region (rather than one shared mask with several holes) is what lets two
+  // regions use different blur radii; see the note in updateMask.
+  const masks = new Map();
 
   // The chrome is the inset-0, pointer-events:none anchor that gives the pill,
   // the panel and the toast a positioning frame equal to the player box. Only
@@ -152,8 +182,14 @@
   const ICON_CLOSE =
     '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">' +
     '<path d="M3.2 3.2 8.8 8.8M8.8 3.2 3.2 8.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  const ICON_TRASH =
+    '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">' +
+    '<path d="M2.5 3.5h7M4.5 3.5V2.5h3v1M3.5 3.5l.4 6h4.2l.4-6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ICON_PLUS =
+    '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true" focusable="false">' +
+    '<path d="M6 2.5v7M2.5 6h7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
-  // Active pointer interaction. Either { type: "drag" } or { type: "resize" }.
+  // Active pointer interaction on a region: { type, filterId, ... }.
   let dragState = null;
 
   // Where the pill was dragged to, as fractions of the chrome box (0..1).
@@ -177,16 +213,44 @@
   // offsetHeight only reports the capped height.
   let panelNatH = 0;
 
-  // Last known cursor position over the player. Used by snapRectToPointer
+  // Last known cursor position over the player. Used by snapFollowersToPointer
   // when toggling Follow on or mounting with Follow already enabled.
   let lastPointer = null;
+
+  // ---------------------------------------------------------------------------
+  // Layer accessors
+  // ---------------------------------------------------------------------------
+
+  /** The region the panel edits and the shortcuts act on. Never null. */
+  function currentFilter() {
+    return selectedFilter(layer);
+  }
+
+  function currentIndex() {
+    const f = currentFilter();
+    if (!f) return 0;
+    const i = layer.filters.indexOf(f);
+    return i < 0 ? 0 : i;
+  }
+
+  /** Aggregate state for the pill, which speaks for the whole layer. */
+  function layerState() {
+    let on = 0;
+    let reverse = false;
+    for (let i = 0; i < layer.filters.length; i++) {
+      if (!layer.filters[i].active) continue;
+      on += 1;
+      if (layer.filters[i].mode === "reverse") reverse = true;
+    }
+    return { on: on, total: layer.filters.length, reverse: reverse };
+  }
 
   // ---------------------------------------------------------------------------
   // Persistence (Suite Data preferred; csLib fallback)
   // ---------------------------------------------------------------------------
 
   function applyEffectiveChange() {
-    const preset = makePreset(state);
+    const preset = makePresetLayer(layer);
     if (context.source === "scene" && context.sceneId) {
       config.scenePresets[String(context.sceneId)] = preset;
     } else if (context.source === "studio" && context.studioId) {
@@ -266,7 +330,7 @@
       context.studioId = studioId;
     }
     context.source = presetSource(config, context.sceneId, context.studioId);
-    state = resolveState(config, context.sceneId, context.studioId);
+    layer = resolveState(config, context.sceneId, context.studioId);
   }
 
   // ---------------------------------------------------------------------------
@@ -278,7 +342,7 @@
     // checking the empty-string branch is unreachable. The only way the
     // element lacks a positioning context is when the computed value is
     // "static" — we promote it to "relative" so our absolutely-positioned
-    // children (the mask layer, the filter rectangle and the chrome anchor)
+    // children (the mask layers, the filter regions and the chrome anchor)
     // anchor to it.
     const style = window.getComputedStyle(el);
     if (style.position === "static") {
@@ -286,6 +350,11 @@
     }
   }
 
+  /**
+   * One filter region. Returns an entry rather than the bare element, because
+   * the pixel canvas lives in a shadow root and therefore cannot be found
+   * again with a querySelector.
+   */
   function buildRect() {
     const r = document.createElement("div");
     r.className = "mosaic-filter-rectangle";
@@ -304,8 +373,9 @@
     //
     // getElementsByTagName does not cross shadow boundaries, so keeping the
     // canvas in a shadow tree keeps the panel working while the canvas still
-    // renders, paints and measures normally. Do not "simplify" this back to a
-    // direct child of the rectangle.
+    // renders, paints and measures normally. This applies to EVERY region's
+    // canvas — the Filters panel takes the first canvas it finds. Do not
+    // "simplify" this back to a direct child of the rectangle.
     const surface = document.createElement("div");
     surface.className = "mosaic-filter-rectangle__pixel-surface";
     const shadow = surface.attachShadow({ mode: "open" });
@@ -319,21 +389,67 @@
     shadow.appendChild(canvas);
     r.appendChild(surface);
 
-    pixelCanvasEl = canvas;
+    const handle = document.createElement("div");
+    handle.className = "mosaic-filter-rectangle__resize";
+    handle.dataset.action = "rect-resize";
+    handle.setAttribute("aria-label", "Resize mosaic region");
+    r.appendChild(handle);
 
-    const h = document.createElement("div");
-    h.className = "mosaic-filter-rectangle__resize";
-    h.dataset.action = "rect-resize";
-    h.setAttribute("aria-label", "Resize mosaic");
-    r.appendChild(h);
-
-    return r;
+    return {
+      el: r,
+      surface: surface,
+      canvas: canvas,
+      ctx: null,
+      w: 0,
+      h: 0,
+      pixelOn: false,
+    };
   }
 
   function buildMaskLayer() {
     const ml = document.createElement("div");
     ml.className = "mosaic-filter-mask-layer";
+    ml.setAttribute("aria-hidden", "true");
     return ml;
+  }
+
+  // Create the DOM for every filter in the layer and drop the DOM of filters
+  // that no longer exist. Runs on every render; it is a no-op once the set
+  // matches, and the `rects` / `masks` maps keep it O(n) in filters, not in
+  // renders.
+  function syncFilterNodes() {
+    if (!player) return;
+    const live = new Set(layer.filters.map(function (f) { return f.id; }));
+
+    rects.forEach(function (entry, id) {
+      if (live.has(id)) return;
+      if (entry.el.parentElement) entry.el.parentElement.removeChild(entry.el);
+      rects.delete(id);
+    });
+    masks.forEach(function (el, id) {
+      if (live.has(id)) return;
+      if (el.parentElement) el.parentElement.removeChild(el);
+      masks.delete(id);
+    });
+
+    for (let i = 0; i < layer.filters.length; i++) {
+      const f = layer.filters[i];
+      if (!rects.has(f.id)) {
+        const entry = buildRect();
+        // The closure captures the id, not the index or the object: the entry
+        // must stay bound to this region across reorders and deletions.
+        entry.el.addEventListener("pointerdown", function (e) {
+          onRectPointerDown(e, f.id);
+        });
+        player.appendChild(entry.el);
+        rects.set(f.id, entry);
+      }
+      if (!masks.has(f.id)) {
+        const mask = buildMaskLayer();
+        player.appendChild(mask);
+        masks.set(f.id, mask);
+      }
+    }
   }
 
   function buildChrome() {
@@ -411,13 +527,67 @@
     );
   }
 
+  // The filter list: one row per region, then the add button. Selection is a
+  // button (so it is keyboard reachable and announces its state), visibility
+  // and deletion are separate icon buttons so neither needs a modifier or a
+  // second click to reach.
+  function filterListMarkup() {
+    const selectedId = layer.selectedId;
+    const rows = layer.filters.map(function (f, index) {
+      const on = !!f.active;
+      const selected = f.id === selectedId;
+      const name = esc(filterName(f, index));
+      return (
+        '<div class="mosaic-filter-filters__row' + (selected ? " mosaic-filter-filters__row--selected" : "") + '">' +
+          '<button type="button" class="mosaic-filter-filters__select" ' +
+            'data-action="select-filter" data-value="' + esc(f.id) + '" ' +
+            'aria-pressed="' + (selected ? "true" : "false") + '" ' +
+            'title="Edit ' + name + '">' +
+            '<span class="mosaic-filter-filters__dot' + (on ? " mosaic-filter-filters__dot--on" : "") + '" aria-hidden="true"></span>' +
+            '<span class="mosaic-filter-filters__name">' + name + "</span>" +
+          "</button>" +
+          '<button type="button" class="mosaic-filter-filters__icon" ' +
+            'data-action="toggle-filter" data-value="' + esc(f.id) + '" ' +
+            'aria-pressed="' + (on ? "true" : "false") + '" ' +
+            'aria-label="Show or hide ' + name + '" ' +
+            'title="Show or hide ' + name + '">' +
+            (on ? "On" : "Off") +
+          "</button>" +
+          (layer.filters.length > 1
+            ? '<button type="button" class="mosaic-filter-filters__icon mosaic-filter-filters__icon--danger" ' +
+                'data-action="delete-filter" data-value="' + esc(f.id) + '" ' +
+                'aria-label="Delete ' + name + '" title="Delete ' + name + '">' + ICON_TRASH + "</button>"
+            : "") +
+        "</div>"
+      );
+    }).join("");
+
+    const atCap = layer.filters.length >= MAX_FILTERS;
+    return (
+      '<div class="mosaic-filter-filters" role="group" aria-label="Filter regions">' +
+        rows +
+        '<button type="button" class="mosaic-filter-filters__add" data-action="add-filter"' +
+          (atCap ? " disabled" : "") +
+          ' title="' + (atCap
+            ? "Limit reached (" + MAX_FILTERS + " filters)"
+            : "Add another filter region") + '">' +
+          ICON_PLUS + "<span>Add filter</span>" +
+        "</button>" +
+      "</div>"
+    );
+  }
+
   // Panel contents. Rebuilt on every render; the pill is not, so the control
   // the user actually opens the panel with keeps its identity and focus.
   function panelMarkup() {
-    const on = !!state.active;
-    const follow = !!state.follow;
-    const fill = state.fill;
+    const f = currentFilter();
+    if (!f) return "";
+    const index = currentIndex();
+    const name = filterName(f, index);
+    const nameAttr = esc(name);
+    const fill = f.fill;
     const hasPreset = context.source !== "default";
+    const multi = layer.filters.length > 1;
     return (
       '<div class="mosaic-filter-panel__header">' +
         '<span class="mosaic-filter-panel__title">Mosaic</span>' +
@@ -426,15 +596,19 @@
           'aria-label="Close mosaic settings" title="Close (Esc)">' + ICON_CLOSE + "</button>" +
       "</div>" +
 
+      filterListMarkup() +
+
       '<div class="mosaic-filter-switches">' +
         '<button type="button" class="mosaic-filter-switch" data-action="toggle-active" ' +
-          'aria-pressed="' + (on ? "true" : "false") + '" title="Show or hide the filter (Alt+M)">' +
+          'aria-pressed="' + (f.active ? "true" : "false") + '" ' +
+          'aria-label="' + nameAttr + ': on or off" ' +
+          'title="Show or hide ' + nameAttr + ' (Alt+M)">' +
           '<span class="mosaic-filter-switch__dot" aria-hidden="true"></span>' +
-          (on ? "On" : "Off") +
+          (f.active ? "On" : "Off") +
         "</button>" +
         '<button type="button" class="mosaic-filter-switch" data-action="toggle-follow" ' +
-          'aria-pressed="' + (follow ? "true" : "false") + '" ' +
-          'title="Re-centre the filter on the pointer as it moves. Dragging is disabled in this mode.">' +
+          'aria-pressed="' + (f.follow ? "true" : "false") + '" ' +
+          'title="Re-centre ' + nameAttr + ' on the pointer as it moves. Dragging is disabled in this mode.">' +
           '<span class="mosaic-filter-switch__dot" aria-hidden="true"></span>' +
           "Follow" +
         "</button>" +
@@ -443,9 +617,9 @@
       '<label class="mosaic-filter-slider">' +
         '<span class="mosaic-filter-slider__label">Blur</span>' +
         '<input class="mosaic-filter-slider__input" type="range" min="0" max="' + MAX_BLUR +
-          '" step="1" value="' + state.blurAmount + '" data-action="blur-slider" ' +
-          'aria-label="Mosaic blur amount in pixels" />' +
-        '<span class="mosaic-filter-slider__value" data-action="blur-readout">' + state.blurAmount + "px</span>" +
+          '" step="1" value="' + f.blurAmount + '" data-action="blur-slider" ' +
+          'aria-label="' + nameAttr + ': mosaic blur amount in pixels" />' +
+        '<span class="mosaic-filter-slider__value" data-action="blur-readout">' + f.blurAmount + "px</span>" +
       "</label>" +
 
       segmentedRow("set-fill", fill, [
@@ -458,16 +632,16 @@
         ? '<div class="mosaic-filter-row">' +
             '<span class="mosaic-filter-row__label">Colour</span>' +
             '<input type="color" class="mosaic-filter-color" data-action="fill-color" value="' +
-              state.fillColor + '" aria-label="Solid fill colour" title="Solid fill colour" />' +
+              f.fillColor + '" aria-label="' + nameAttr + ': solid fill colour" title="Solid fill colour" />' +
           "</div>"
         : "") +
 
-      segmentedRow("set-shape", state.shape, [
+      segmentedRow("set-shape", f.shape, [
         { value: "rectangle", label: "Rect" },
         { value: "ellipse", label: "Ellipse" },
       ], "Shape") +
 
-      segmentedRow("set-mode", state.mode, [
+      segmentedRow("set-mode", f.mode, [
         { value: "normal", label: "Normal", title: "Normal: the filter area is hidden" },
         { value: "reverse", label: "Reverse", title: "Reverse: everything outside the filter is hidden" },
       ], "Mode") +
@@ -481,7 +655,8 @@
           ? actionButton("clear-preset", "Clear preset", false,
               "Remove the stored preset and fall back to the layer below", "danger")
           : "") +
-        actionButton("reset-defaults", "Reset", false, "Restore the built-in defaults") +
+        actionButton("reset-defaults", "Reset", false,
+          multi ? "Reset " + nameAttr + " to the built-in defaults" : "Restore the built-in defaults") +
         actionButton("screenshot", "Shot", false, "Copy or download a redacted screenshot of this frame") +
         actionButton("panic", "Panic", false, "Show a neutral local page (Ctrl+Shift+X)", "quiet") +
       "</div>" +
@@ -500,6 +675,8 @@
 
   function restorePanelFocus(key) {
     if (!key || !panel) return;
+    // Ids and segmented values are sanitized to [A-Za-z0-9_-], so quoting is
+    // enough and CSS.escape is not needed.
     const selector =
       '[data-action="' + key.action + '"]' + (key.value ? '[data-value="' + key.value + '"]' : "");
     const el = panel.querySelector(selector);
@@ -510,11 +687,12 @@
 
   function renderChrome() {
     if (!chrome || !pill || !panel) return;
-    const on = !!state.active;
-    chrome.classList.toggle("mosaic-filter-chrome--on", on);
-    // Reverse is only meaningful while the filter is live; gating the class on
-    // `on` keeps the pill from advertising a state that is not applied.
-    chrome.classList.toggle("mosaic-filter-chrome--reverse", on && state.mode === "reverse");
+    const agg = layerState();
+    const anyOn = agg.on > 0;
+    chrome.classList.toggle("mosaic-filter-chrome--on", anyOn);
+    // Reverse is only meaningful while at least one region is live; gating the
+    // class on `on` keeps the pill from advertising a state that is not applied.
+    chrome.classList.toggle("mosaic-filter-chrome--reverse", anyOn && agg.reverse);
     chrome.classList.toggle("mosaic-filter-chrome--open", panelOpen);
     // An open panel is an explicit interaction, so it must not fade away when
     // video.js decides the user is idle.
@@ -522,7 +700,8 @@
 
     pill.setAttribute("aria-expanded", panelOpen ? "true" : "false");
     pill.title =
-      "Mosaic filter — " + (on ? "on" : "off") + " · " + sourceLabel() +
+      "Mosaic filter — " + (agg.total > 1 ? agg.on + "/" + agg.total + " on" : (anyOn ? "on" : "off")) +
+      " · " + sourceLabel() +
       " (drag to move · Alt+M toggles · Esc closes)";
 
     const focusKey = panelOpen ? capturePanelFocus() : null;
@@ -593,15 +772,20 @@
     }, 1600);
   }
 
+  // The pill speaks for the layer, so the message names the region only when
+  // there is more than one to be confused about.
+  function stateLabel() {
+    return layer.filters.length > 1 ? filterName(currentFilter(), currentIndex()) : "Mosaic filter";
+  }
+
   function toggleActive() {
-    state.active = !state.active;
+    const f = currentFilter();
+    if (!f) return;
+    const label = stateLabel();
+    updateFilter(layer, f.id, { active: !f.active });
     saveNow();
     render();
-    announce(
-      state.active
-        ? "Mosaic filter on" + (state.mode === "reverse" ? " · reverse" : "")
-        : "Mosaic filter off"
-    );
+    announce(f.active ? label + " on" + (f.mode === "reverse" ? " · reverse" : "") : label + " off");
   }
 
   // The pill sits just above Stash's control bar, so its offset has to come
@@ -616,132 +800,109 @@
     player.style.setProperty("--mf-cb-h", (height > 0 ? height : 8) + "px");
   }
 
-  // Position the rectangle based on the current state and player size.
-  // All layout reads happen before the first style write, so a render never
-  // forces a synchronous reflow. Pointer handlers do not call this directly —
-  // they go through `scheduleRender` to batch a burst of events into one
-  // render per animation frame. Direct calls are for discrete state changes
-  // (toggle, colour change, resize, mount).
-  function renderRect() {
-    if (!rect || !player) return;
-    const pw = player.clientWidth;
-    const ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return;
-    // Single layout read at the top: both handlers below reuse these values
-    // instead of re-measuring. Reading after the style writes would force a
-    // synchronous reflow on every pointer move.
-    const left = state.xPct * pw;
-    const top = state.yPct * ph;
-    const w = state.widthPct * pw;
-    const h = state.heightPct * ph;
+  // ---------------------------------------------------------------------------
+  // Render path (regions, masks, pixelation)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Position one region and push its own parameters into its own element.
+   * All layout reads happen before the first style write, so a render never
+   * forces a synchronous reflow: `pw`/`ph` are measured once by the caller.
+   *
+   * The effect parameters are written as custom properties on the region
+   * itself rather than on the player. Two regions can now blur by different
+   * amounts, and a player-level --mf-blur would apply the last write to both.
+   */
+  function layoutFilter(f, pw, ph) {
+    const entry = rects.get(f.id);
+    if (!entry) return;
+    const el = entry.el;
+    const w = f.widthPct * pw;
+    const h = f.heightPct * ph;
     // `.mosaic-filter-rectangle` is `box-sizing: border-box` with a 1px
     // border, so these run 2px above the real `clientWidth`/`clientHeight`.
     // That only shifts the canvas backing-store aspect ratio by at most one
     // cell, and the canvas is stretched to `width/height: 100%` anyway — the
     // pixels themselves are blocky by design. In exchange the per-frame
     // pixelation loop never has to read layout.
-    rectW = w;
-    rectH = h;
-    rect.style.left = left + "px";
-    rect.style.top = top + "px";
-    rect.style.width = w + "px";
-    rect.style.height = h + "px";
-    player.style.setProperty("--mf-blur", state.blurAmount + "px");
-    player.style.setProperty("--mf-fill-color", state.fillColor);
-    rect.classList.toggle("mosaic-filter-rectangle--hidden", !state.active);
-    rect.classList.toggle("mosaic-filter-rectangle--ellipse", state.shape === 'ellipse');
-    rect.classList.toggle("mosaic-filter-rectangle--reverse", state.mode === 'reverse');
-    rect.classList.toggle("mosaic-filter-rectangle--fill-solid", state.fill === 'solid');
-    rect.classList.toggle("mosaic-filter-rectangle--fill-pixelate", state.fill === 'pixelate');
+    entry.w = w;
+    entry.h = h;
+    el.style.left = (f.xPct * pw) + "px";
+    el.style.top = (f.yPct * ph) + "px";
+    el.style.width = w + "px";
+    el.style.height = h + "px";
+    el.style.setProperty("--mf-blur", f.blurAmount + "px");
+    el.style.setProperty("--mf-fill-color", f.fillColor);
+    el.classList.toggle("mosaic-filter-rectangle--hidden", !f.active);
+    el.classList.toggle("mosaic-filter-rectangle--ellipse", f.shape === "ellipse");
+    el.classList.toggle("mosaic-filter-rectangle--reverse", f.mode === "reverse");
+    el.classList.toggle("mosaic-filter-rectangle--fill-solid", f.fill === "solid");
+    el.classList.toggle("mosaic-filter-rectangle--fill-pixelate", f.fill === "pixelate");
     // Show the region's full outline (edge + resize grip) while the panel is
-    // open: the user is editing geometry, so the boundary has to be visible.
-    rect.classList.toggle("mosaic-filter-rectangle--editing", panelOpen);
-    updateMask(pw, ph);
-    syncPixelCanvas();
+    // open — the user is editing geometry, so every boundary has to be
+    // visible — and mark the one the panel is actually pointed at.
+    el.classList.toggle("mosaic-filter-rectangle--editing", panelOpen);
+    el.classList.toggle("mosaic-filter-rectangle--selected", panelOpen && layer.selectedId === f.id);
+
+    const mask = masks.get(f.id);
+    if (mask) updateMask(f, mask, pw, ph);
+    syncFilterCanvas(f, entry);
   }
 
-  // Pointer handlers fire many times per painted frame; collapsing them into
-  // one rAF means one style recalc per frame instead of one per event. The
-  // latest state always wins, so intermediate positions are not worth a
-  // render.
-  function scheduleRender() {
-    if (renderScheduled) return;
-    renderScheduled = true;
-    window.requestAnimationFrame(function () {
-      renderScheduled = false;
-      // Resolve the queued cursor position first: at the top of a rAF
-      // callback the previous frame's styles have already been laid out, so
-      // these reads are cheap. Doing it in the pointer handler instead would
-      // read layout right after our own writes — a forced reflow per event.
-      applyPendingFollow();
-      renderRect();
-    });
-  }
-
-  // Turn the queued cursor position into rect percentages. Runs at the top of
-  // the scheduled render, before any style write in this frame.
-  function applyPendingFollow() {
-    const p = pendingFollow;
-    pendingFollow = null;
-    if (!p || !state.follow || dragState || pillDrag) return;
-    if (!player || !rect) return;
-    const pw = player.clientWidth;
-    const ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return;
-    const pr = player.getBoundingClientRect();
-    state.xPct = clamp((p.x - pr.left) / pw - state.widthPct / 2, 0, 1 - state.widthPct);
-    state.yPct = clamp((p.y - pr.top) / ph - state.heightPct / 2, 0, 1 - state.heightPct);
-  }
-
-  // Update the reverse-mode mask layer position, size, and shape to match
-  // the current state. The hole is cut out via `clip-path: path()` with TWO
-  // separate subpaths (outer player rect + inner hole shape). The previous
-  // approach used `clip-path: polygon(...)` with 8 points for the rectangle
-  // and `mask-image` + `mask-composite: subtract` for the ellipse; both
-  // approaches were broken:
-  //
-  //   1. The 8-point polygon closed from the last inner point diagonally
-  //      back to the first outer point, making the path self-intersecting.
-  //      Under the nonzero fill rule, the L-shaped area (left of and above
-  //      the filter) ended up outside the clip, so the backdrop-filter
-  //      didn't apply there and the video stayed clear.
-  //
-  //   2. `mask-composite: subtract` (and its `-webkit-` prefix equivalent)
-  //      has inconsistent browser support — some browsers compute the mask
-  //      as fully transparent, making the whole mask layer invisible and
-  //      so the backdrop-filter was never applied outside the bounding box
-  //      either.
-  //
-  // `clip-path: path()` with two subpaths avoids both problems: the `Z M`
-  // separator creates two non-self-intersecting subpaths. The CSS uses
-  // `clip-rule: evenodd`, so the inner subpath becomes a hole regardless of
-  // winding direction — the rule is "inside iff a ray from the point crosses
-  // the path an odd number of times". A point inside the outer rect but
-  // outside the inner shape crosses once (odd → inside → blurred). A point
-  // inside both crosses twice (even → outside → clear). The path() function
-  // is supported in Chrome 88+, Firefox 70+, and Safari 13.1+ — well within
-  // Stash's bundled Chromium baseline.
-  //
-  // The mask layer is only meaningful when both `state.active` is true AND
-  // `state.mode === 'reverse'`. If the user toggles the filter off while in
-  // reverse mode, the mask layer must hide too — otherwise the entire player
-  // is blurred with no clear area and no indicator. The `--hidden` class
-  // collapses it to `display: none`, which overrides `--reverse`'s
-  // `display: block`.
-  function updateMask(pw, ph) {
-    if (!maskLayer || !player) return;
-    // Resizable callers pass the size they already measured; falling back to
-    // a fresh read only happens for one-off callers.
-    if (pw === undefined) pw = player.clientWidth;
-    if (ph === undefined) ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return;
-    const leftPx = state.xPct * pw;
-    const topPx = state.yPct * ph;
-    const wPx = Math.max(state.widthPct * pw, 1);
-    const hPx = Math.max(state.heightPct * ph, 1);
+  /**
+   * Update one region's reverse-mode mask: position, size, shape and fill.
+   *
+   * One mask per region, not one shared mask with several holes. Two regions
+   * can carry different blur radii / fill colours, and a single element cannot
+   * apply two backdrop-filters. The consequence is compositing: two regions in
+   * reverse mode each blur everything outside themselves, so the area that
+   * stays clear is their intersection. That is the literal meaning of the
+   * setting, and it is announced by the panel — but it is also why reverse
+   * mode is normally used on exactly one region.
+   *
+   * The hole is cut via `clip-path: path()` with TWO separate subpaths (outer
+   * player rect + inner hole shape). The previous approach used
+   * `clip-path: polygon(...)` with 8 points for the rectangle and
+   * `mask-image` + `mask-composite: subtract` for the ellipse; both were
+   * broken:
+   *
+   *   1. The 8-point polygon closed from the last inner point diagonally
+   *      back to the first outer point, making the path self-intersecting.
+   *      Under the nonzero fill rule, the L-shaped area (left of and above
+   *      the filter) ended up outside the clip, so the backdrop-filter
+   *      didn't apply there and the video stayed clear.
+   *
+   *   2. `mask-composite: subtract` (and its `-webkit-` prefix equivalent)
+   *      has inconsistent browser support — some browsers compute the mask
+   *      as fully transparent, making the whole mask layer invisible and
+   *      so the backdrop-filter was never applied outside the bounding box
+   *      either.
+   *
+   * `clip-path: path()` with two subpaths avoids both problems: the `Z M`
+   * separator creates two non-self-intersecting subpaths. The CSS uses
+   * `clip-rule: evenodd`, so the inner subpath becomes a hole regardless of
+   * winding direction — the rule is "inside iff a ray from the point crosses
+   * the path an odd number of times". A point inside the outer rect but
+   * outside the inner shape crosses once (odd → inside → blurred). A point
+   * inside both crosses twice (even → outside → clear). The path() function
+   * is supported in Chrome 88+, Firefox 70+, and Safari 13.1+ — well within
+   * Stash's bundled Chromium baseline.
+   *
+   * A mask is only meaningful when `f.active` is true AND
+   * `f.mode === 'reverse'`. If the user toggles that region off while it is
+   * in reverse mode, the mask must hide too — otherwise the whole player is
+   * blurred with no clear area and no indicator, even though other regions
+   * may still be on.
+   */
+  function updateMask(f, mask, pw, ph) {
+    if (!mask) return;
+    const leftPx = f.xPct * pw;
+    const topPx = f.yPct * ph;
+    const wPx = Math.max(f.widthPct * pw, 1);
+    const hPx = Math.max(f.heightPct * ph, 1);
 
     let innerD;
-    if (state.shape === 'ellipse') {
+    if (f.shape === 'ellipse') {
       const cx = leftPx + wPx / 2;
       const cy = topPx + hPx / 2;
       const rx = wPx / 2;
@@ -773,13 +934,70 @@
     // with a hole under both the nonzero and evenodd clip rules (the CSS
     // uses evenodd, which is more forgiving of winding direction).
     const outerD = "M 0 0 L " + pw + " 0 L " + pw + " " + ph + " L 0 " + ph + " Z";
-    maskLayer.style.clipPath = "path('" + outerD + " " + innerD + "')";
+    mask.style.clipPath = "path('" + outerD + " " + innerD + "')";
+    mask.style.setProperty("--mf-blur", f.blurAmount + "px");
+    mask.style.setProperty("--mf-fill-color", f.fillColor);
 
-    const reverseOn = state.active && state.mode === 'reverse';
-    maskLayer.classList.toggle('mosaic-filter-mask-layer--reverse', reverseOn);
-    maskLayer.classList.toggle('mosaic-filter-mask-layer--hidden', !state.active);
-    maskLayer.classList.toggle('mosaic-filter-mask-layer--fill-solid', reverseOn && state.fill === 'solid');
-    maskLayer.classList.toggle('mosaic-filter-mask-layer--fill-blur', reverseOn && state.fill === 'blur');
+    const reverseOn = f.active && f.mode === 'reverse';
+    mask.classList.toggle('mosaic-filter-mask-layer--reverse', reverseOn);
+    mask.classList.toggle('mosaic-filter-mask-layer--hidden', !f.active);
+    mask.classList.toggle('mosaic-filter-mask-layer--fill-solid', reverseOn && f.fill === 'solid');
+    mask.classList.toggle('mosaic-filter-mask-layer--fill-blur', reverseOn && f.fill !== 'solid');
+  }
+
+  /**
+   * Redraw every region. Direct calls are for discrete state changes (toggle,
+   * colour, resize, mount, selection); pointer handlers go through
+   * `scheduleRender` so a burst of events costs one render per frame.
+   */
+  function renderFilters() {
+    if (!player) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    syncFilterNodes();
+    for (let i = 0; i < layer.filters.length; i++) {
+      layoutFilter(layer.filters[i], pw, ph);
+    }
+    syncPixelLoops();
+  }
+
+  // Pointer handlers fire many times per painted frame; collapsing them into
+  // one rAF means one style recalc per frame instead of one per event. The
+  // latest layer state always wins, so intermediate positions are not worth a
+  // render.
+  function scheduleRender() {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    window.requestAnimationFrame(function () {
+      renderScheduled = false;
+      // Resolve the queued cursor position first: at the top of a rAF
+      // callback the previous frame's styles have already been laid out, so
+      // these reads are cheap. Doing it in the pointer handler instead would
+      // read layout right after our own writes — a forced reflow per event.
+      applyPendingFollow();
+      renderFilters();
+    });
+  }
+
+  // Turn the queued cursor position into rect percentages for every region
+  // that is following. Runs at the top of the scheduled render, before any
+  // style write in this frame.
+  function applyPendingFollow() {
+    const p = pendingFollow;
+    pendingFollow = null;
+    if (!p || dragState || pillDrag) return;
+    if (!player || layer.filters.length === 0) return;
+    const pw = player.clientWidth;
+    const ph = player.clientHeight;
+    if (pw === 0 || ph === 0) return;
+    const pr = player.getBoundingClientRect();
+    for (let i = 0; i < layer.filters.length; i++) {
+      const f = layer.filters[i];
+      if (!f.follow) continue;
+      f.xPct = clamp((p.x - pr.left) / pw - f.widthPct / 2, 0, 1 - f.widthPct);
+      f.yPct = clamp((p.y - pr.top) / ph - f.heightPct / 2, 0, 1 - f.heightPct);
+    }
   }
 
   function getVideoElement() {
@@ -792,18 +1010,6 @@
     return pixelVideoEl;
   }
 
-  // The pixel canvas is created by `buildRect` and lives inside a shadow root,
-  // so it can no longer be found through `rect.querySelector` — the reference
-  // is captured at build time instead. `isConnected` walks the shadow-including
-  // tree, so it still detects a canvas dropped with its host on teardown.
-  function getPixelCanvas() {
-    if (pixelCanvasEl && !pixelCanvasEl.isConnected) {
-      pixelCanvasEl = null;
-      pixelCanvasCtx = null;
-    }
-    return pixelCanvasEl;
-  }
-
   function stopPixelLoop() {
     pixelLoopActive = false;
     const video = getVideoElement();
@@ -813,35 +1019,41 @@
     pixelVideoFrameCallback = null;
   }
 
+  // One loop paints every pixelated region: they all sample the same video
+  // frame, so a second callback per region would only duplicate work.
   function drawPixelFrame() {
-    const canvas = getPixelCanvas();
     const video = getVideoElement();
-    if (!canvas || !video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    // `rectW`/`rectH` are maintained by renderRect, so this no longer reads
-    // layout inside the frame callback.
-    if (rectW <= 0 || rectH <= 0) return;
-    const step = Math.max(4, state.pixelSize);
-    const width = Math.max(4, Math.floor(rectW / step));
-    const height = Math.max(4, Math.floor(rectH / step));
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
-    if (!pixelCanvasCtx) pixelCanvasCtx = canvas.getContext("2d");
-    const ctx = pixelCanvasCtx;
-    if (!ctx) return;
-    // Cover-crop the video into the filter region so the pixelated preview
-    // does not stretch when the region has a different aspect ratio.
-    const targetAspect = width / height;
-    const sourceAspect = video.videoWidth / video.videoHeight;
-    let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
-    if (sourceAspect > targetAspect) {
-      sw = video.videoHeight * targetAspect;
-      sx = (video.videoWidth - sw) / 2;
-    } else {
-      sh = video.videoWidth / targetAspect;
-      sy = (video.videoHeight - sh) / 2;
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+    for (let i = 0; i < layer.filters.length; i++) {
+      const f = layer.filters[i];
+      const entry = rects.get(f.id);
+      if (!entry || !entry.pixelOn || !entry.canvas) continue;
+      // `entry.w`/`entry.h` are maintained by layoutFilter, so this no longer
+      // reads layout inside the frame callback.
+      if (entry.w <= 0 || entry.h <= 0) continue;
+      const step = Math.max(4, f.pixelSize);
+      const width = Math.max(4, Math.floor(entry.w / step));
+      const height = Math.max(4, Math.floor(entry.h / step));
+      if (entry.canvas.width !== width) entry.canvas.width = width;
+      if (entry.canvas.height !== height) entry.canvas.height = height;
+      if (!entry.ctx) entry.ctx = entry.canvas.getContext("2d");
+      const ctx = entry.ctx;
+      if (!ctx) continue;
+      // Cover-crop the video into the filter region so the pixelated preview
+      // does not stretch when the region has a different aspect ratio.
+      const targetAspect = width / height;
+      const sourceAspect = video.videoWidth / video.videoHeight;
+      let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+      if (sourceAspect > targetAspect) {
+        sw = video.videoHeight * targetAspect;
+        sx = (video.videoWidth - sw) / 2;
+      } else {
+        sh = video.videoWidth / targetAspect;
+        sy = (video.videoHeight - sh) / 2;
+      }
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
     }
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
   }
 
   function startPixelLoop() {
@@ -870,33 +1082,42 @@
     window.requestAnimationFrame(tick);
   }
 
-  function syncPixelCanvas() {
-    const canvas = getPixelCanvas();
-    if (!canvas) return;
-    const on = state.active && state.fill === "pixelate" && state.mode === "normal";
-    // Guarded write: `renderRect` runs up to once per frame while dragging,
+  // Toggle one region's canvas and decide whether the shared loop still has
+  // anything to paint.
+  function syncFilterCanvas(f, entry) {
+    if (!entry || !entry.canvas) return;
+    const on = f.active && f.fill === "pixelate" && f.mode === "normal";
+    // Guarded write: layoutFilter runs up to once per frame while dragging,
     // and re-assigning an unchanged value still walks the CSSOM.
     const nextDisplay = on ? "block" : "none";
-    if (canvas.style.display !== nextDisplay) canvas.style.display = nextDisplay;
-    if (on) {
-      // The video-frame loop only repaints while the video is actually
-      // presenting frames. `requestVideoFrameCallback` does not fire on a
-      // paused video, and resizing the canvas backing store clears it — so a
-      // drag over a paused video would leave a blank filter region unless we
-      // paint here. Only skip the blit when the loop is guaranteed to
-      // repaint on its own.
-      const video = getVideoElement();
-      const loopWillPaint = pixelLoopActive && video && !video.paused && !video.ended;
-      if (!loopWillPaint) drawPixelFrame();
-      startPixelLoop();
-    } else {
-      stopPixelLoop();
-    }
+    if (entry.canvas.style.display !== nextDisplay) entry.canvas.style.display = nextDisplay;
+    entry.pixelOn = on;
   }
 
-  function clipFilterRegion(ctx, x, y, w, h) {
+  function syncPixelLoops() {
+    let any = false;
+    rects.forEach(function (entry) {
+      if (entry.pixelOn) any = true;
+    });
+    if (!any) {
+      stopPixelLoop();
+      return;
+    }
+    // The video-frame loop only repaints while the video is actually
+    // presenting frames. `requestVideoFrameCallback` does not fire on a
+    // paused video, and resizing the canvas backing store clears it — so a
+    // drag over a paused video would leave a blank filter region unless we
+    // paint here. Only skip the blit when the loop is guaranteed to repaint
+    // on its own.
+    const video = getVideoElement();
+    const loopWillPaint = pixelLoopActive && video && !video.paused && !video.ended;
+    if (!loopWillPaint) drawPixelFrame();
+    startPixelLoop();
+  }
+
+  function clipRegion(ctx, f, x, y, w, h) {
     ctx.beginPath();
-    if (state.shape === "ellipse") {
+    if (f.shape === "ellipse") {
       ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
     } else {
       ctx.rect(x, y, w, h);
@@ -904,16 +1125,16 @@
     ctx.clip();
   }
 
-  function paintFilterEffect(ctx, video, x, y, w, h, canvasWidth, canvasHeight) {
-    if (state.fill === "solid") {
-      ctx.fillStyle = state.fillColor;
+  function paintEffect(ctx, video, f, x, y, w, h, canvasWidth, canvasHeight) {
+    if (f.fill === "solid") {
+      ctx.fillStyle = f.fillColor;
       ctx.fillRect(x, y, w, h);
       return;
     }
-    if (state.fill === "pixelate") {
+    if (f.fill === "pixelate") {
       const temp = document.createElement("canvas");
-      temp.width = Math.max(2, Math.floor(w / Math.max(4, state.pixelSize)));
-      temp.height = Math.max(2, Math.floor(h / Math.max(4, state.pixelSize)));
+      temp.width = Math.max(2, Math.floor(w / Math.max(4, f.pixelSize)));
+      temp.height = Math.max(2, Math.floor(h / Math.max(4, f.pixelSize)));
       const tctx = temp.getContext("2d");
       tctx.imageSmoothingEnabled = false;
       tctx.drawImage(video, 0, 0, canvasWidth, canvasHeight, 0, 0, temp.width, temp.height);
@@ -922,7 +1143,7 @@
       ctx.imageSmoothingEnabled = true;
       return;
     }
-    ctx.filter = "blur(" + state.blurAmount + "px)";
+    ctx.filter = "blur(" + f.blurAmount + "px)";
     ctx.drawImage(video, 0, 0, canvasWidth, canvasHeight, 0, 0, canvasWidth, canvasHeight);
     ctx.filter = "none";
   }
@@ -944,12 +1165,30 @@
     announce(message);
   }
 
+  // The player box and the video frame do not line up when the video is
+  // letterboxed, so region percentages are mapped onto the *canvas* here
+  // (which holds the frame). Same mapping the single-region version used.
+  function canvasGeometry(f, canvas) {
+    return {
+      x: f.xPct * canvas.width,
+      y: f.yPct * canvas.height,
+      w: f.widthPct * canvas.width,
+      h: f.heightPct * canvas.height,
+    };
+  }
+
   function captureRedacted() {
     const video = getVideoElement();
     if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
       setScreenshotStatus("Screenshot unavailable: video frame is not ready.");
       return;
     }
+    const active = layer.filters.filter(function (f) { return f.active; });
+    if (active.length === 0) {
+      setScreenshotStatus("Nothing to redact: every filter is off.");
+      return;
+    }
+
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -957,31 +1196,37 @@
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const pw = player.clientWidth || canvas.width;
-    const ph = player.clientHeight || canvas.height;
-    const x = state.xPct * pw * (canvas.width / pw);
-    const y = state.yPct * ph * (canvas.height / ph);
-    const w = state.widthPct * pw * (canvas.width / pw);
-    const h = state.heightPct * ph * (canvas.height / ph);
+    const cw = canvas.width;
+    const ch = canvas.height;
 
-    if (state.mode === "reverse") {
+    // Reverse first: each one paints its effect over the whole frame and then
+    // restores its own hole from the untouched video, so a later normal-mode
+    // region still lands inside a clear area. Pixelate is not available in
+    // reverse mode (the mask layer has no pixelation path), so it degrades to
+    // blur here exactly as it does on screen.
+    active.filter(function (f) { return f.mode === "reverse"; }).forEach(function (f) {
+      const paint = f.fill === "pixelate" ? Object.assign({}, f, { fill: "blur" }) : f;
+      const g = canvasGeometry(f, canvas);
       const effect = document.createElement("canvas");
-      effect.width = canvas.width;
-      effect.height = canvas.height;
+      effect.width = cw;
+      effect.height = ch;
       const ectx = effect.getContext("2d");
-      ectx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      paintFilterEffect(ectx, video, 0, 0, canvas.width, canvas.height, canvas.width, canvas.height);
+      ectx.drawImage(video, 0, 0, cw, ch);
+      paintEffect(ectx, video, paint, 0, 0, cw, ch, cw, ch);
       ctx.drawImage(effect, 0, 0);
       ctx.save();
-      clipFilterRegion(ctx, x, y, w, h);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      clipRegion(ctx, f, g.x, g.y, g.w, g.h);
+      ctx.drawImage(video, 0, 0, cw, ch);
       ctx.restore();
-    } else {
+    });
+
+    active.filter(function (f) { return f.mode !== "reverse"; }).forEach(function (f) {
+      const g = canvasGeometry(f, canvas);
       ctx.save();
-      clipFilterRegion(ctx, x, y, w, h);
-      paintFilterEffect(ctx, video, x, y, w, h, canvas.width, canvas.height);
+      clipRegion(ctx, f, g.x, g.y, g.w, g.h);
+      paintEffect(ctx, video, f, g.x, g.y, g.w, g.h, cw, ch);
       ctx.restore();
-    }
+    });
 
     canvas.toBlob(function (blob) {
       if (!blob) {
@@ -1075,7 +1320,7 @@
   }
 
   function render() {
-    renderRect();
+    renderFilters();
     renderChrome();
   }
 
@@ -1107,24 +1352,36 @@
       clearTimeout(toastTimer);
       toastTimer = null;
     }
+    if (dragState) {
+      const entry = rects.get(dragState.filterId);
+      if (entry) {
+        entry.el.classList.remove(
+          "mosaic-filter-rectangle--dragging",
+          "mosaic-filter-rectangle--resizing"
+        );
+      }
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerUp);
+      dragState = null;
+    }
     document.removeEventListener("pointerdown", onDocumentPointerDown, true);
-    if (rect && rect.parentElement) rect.parentElement.removeChild(rect);
-    if (maskLayer && maskLayer.parentElement) maskLayer.parentElement.removeChild(maskLayer);
+    rects.forEach(function (entry) {
+      if (entry.el.parentElement) entry.el.parentElement.removeChild(entry.el);
+    });
+    masks.forEach(function (el) {
+      if (el.parentElement) el.parentElement.removeChild(el);
+    });
+    rects.clear();
+    masks.clear();
     if (chrome && chrome.parentElement) chrome.parentElement.removeChild(chrome);
-    rect = null;
-    resizeHandle = null;
-    maskLayer = null;
     chrome = null;
     pill = null;
     panel = null;
     toastEl = null;
     statusEl = null;
     player = null;
-    pixelCanvasEl = null;
-    pixelCanvasCtx = null;
     pixelVideoEl = null;
-    rectW = 0;
-    rectH = 0;
     pendingFollow = null;
     // The panel is never carried across mounts: a new scene starts collapsed.
     panelOpen = false;
@@ -1145,18 +1402,9 @@
       player = freshPlayer;
       ensurePlayerRelative(player);
     }
-    if (!maskLayer) {
-      maskLayer = buildMaskLayer();
-      player.appendChild(maskLayer);
-    }
-    if (!rect) {
-      rect = buildRect();
-      resizeHandle = rect.querySelector(".mosaic-filter-rectangle__resize");
-      // pixelCanvasEl was captured by buildRect; the canvas is in a shadow
-      // root, so it is neither re-queried here nor reachable from `rect`.
-      player.appendChild(rect);
-      attachRectPointerListeners();
-    }
+    // Creates the region and mask nodes for every filter, including the ones
+    // added after the previous mount.
+    syncFilterNodes();
     if (!chrome) {
       chrome = buildChrome();
       player.appendChild(chrome);
@@ -1174,10 +1422,10 @@
     }
     // Always attach the follow listener while the overlay is mounted, so
     // that toggling Follow on later just flips the flag (and snaps the
-    // rectangle to the cursor) without re-binding event handlers.
+    // regions to the cursor) without re-binding event handlers.
     attachFollowListener();
-    if (state.follow) {
-      snapRectToPointer();
+    if (layer.filters.some(function (f) { return f.follow; })) {
+      snapFollowersToPointer();
     }
     return true;
   }
@@ -1188,12 +1436,12 @@
     }
     const routeMatch = window.location.pathname.match(/\/scenes\/(\d+)/);
     const routeSceneId = routeMatch ? routeMatch[1] : null;
-    if (rect && chrome && context.sceneId !== routeSceneId) {
+    if (chrome && context.sceneId !== routeSceneId) {
       // Same player element, different scene: drop the overlay and reload the
       // effective preset for the new scene.
       teardown();
     }
-    if (rect && chrome) {
+    if (chrome) {
       // Same overlay, same player — re-render only (handles window resize).
       render();
       return;
@@ -1213,23 +1461,34 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Pointer interactions on the rectangle (drag + resize)
+  // Pointer interactions on a region (drag + resize)
   // ---------------------------------------------------------------------------
 
-  function onRectPointerDown(e) {
+  function onRectPointerDown(e, filterId) {
     if (e.button !== undefined && e.button !== 0) return; // primary button only
-    // In follow mode the rectangle is anchored to the cursor already, so
+    const f = findFilter(layer, filterId);
+    const entry = rects.get(filterId);
+    if (!f || !entry) return;
+
+    // Pressing a region is also how you pick which one the panel edits.
+    // Rendering here is once per gesture, not per frame.
+    if (layer.selectedId !== f.id) {
+      selectFilter(layer, f.id);
+      render();
+    }
+
+    // In follow mode the region is anchored to the cursor already, so
     // dragging it is redundant and would just fight the follow handler.
     // Resize still works.
-    if (state.follow && e.target.dataset.action !== "rect-resize") {
+    const action = e.target?.dataset?.action;
+    if (f.follow && action !== "rect-resize") {
       return;
     }
-    const target = e.target;
-    const action = target?.dataset?.action;
+
     let type;
     if (action === "rect-resize") {
       type = "resize";
-    } else if (action === "rect-drag" || (rect && rect.contains(target))) {
+    } else if (action === "rect-drag" || entry.el.contains(e.target)) {
       type = "drag";
     } else {
       return;
@@ -1239,20 +1498,21 @@
     if (!player) return;
     dragState = {
       type: type,
+      filterId: f.id,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      startXPct: state.xPct,
-      startYPct: state.yPct,
-      startWPct: state.widthPct,
-      startHPct: state.heightPct,
+      startXPct: f.xPct,
+      startYPct: f.yPct,
+      startWPct: f.widthPct,
+      startHPct: f.heightPct,
       pw: player.clientWidth,
       ph: player.clientHeight,
     };
-    if (rect.setPointerCapture) {
-      try { rect.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    if (entry.el.setPointerCapture) {
+      try { entry.el.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
     }
-    rect.classList.add(
+    entry.el.classList.add(
       type === "resize" ? "mosaic-filter-rectangle--resizing" : "mosaic-filter-rectangle--dragging"
     );
     document.addEventListener("pointermove", onPointerMove);
@@ -1262,19 +1522,22 @@
 
   function onPointerMove(e) {
     if (!dragState) return;
+    // The dragged region is looked up by id on every move: a save, a preset
+    // change or a selection change can replace the layer while a drag is in
+    // flight, and an index would then point at a different region.
+    const f = findFilter(layer, dragState.filterId);
+    if (!f) return;
     const pw = dragState.pw;
     const ph = dragState.ph;
     if (!pw || !ph) return;
     const dxPct = (e.clientX - dragState.startX) / pw;
     const dyPct = (e.clientY - dragState.startY) / ph;
     if (dragState.type === "drag") {
-      state.xPct = clamp(dragState.startXPct + dxPct, 0, 1 - state.widthPct);
-      state.yPct = clamp(dragState.startYPct + dyPct, 0, 1 - state.heightPct);
+      f.xPct = clamp(dragState.startXPct + dxPct, 0, 1 - f.widthPct);
+      f.yPct = clamp(dragState.startYPct + dyPct, 0, 1 - f.heightPct);
     } else {
-      const newW = clamp(dragState.startWPct + dxPct, MIN_SIZE_PCT, 1 - state.xPct);
-      const newH = clamp(dragState.startHPct + dyPct, MIN_SIZE_PCT, 1 - state.yPct);
-      state.widthPct = newW;
-      state.heightPct = newH;
+      f.widthPct = clamp(dragState.startWPct + dxPct, MIN_SIZE_PCT, 1 - f.xPct);
+      f.heightPct = clamp(dragState.startHPct + dyPct, MIN_SIZE_PCT, 1 - f.yPct);
     }
     scheduleRender();
   }
@@ -1282,12 +1545,15 @@
   function onPointerUp(e) {
     if (!dragState) return;
     const pointerId = dragState.pointerId;
-    rect.classList.remove(
-      "mosaic-filter-rectangle--dragging",
-      "mosaic-filter-rectangle--resizing"
-    );
-    if (rect && rect.releasePointerCapture && pointerId !== undefined) {
-      try { rect.releasePointerCapture(pointerId); } catch (_) { /* ignore */ }
+    const entry = rects.get(dragState.filterId);
+    if (entry) {
+      entry.el.classList.remove(
+        "mosaic-filter-rectangle--dragging",
+        "mosaic-filter-rectangle--resizing"
+      );
+      if (entry.el.releasePointerCapture && pointerId !== undefined) {
+        try { entry.el.releasePointerCapture(pointerId); } catch (_) { /* ignore */ }
+      }
     }
     document.removeEventListener("pointermove", onPointerMove);
     document.removeEventListener("pointerup", onPointerUp);
@@ -1296,20 +1562,22 @@
     saveNow();
   }
 
-  function attachRectPointerListeners() {
-    if (!rect) return;
-    rect.addEventListener("pointerdown", onRectPointerDown);
-  }
+  // ---------------------------------------------------------------------------
+  // Chrome interactions (click delegation + slider)
+  // ---------------------------------------------------------------------------
 
-  // ---------------------------------------------------------------------------
-  // Bar interactions (click delegation + slider)
-  // ---------------------------------------------------------------------------
+  function announceFilterState(f) {
+    const index = layer.filters.indexOf(f);
+    const label = filterName(f, index < 0 ? 0 : index);
+    announce(label + (f.active ? " on" + (f.mode === "reverse" ? " · reverse" : "") : " off"));
+  }
 
   function onChromeClick(e) {
     const target = e.target.closest("[data-action]");
     if (!target || !chrome || !chrome.contains(target)) return;
     const action = target.dataset.action;
     const value = target.dataset.value;
+    const selected = currentFilter();
     switch (action) {
       case "toggle-panel":
         e.preventDefault();
@@ -1324,36 +1592,101 @@
       case "close-panel":
         setPanelOpen(false);
         break;
+      case "add-filter": {
+        const created = spawnFilter(layer);
+        if (!created) {
+          announce("Filter limit reached (" + MAX_FILTERS + ")");
+          break;
+        }
+        saveNow();
+        render();
+        announce(filterName(created, layer.filters.length - 1) + " added");
+        break;
+      }
+      case "select-filter": {
+        const target2 = findFilter(layer, value);
+        if (!target2 || layer.selectedId === target2.id) break;
+        selectFilter(layer, target2.id);
+        // The selection is part of the layer, so it survives a reload with the
+        // preset it belongs to.
+        saveNow();
+        render();
+        break;
+      }
+      case "toggle-filter": {
+        const target2 = findFilter(layer, value);
+        if (!target2) break;
+        updateFilter(layer, target2.id, { active: !target2.active });
+        saveNow();
+        render();
+        announceFilterState(target2);
+        break;
+      }
+      case "delete-filter": {
+        const target2 = findFilter(layer, value);
+        if (!target2) break;
+        const index = layer.filters.indexOf(target2);
+        const name = filterName(target2, index < 0 ? 0 : index);
+        if (!removeFilter(layer, target2.id)) {
+          announce("Keep at least one filter");
+          break;
+        }
+        saveNow();
+        render();
+        announce(name + " deleted");
+        break;
+      }
       case "toggle-active":
         // Same path as the Alt+M shortcut, so the pill, the switch and the
         // keyboard can never disagree about the state.
         toggleActive();
         break;
-      case "toggle-follow":
-        state.follow = !state.follow;
-        if (state.follow) snapRectToPointer();
+      case "toggle-follow": {
+        if (!selected) break;
+        const next = !selected.follow;
+        updateFilter(layer, selected.id, { follow: next });
+        if (next) snapFollowersToPointer();
+        else {
+          saveNow();
+          render();
+        }
+        break;
+      }
+      case "set-shape": {
+        if (!selected || selected.shape === value) break;
+        updateFilter(layer, selected.id, { shape: value === "ellipse" ? "ellipse" : "rectangle" });
         saveNow();
         render();
         break;
-      case "set-shape":
-        if (state.shape === value) break;
-        state.shape = value === "ellipse" ? "ellipse" : "rectangle";
+      }
+      case "set-mode": {
+        if (!selected || selected.mode === value) break;
+        const next = value === "reverse" ? "reverse" : "normal";
+        updateFilter(layer, selected.id, { mode: next });
         saveNow();
         render();
+        // Two reverse regions each hide everything outside themselves, so the
+        // area left clear is only their intersection. Say so once, when the
+        // second one is switched on.
+        if (next === "reverse") {
+          const reverseCount = layer.filters.filter(function (f) {
+            return f.active && f.mode === "reverse";
+          }).length;
+          if (reverseCount > 1) {
+            announce("Reverse on " + reverseCount + " filters: only their overlap stays clear");
+            break;
+          }
+        }
         break;
-      case "set-mode":
-        if (state.mode === value) break;
-        state.mode = value === "reverse" ? "reverse" : "normal";
-        saveNow();
-        render();
-        break;
-      case "set-fill":
-        if (state.fill === value) break;
+      }
+      case "set-fill": {
+        if (!selected || selected.fill === value) break;
         if (value !== "blur" && value !== "solid" && value !== "pixelate") break;
-        state.fill = value;
+        updateFilter(layer, selected.id, { fill: value });
         saveNow();
         render();
         break;
+      }
       case "save-scene-preset":
         if (!context.sceneId) break;
         context.source = "scene";
@@ -1377,17 +1710,23 @@
           delete config.studioPresets[String(context.studioId)];
         }
         context.source = presetSource(config, context.sceneId, context.studioId);
-        state = resolveState(config, context.sceneId, context.studioId);
+        // Replacing the whole layer, not merging: the preset that was cleared
+        // is gone, so there is nothing left to merge into.
+        layer = resolveState(config, context.sceneId, context.studioId);
         persistConfig();
         render();
         announce("Preset cleared · " + sourceLabel());
         break;
-      case "reset-defaults":
-        Object.assign(state, makeDefaultState());
+      case "reset-defaults": {
+        if (!selected) break;
+        const index = layer.filters.indexOf(selected);
+        const name = filterName(selected, index < 0 ? 0 : index);
+        resetFilter(layer, selected.id);
         saveNow();
         render();
-        announce("Reset to defaults");
+        announce(layer.filters.length > 1 ? name + " reset" : "Reset to defaults");
         break;
+      }
       case "screenshot":
         captureRedacted();
         break;
@@ -1407,9 +1746,12 @@
     const target = e.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
+    const f = currentFilter();
+    if (!f) return;
     const value = clamp(parseInt(target.value, 10) || 0, 0, MAX_BLUR);
-    state.blurAmount = value;
-    if (player) player.style.setProperty("--mf-blur", value + "px");
+    f.blurAmount = value;
+    const entry = rects.get(f.id);
+    if (entry) entry.el.style.setProperty("--mf-blur", value + "px");
     const readout = panel && panel.querySelector('[data-action="blur-readout"]');
     if (readout) readout.textContent = value + "px";
   }
@@ -1417,17 +1759,21 @@
   function onChromeChange(e) {
     const target = e.target;
     if (target.dataset && target.dataset.action === "fill-color") {
-      if (/^#[0-9a-fA-F]{6}$/.test(target.value)) {
-        state.fillColor = target.value;
+      const f = currentFilter();
+      if (f && /^#[0-9a-fA-F]{6}$/.test(target.value)) {
+        updateFilter(layer, f.id, { fillColor: target.value });
         saveNow();
-        renderRect();
+        renderFilters();
       }
       return;
     }
     if (!(target instanceof HTMLInputElement)) return;
     if (target.dataset.action !== "blur-slider") return;
     // Slider release: persist the final blur amount. (State was already
-    // updated by `input`; this just commits it to csLib.)
+    // updated by `input`; this just commits it to the layer.)
+    const f = currentFilter();
+    if (!f) return;
+    updateFilter(layer, f.id, { blurAmount: f.blurAmount });
     saveNow();
   }
 
@@ -1460,7 +1806,7 @@
   // rebuilds the player on every navigation, and fullscreen turns the same
   // corner into a different offset. It lives in localStorage because it is a
   // per-browser UI preference — the config schema belongs to
-  // MosaicFilterShared.sanitizeState and the settings page, and a throwaway
+  // MosaicFilterShared.sanitizeFilter and the settings page, and a throwaway
   // value there would be synced to Suite Data (same reasoning as
   // SceneRotation's cluster). `pillPos === null` means "never dragged", and
   // then the stylesheet's `right`/`bottom` anchor — the one built around
@@ -1791,22 +2137,31 @@
     // Always record the latest cursor position over the player, so that
     // toggling Follow on later snaps to the right spot.
     lastPointer = { x: e.clientX, y: e.clientY };
-    if (!state.follow) return;
     if (dragState) return;
-    // Moving the pill must not drag the filter along with it.
+    // Moving the pill must not drag the regions along with it.
     if (pillDrag) return;
-    if (!player || !rect) return;
+    if (!player) return;
+    if (!layer.filters.some(function (f) { return f.follow; })) return;
     // Defer the geometry to the scheduled render — see applyPendingFollow.
     pendingFollow = lastPointer;
     scheduleRender();
   }
 
-  /** Snap the rectangle to the last known cursor position and persist. */
-  function snapRectToPointer() {
-    if (!player || !rect) return;
+  /**
+   * Snap every following region to the last known cursor position and persist.
+   * Follow is a per-region flag, so turning it on for one region must not move
+   * the others; regions that are already following simply re-centre, which is
+   * also what the user expects from toggling it on.
+   */
+  function snapFollowersToPointer() {
+    if (!player) return;
     const pw = player.clientWidth;
     const ph = player.clientHeight;
-    if (pw === 0 || ph === 0) return;
+    if (pw === 0 || ph === 0) {
+      saveNow();
+      render();
+      return;
+    }
     const pr = player.getBoundingClientRect();
     let cursorXPct, cursorYPct;
     if (lastPointer) {
@@ -1816,10 +2171,15 @@
       cursorXPct = 0.5;
       cursorYPct = 0.5;
     }
-    state.xPct = clamp(cursorXPct - state.widthPct / 2, 0, 1 - state.widthPct);
-    state.yPct = clamp(cursorYPct - state.heightPct / 2, 0, 1 - state.heightPct);
-    renderRect();
+    for (let i = 0; i < layer.filters.length; i++) {
+      const f = layer.filters[i];
+      if (!f.follow) continue;
+      f.xPct = clamp(cursorXPct - f.widthPct / 2, 0, 1 - f.widthPct);
+      f.yPct = clamp(cursorYPct - f.heightPct / 2, 0, 1 - f.heightPct);
+    }
+    renderFilters();
     saveNow();
+    renderChrome();
   }
 
   function attachFollowListener() {
@@ -1875,36 +2235,36 @@
       setPanelOpen(false);
       return;
     }
-    // Alt+M flips the filter without opening anything — the fastest way to
-    // hide something, and the reason the collapsed state can stay silent.
-    // Alt keeps the binding clear of video.js hotkeys (m = mute) and of every
-    // plain-letter shortcut another plugin might claim.
+    // Alt+M flips the selected filter without opening anything — the fastest
+    // way to hide something, and the reason the collapsed state can stay
+    // silent. Alt keeps the binding clear of video.js hotkeys (m = mute) and
+    // of every plain-letter shortcut another plugin might claim.
     if (e.altKey && !e.ctrlKey && !e.metaKey && !e.repeat && (e.key === "m" || e.key === "M")) {
       if (isTypingTarget(e.target)) return;
-      if (!rect || !player) return;
+      if (chrome === null || !player) return;
       e.preventDefault();
       toggleActive();
     }
   });
 
-  // Re-position the rectangle on window resize so the percentages stay right.
+  // Re-position the regions on window resize so the percentages stay right.
   // The control bar is re-measured too: Stash's bar height changes with the
   // player size at some breakpoints.
   window.addEventListener("resize", function () {
-    if (!rect || !player) return;
+    if (!player) return;
     syncPlayerMetrics();
-    renderRect();
+    renderFilters();
     // A smaller frame can leave a dragged pill (and the panel under it) outside
     // the picture.
     placeChrome();
   });
 
   // Fullscreen swaps the player box for the viewport, so both the control-bar
-  // offset and the rectangle have to be recomputed.
+  // offset and every region have to be recomputed.
   document.addEventListener("fullscreenchange", function () {
-    if (!rect || !player) return;
+    if (!player) return;
     syncPlayerMetrics();
-    renderRect();
+    renderFilters();
     placeChrome();
   });
 

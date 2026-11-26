@@ -7,7 +7,7 @@ A collection of Stash plugins — player overlays, page additions, and one theme
 ## Plugins
 
 - **[Questing Adventurer](#questing-adventurer)** — turns scene playback into a quest: respond to on-screen cues by performing the moves attached to your active triggers.
-- **[Mosaic Filter](#mosaic-filter)** — a movable, resizable blur rectangle (or ellipse) over any region of a scene, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
+- **[Mosaic Filter](#mosaic-filter)** — movable, resizable blur rectangles (or ellipses) over any region of a scene, as many independent filters at once as you need, with a follow-cursor mode and a reverse mode that blurs everything *except* the filter area.
 - **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene bidirectionally, with a suggest-from-folder helper.
 - **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene and applied to the player, the card preview and the cover, without re-encoding the file or writing anything to disk.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
@@ -89,10 +89,13 @@ Turns scene playback into a quest. While a scene plays, the viewer is a "questin
 
 ## Mosaic Filter
 
-A toggleable, movable, and resizable blur overlay for any region of a scene. Use it to censor a watermark, blur a face or UI element, or — with **reverse mode** — blur everything *except* the region you want to focus on. The filter can be a rectangle or an ellipse, and an optional **follow-cursor** mode makes it track your pointer.
+Toggleable, movable, and resizable blur overlays for any region of a scene. Use one to censor a watermark, blur a face or UI element, or — with **reverse mode** — blur everything *except* the region you want to focus on. The filter can be a rectangle or an ellipse, and an optional **follow-cursor** mode makes it track your pointer.
+
+**Several filters at once.** A scene can carry more than one filter, each with its own position, size, shape, effect, blur strength and visibility — so two faces, a logo and a background can be redacted in one go. Filters never overwrite each other: drag or resize one and the others stay exactly where they were. Presets save the whole set, so a scene preset restores every region it had.
 
 ### Features
 
+- **Multiple independent filters.** Add, select, rename, hide and delete filters from the panel's list. Every filter keeps its own geometry, effect and parameters; edits apply to the selected one only.
 - **Two blur directions.** *Normal* mode blurs the area inside the filter. *Reverse* mode blurs everything *outside* the filter and leaves the filter area clear — handy for "spotlight" style viewing.
 - **Two shapes.** Rectangle (default) or ellipse — the reverse-mode hole is cut precisely to match, using a `clip-path: path()` technique that works across modern Chromium/Firefox/Safari.
 - **Follow-cursor.** Turn it on and the filter re-centers on your pointer as you move it — no dragging needed. Drag is disabled in this mode (resize still works).
@@ -108,31 +111,43 @@ A toggleable, movable, and resizable blur overlay for any region of a scene. Use
 
 **Moving the pill:** drag it anywhere over the picture — the panel follows and never covers it. A press that does not move is still a click, so clicking to open the panel works exactly as before. The pill stays inside the frame (it is re-clamped when the window or fullscreen size changes), and the position is remembered per browser rather than per scene, so it survives navigation and reloads.
 
-The pill's dot is the state read-out: hollow = off, blue = on, amber = reverse mode (everything outside the region is filtered).
+The pill's dot is the state read-out for the layer: hollow = every filter off, blue = at least one on, amber = at least one live reverse filter (everything outside it is filtered). With more than one filter the tooltip tells you how many are on.
 
-- **On / Off** — show or hide the filter. `Alt+M` flips it without opening the panel and confirms with a brief on-screen message.
-- **Follow** — when on, the filter jumps to your cursor immediately and then tracks it. Drag is disabled; resize still works.
+**The filter list** at the top of the panel is where multiple filters live:
+
+- Each row is one filter: its dot shows whether it is on, and the highlighted row is the one the controls below edit.
+- Click a row to select it, or click a filter directly on the video — either way the panel switches to that filter.
+- **On/Off** in the row shows or hides that filter alone, without touching the others.
+- **Delete** removes a filter. The last one cannot be deleted (a layer always keeps at least one).
+- **+ Add filter** creates a new filter copied from the selected one, nudged diagonally so you can see it, and made visible.
+
+Everything below the list applies to the selected filter:
+
+- **On / Off** — show or hide the selected filter. `Alt+M` flips it without opening the panel and confirms with a brief on-screen message.
+- **Follow** — when on, that filter jumps to your cursor immediately and then tracks it. Drag is disabled for it; resize still works. Several filters can follow at once.
 - **Blur** — adjust blur intensity from 0 to 80 px. The visual updates live as you drag; the value is saved when you release the thumb (so dragging doesn't trigger a config write per frame).
 - **Fill / Shape / Mode** — segmented controls (Blur·Solid·Pixelate, Rect·Ellipse, Normal·Reverse), so every option is visible instead of hidden behind a cycling button. Solid adds a colour swatch.
-- **Save scene / Save studio / Clear preset** — store or remove the preset for the current scene or studio.
-- **Reset / Shot / Panic** — restore defaults, copy or download a redacted screenshot, or show the local decoy page.
+- **Save scene / Save studio / Clear preset** — store or remove the preset for the current scene or studio. A preset stores every filter in the layer, not just the selected one.
+- **Reset / Shot / Panic** — reset the selected filter to the built-in defaults, copy or download a redacted screenshot (all active filters are applied), or show the local decoy page.
 
 **Drag and resize the filter directly:**
 
-- Drag the rectangle body to move it (disabled in Follow mode).
-- Drag the bottom-right grip to resize. The grip and the region's outline only appear while you hover the region, while you drag it, or while the settings panel is open — the filter itself reads as a blur, not as a selection box.
+- Drag a filter's body to move it (disabled in Follow mode). Dragging it also selects it.
+- Drag the bottom-right grip to resize. The grip and the region's outline only appear while you hover the region, while you drag it, or while the settings panel is open — the filter itself reads as a blur, not as a selection box. While the panel is open every filter shows its outline and the selected one is outlined in blue.
 - Position/size are saved when you release the pointer — not on every pixel of movement.
 
 **On the settings page** at **Settings → Tools → Scene Tools → Mosaic Filter** (or `/plugins/mosaicfilter`):
 
-- **Filter style** — blur amount, fill mode, shape (Rectangle / Ellipse), mode (Normal / Reverse), solid colour and pixel size.
-- **Geometry** — width, height, and X/Y position, all as percentages of the player.
-- **Presets** — edit the global default or any scene/studio preset; use Save scene / Save studio in the overlay to create one.
-- **Behavior** — "Active" and "Follow cursor" checkboxes, then **Save**.
+- **Filters** — the list of filters in the layer being edited. Pick one with its radio button, rename it in place, add one (**+ Add filter**) or delete one. Renaming is only available here; the player panel shows the name you set.
+- **Filter style** — blur amount, fill mode, shape (Rectangle / Ellipse), mode (Normal / Reverse), solid colour and pixel size — for the selected filter.
+- **Geometry** — width, height, and X/Y position of the selected filter, all as percentages of the player.
+- **Behavior** — "Active" and "Follow cursor" for the selected filter, plus **Reset this filter**.
+- **Presets** — edit the global default or any scene/studio preset; use Save scene / Save studio in the overlay to create one. The list shows how many filters each preset holds.
 
 ### Known limitations
 
-- Pixelate is more expensive than blur and is not available in reverse mode; reverse + solid is supported.
+- Pixelate is more expensive than blur and is not available in reverse mode; reverse + solid is supported. Each pixelated filter adds its own canvas, so keep it to the regions that need it.
+- Two filters in reverse mode are literal: each hides everything outside itself, so only their overlap stays clear. Use reverse on one filter and normal mode on the rest.
 - On a short player (below roughly 420 px tall, e.g. a phone in portrait) the settings panel becomes scrollable rather than shrinking further; fullscreen gives it room.
 - Screenshot capture depends on a same-origin video; CORS/DRM-protected streams cannot be captured.
 - Clipboard copy requires a secure context; the plugin falls back to a PNG download.

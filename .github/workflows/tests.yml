@@ -1,0 +1,34 @@
+name: Tests
+
+# The only code in this repository that runs outside Stash: the pure shared
+# modules are driven by Node's built-in test runner (no dependencies, no
+# install step). Everything else is loaded by Stash at runtime and verified by
+# hand, so there is nothing else to compile or lint here.
+on:
+  push:
+    paths:
+      - 'tests/**'
+      - 'plugins/**'
+  pull_request:
+    paths:
+      - 'tests/**'
+      - 'plugins/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 22 because `node --test` expands glob patterns from 21 onwards;
+          # on older releases the argument is read as a plain file path.
+          node-version: '22'
+      # Quoted so Node expands the glob, not the shell (see AGENTS.md > Tests).
+      - run: node --test "tests/**/*.test.mjs"

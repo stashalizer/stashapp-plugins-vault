@@ -7,8 +7,9 @@ A Stash plugin source-index repository: zips each `plugins/<PluginId>/` director
 This is a **source-index repo, not an app**: each `plugins/<PluginId>/` is a
 self-contained Stash plugin (manifest + vanilla-JS overlay + optional React
 settings page), zipped by `build_site.sh` and listed in a published `index.yml`.
-There is no bundler, no dev server, no test suite — Stash loads the raw JS/CSS at
-runtime.
+There is no bundler and no dev server — Stash loads the raw JS/CSS at runtime.
+The only code that runs outside Stash is `tests/`, which drives the pure shared
+modules under `node:test` (see *Tests*).
 
 **This file is the single architectural source of truth.** There are no
 per-folder map files. The per-plugin sections below carry the data models,
@@ -89,13 +90,17 @@ plugins/<PluginId>/
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
 build_site.sh               # zips each plugin + writes index.yml
+tests/*.test.mjs            # node:test suites for the pure module(s); stdlib only
 .github/workflows/deploy.yml
 AGENTS.md                   # architecture + conventions (this file)
 ```
 
 ## Build & publish
 
-- **No local toolchain** — no bundler, linter, typecheck, tests, or dev server. Stash loads the raw JS/CSS at runtime; you only need a text editor.
+- **No local toolchain** — no bundler, linter, typecheck or dev server, and no
+  `node_modules`: Stash loads the raw JS/CSS at runtime; you only need a text
+  editor. The one exception is `tests/`, which uses Node's built-in
+  `node:test`/`node:assert` and nothing else (see *Tests* below).
 - **Preview the build locally:** `./build_site.sh _site/main` from the repo root. Requires `zip`, `sha256sum`, `git`, `realpath` on `PATH`. Output: `_site/main/index.yml` + one `<PluginId>.zip` per plugin.
 - **Publish trigger:** `.github/workflows/deploy.yml` runs on push to `main` whose paths filter matches `plugins/**`. Doc / README / `AGENTS.md`-only changes do **not** trigger a publish.
 - **Published URL:** `https://<owner>.github.io/<repo>/main/index.yml` (the path segment is the branch name). Users add this under **Settings > Plugins > Available Plugins > Add Source** in Stash.
@@ -106,6 +111,36 @@ AGENTS.md                   # architecture + conventions (this file)
   primary `_site/main` into a mirror repository when `MIRROR_PUSH_URL` and
   `MIRROR_BRANCH` are configured. Stash does not fail over automatically; users
   add the fallback source manually.
+
+## Tests
+
+- **Run them with** `node --test "tests/**/*.test.mjs"` from the repo root. Node
+  22+ is required: from 21 onwards `--test` expands glob patterns itself, and on
+  older releases the argument is read as a single file path (keep the quotes so
+  Node expands the glob, not the shell — passing the `tests` *directory* is not
+  reliable across platforms). `.github/workflows/tests.yml` runs the same command
+  on every push or PR that touches `tests/**` or `plugins/**`.
+- **Stdlib only.** No `package.json`, no `node_modules`, no jsdom. A test loads
+  a plugin script into a `node:vm` sandbox and asserts on what it exposes. The
+  modules are browser IIFEs, so the sandbox is just the handful of globals they
+  touch: `window` for `MosaicFilterShared.js`, plus `document`, `csLib`,
+  `localStorage` and `getComputedStyle` for the overlay.
+- **Two suites, two jobs.** `mosaic-filter-shared.test.mjs` covers the data
+  model, the migrations and the layer CRUD — the logic, with no DOM at all.
+  `mosaic-filter-overlay.test.mjs` mounts the real overlay on a ~150-line stub
+  DOM and drives real pointer/click events, so it can assert that adding,
+  dragging, hiding and deleting a region produces independent nodes and
+  independent saved state. If you want to assert on `innerHTML`, the logic
+  probably belongs in the shared module instead.
+- **The stub DOM is deliberately dumb.** `querySelector` only answers the
+  lookups the overlay actually makes, `requestAnimationFrame` runs
+  synchronously, and every node reports a 640x360 player. When the overlay
+  starts querying something new, teach the stub (and fix the failures it
+  causes) rather than mocking around it — a stub that answers everything hides
+  exactly the breakage it exists to catch.
+- **Values that cross the sandbox boundary need `snap()`** (a JSON round-trip)
+  before a `deepStrictEqual`: the sandbox has its own `Object`/`Array`
+  prototypes and strict deep equality compares them.
 
 ## Plugin manifest gotchas
 
@@ -251,10 +286,40 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 
 ## MosaicFilter
 
-- **Two UIs, one config key** `"MosaicFilter"`. Persisted config shape:
-  `{ default: {blurAmount,widthPct,heightPct,xPct,yPct,active,follow,shape,mode,fill,fillColor,pixelSize}, scenePresets: { [sceneId]: state }, studioPresets: { [studioId]: state } }`.
-  Resolution order is scene > studio > default. Legacy flat config and the
-  0.2.x `{defaults,scenes}` shape migrate into `default`; `scenes` is ignored.
+- **Two UIs, one config key** `"MosaicFilter"`. Persisted shape:
+  `{ default: layer, scenePresets: { [sceneId]: layer }, studioPresets: { [studioId]: layer } }`,
+  where `layer = { filters: [filter, ...], selectedId }` and
+  `filter = {id, name, blurAmount, widthPct, heightPct, xPct, yPct, active, follow, shape, mode, fill, fillColor, pixelSize}`.
+  Resolution order is scene > studio > default, and a preset **replaces** the
+  layer below it rather than merging field by field (a preset is always written
+  whole, so merging could only resurrect a filter list the user replaced).
+  `resolveState` returns a fresh object graph, so editing the effective layer
+  never writes through into `config`.
+- **A layer holds 1..MAX_FILTERS (12) filters and every one of them is
+  independent.** `id` is the identity: it keys the DOM nodes in the overlay and
+  must never change, which is why `sanitizeFilter` pins it and the CRUD helpers
+  refuse to rewrite it. `sanitizeLayer` enforces the invariants (at least one
+  filter, at most 12, unique ids, `selectedId` pointing at a real filter) so no
+  caller has to. Removing the last filter is refused, not special-cased: a layer
+  with nothing in it has nothing to edit.
+- **`name` is optional and positional by default.** An empty name renders as
+  the region's position (`Filter 2` via `filterName`), so the default labels stay
+  numbered correctly after a deletion, and the settings page's name field can be
+  cleared without the model rewriting it under the cursor.
+- **Legacy data migrates on read, losslessly.** `sanitizeLayer` accepts a layer,
+  a 0.3.x–0.7.0 flat state, a `{default: <flat>}` config, a ≤0.2.x
+  `{defaults, scenes}` config (the unused `scenes` map is dropped) and a fully
+  flat ≤0.2.x config; the next save writes the current shape. Ids are generated
+  for filters that do not have one, so an upgraded config is
+  indistinguishable from a natively multi-filter one.
+- **Layer CRUD lives in the shared module, not in either UI.**
+  `findFilter` / `selectedFilter` / `selectFilter` / `addFilter` / `spawnFilter` /
+  `updateFilter` / `resetFilter` / `removeFilter` are the only places a filter
+  list is edited, and both the overlay and the settings page call them. That is
+  what keeps "add a filter" meaning the same thing on both surfaces, and what
+  makes the behaviour testable without a DOM. `updateFilter` preserves object
+  identity (a drag in flight holds a reference) and re-sanitizes every patched
+  field.
 - **Storage.** `MosaicFilterStorage.js` uses Suite Data when available and
   falls back to csLib. Presets are data, not UI preferences, so they must stay
   out of the Settings-page config snapshot when Suite Data is installed.
@@ -263,42 +328,53 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   canvas redrawn with `requestVideoFrameCallback` (or throttled rAF fallback);
   it is opt-in because it is more expensive than blur. `requestVideoFrameCallback`
   does NOT fire on a paused video, and assigning `canvas.width` clears the
-  bitmap — so `syncPixelCanvas()` only skips its explicit repaint when the video
-  is actually playing. Reverse + pixelate is intentionally not implemented;
-  reverse + solid is.
+  bitmap — so `syncPixelLoops()` only skips its explicit repaint when the video
+  is actually playing. Reverse + pixelate is intentionally not implemented (the
+  screenshot path degrades it to blur to match the screen); reverse + solid is.
+- **Per-region CSS variables, not per-player.** `--mf-blur` and `--mf-fill-color`
+  are written inline on each region element (and on each reverse mask) by
+  `layoutFilter`. They used to be set once on `#VideoJsPlayer`, which silently
+  applies the last write to every region as soon as two of them differ.
+  `--mf-cb-h` stays on the player: it is one measurement for the whole chrome.
 - **Screenshot.** The Shot button composites the current video frame into a
-  canvas and applies the region effect there (not by screenshotting CSS).
-  Clipboard is attempted first; download is the fallback because the Clipboard
-  API requires a secure context. CORS/DRM-protected video cannot be captured.
+  canvas and applies every **active** region's effect there (not by
+  screenshotting CSS): reverse regions first (paint the effect everywhere, then
+  restore their own hole from the untouched frame), then normal regions clipped
+  to their own geometry, so a normal region inside a reverse hole still lands
+  inside a clear area. Clipboard is attempted first; download is the fallback
+  because the Clipboard API requires a secure context. CORS/DRM-protected video
+  cannot be captured.
 - **Panic screen.** Ctrl+Shift+X toggles a local, network-free decoy article,
   pauses/mutes the video, swaps the tab title/favicon, and restores the title on
   toggle. It does not auto-resume playback. All plugin UI nodes carry
   `[data-mosaic-filter-ui]` for SFW Switch CSS.
 - **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a Scene-Tools-only launcher card (even-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
-- **No light-DOM `<canvas>` inside `#VideoJsPlayer` — the pixelation canvas lives in a shadow root.** Stash's `SceneVideoFilterPanel` (the scene page **Filters** tab) resolves the element it styles with `container.getElementsByTagName("canvas")` and only falls back to `<video>` when that returns nothing (`SceneVideoFilterPanel.tsx`, `getVideoElement`). Any light-DOM canvas under the player therefore becomes the target of *every* panel transform: rotate, scale, brightness, contrast are all written to the hidden 0x0 canvas while the video is never touched, and the panel looks broken to the user (0.5.2 fixed exactly this). `getElementsByTagName` does not cross shadow boundaries, so `buildRect()` puts the canvas in `attachShadow({mode:"open"})` and the host (`.__pixel-surface`) carries the layout + pixelate visibility; the canvas is styled inline because the stylesheet cannot reach inside. Consequences to remember: the canvas reference is captured at build time (never `rect.querySelector`), `isConnected` still works because it walks the shadow-including tree, and `teardown()` must not assume the canvas is a light-DOM child. The same rule applies to any future overlay element that is not a `div`/`span` — check the panel's lookup order before adding it.
-- **Legacy shape migration**: versions ≤ 0.2.x stored `{ defaults: {...}, scenes: { [id]: {...} } }`. On load, `defaults` is used as the flat config and `scenes` is ignored; the next save writes the flat shape. `mergeStored` iterates `Object.keys(FALLBACK_DEFAULTS)` so new fields (e.g. `shape`, `mode`) are safe to add — missing keys fall back to defaults, and `sanitizeState` coerces unknown values.
+- **The panel opens with the filter list, and that list is the only way to reach a second region.** `filterListMarkup()` renders one row per filter — a select button (carries the name and the on/off dot), an On/Off button and a delete button (omitted for the last filter, because `removeFilter` refuses to empty a layer) — followed by a dashed "Add filter" slot that is disabled at `MAX_FILTERS`. Everything below the list edits `layer.selectedId`. Keep the list above the effect controls: it is what makes the panel legible with more than one region, and the selected row is the only accent in the panel.
+- **Per-region DOM is keyed by filter id, never by index.** `rects`/`masks` are `Map`s from `filter.id` to the nodes; `syncFilterNodes()` creates the missing ones and removes the orphans on every render. Deleting a neighbour, reordering or changing the selection therefore never re-binds a DOM node (and its pointer listeners) to a different region, and `onPointerMove` re-looks-up its target by id on every move because the layer can be replaced mid-drag. Pointer listeners are attached once per region node with the id captured in the closure.
+- **No light-DOM `<canvas>` inside `#VideoJsPlayer` — the pixelation canvas lives in a shadow root.** Stash's `SceneVideoFilterPanel` (the scene page **Filters** tab) resolves the element it styles with `container.getElementsByTagName("canvas")` and only falls back to `<video>` when that returns nothing (`SceneVideoFilterPanel.tsx`, `getVideoElement`). Any light-DOM canvas under the player therefore becomes the target of *every* panel transform: rotate, scale, brightness, contrast are all written to the hidden 0x0 canvas while the video is never touched, and the panel looks broken to the user (0.5.2 fixed exactly this). `getElementsByTagName` does not cross shadow boundaries, so `buildRect()` puts the canvas in `attachShadow({mode:"open"})` and the host (`.__pixel-surface`) carries the layout + pixelate visibility; the canvas is styled inline because the stylesheet cannot reach inside. Consequences to remember: **every** region gets its own shadow-root canvas (the panel takes the *first* canvas it finds, so one leaking into the light DOM is enough to break it for all regions), the canvas reference lives in the region's entry in `rects` (never a `querySelector`), and `teardown()` must not assume the canvas is a light-DOM child. The same rule applies to any future overlay element that is not a `div`/`span` — check the panel's lookup order before adding it.
 - **Write policy — never persist per animation frame.** `csLib.setConfiguration` is called only at user-driven boundaries: toggle buttons (immediate), drag/resize end `pointerup`/`pointercancel` (immediate), blur slider `change` event (slider release — the `input` event updates the visual `--mf-blur` only and must NOT save), and a best-effort `pagehide` write. Follow-cursor position updates are in-memory only.
-- **Render path — batch per frame, never measure in an event handler.** `renderRect()` is invoked directly only for discrete state changes (toggle, colour, slider release, resize, mount). Pointer handlers (drag and follow) go through `scheduleRender()`, which coalesces a burst of events into one render per animation frame — at 125 Hz input that is several events per painted frame. For the same reason `onPlayerPointerMove` does NOT measure layout: it queues the cursor in `pendingFollow`, and `applyPendingFollow()` resolves it at the TOP of the rAF callback, before that frame's style writes, where the previous frame's layout is already clean. Measuring in the handler would read layout right after our own writes and force a reflow per event. `renderRect` also does all its reads before its first write, and derives `rectW`/`rectH` from `state.*Pct * player size` instead of reading `clientWidth` — the rectangle is `box-sizing: border-box`, so the derived value runs 2px above the real `clientWidth` (negligible: the pixel canvas is stretched to 100%). The pixelation loop relies on those derived values, so `drawPixelFrame()` performs no DOM query and no layout read.
-- **Follow-cursor mode**: when `state.follow` is on, a player-level `pointermove` re-centers the rectangle on the cursor; rectangle drag is disabled (resize still works). Toggling Follow on calls `snapRectToPointer()` so the rectangle jumps to the last recorded cursor position immediately (no lag from the saved location).
-- **`shape`** (`'rectangle'` | `'ellipse'`) toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). **`mode`** (`'normal'` | `'reverse'`) transfers the blur to a sibling `.mosaic-filter-mask-layer` that blurs everything EXCEPT the filter area (the rectangle stays clear).
-- **Reverse-mode hole is cut with `clip-path: path()`** built in JS by `updateMask()`. The path uses TWO subpaths separated by `Z M`: an outer clockwise player rect + an inner counter-clockwise hole (rectangle bounding box, or two half-ellipse arcs for ellipse). Under the nonzero fill rule, clockwise-outer + counter-clockwise-inner = frame with a hole. Do NOT switch back to `clip-path: polygon()` (pre-0.4.2 L-shape self-intersection bug) or `mask-image` + `mask-composite: subtract` (pre-0.4.2 ellipse invisible-mask bug — inconsistent browser support made the mask fully transparent).
+- **Render path — batch per frame, never measure in an event handler.** `renderFilters()` is invoked directly only for discrete state changes (toggle, colour, slider release, selection, resize, mount). Pointer handlers (drag and follow) go through `scheduleRender()`, which coalesces a burst of events into one render per animation frame — at 125 Hz input that is several events per painted frame. For the same reason `onPlayerPointerMove` does NOT measure layout: it queues the cursor in `pendingFollow`, and `applyPendingFollow()` resolves it at the TOP of the rAF callback, before that frame's style writes, where the previous frame's layout is already clean. Measuring in the handler would read layout right after our own writes and force a reflow per event. `renderFilters` measures the player once and passes `pw`/`ph` to every `layoutFilter(f, pw, ph)`, which does all its reads before its first write and caches the region size on its `rects` entry instead of re-reading `clientWidth` — the region is `box-sizing: border-box`, so the derived value runs 2px above the real `clientWidth` (negligible: the pixel canvas is stretched to 100%). The pixelation loop relies on those cached values, so `drawPixelFrame()` performs no DOM query and no layout read, and it paints **every** pixelated region from one video-frame callback (a second callback per region would sample the same frame twice).
+- **Follow-cursor mode is per region**: every filter with `follow` on is re-centred by a player-level `pointermove`; dragging a following region is disabled (resize still works). Toggling Follow on calls `snapFollowersToPointer()`, which snaps every follower to the last recorded cursor position immediately (no lag from the saved location) — snapping only the selected one would leave the others behind for no reason the user could see.
+- **`shape`** (`'rectangle'` | `'ellipse'`) toggles `.mosaic-filter-rectangle--ellipse` (`border-radius: 50%`). **`mode`** (`'normal'` | `'reverse'`) transfers the blur to that region's own sibling `.mosaic-filter-mask-layer`, which blurs everything EXCEPT that region's area (the region stays clear).
+- **One mask layer per region, not one shared mask with several holes.** Each reverse filter needs its own blur radius and fill colour, and one element cannot carry two `backdrop-filter`s. The consequence is compositing, not a bug: two *active* reverse regions each blur everything outside themselves, so only their **intersection** stays clear. The panel says so once ("Reverse on N filters: only their overlap stays clear") when a second one is switched on; do not try to "fix" this by merging the holes into one path, because that would force one blur radius on all of them.
+- **Reverse-mode hole is cut with `clip-path: path()`** built in JS by `updateMask(f, mask, pw, ph)` (once per region). The path uses TWO subpaths separated by `Z M`: an outer clockwise player rect + an inner counter-clockwise hole (rectangle bounding box, or two half-ellipse arcs for ellipse). Under the nonzero fill rule, clockwise-outer + counter-clockwise-inner = frame with a hole. Do NOT switch back to `clip-path: polygon()` (pre-0.4.2 L-shape self-intersection bug) or `mask-image` + `mask-composite: subtract` (pre-0.4.2 ellipse invisible-mask bug — inconsistent browser support made the mask fully transparent).
 - **Two-tier chrome: a pill, not a toolbar.** `buildChrome()` creates one `position:absolute; inset:0; pointer-events:none` anchor (`.mosaic-filter-chrome`) holding three children: the 28px `.mosaic-filter-pill` (bottom-right by default, `bottom: calc(var(--mf-cb-h) + 10px)` — see the drag bullet below for the moved case), the `.mosaic-filter-panel` popover stacked above it, and the `.mosaic-filter-toast`. Only the pill and the panel set `pointer-events: auto`, so the anchor never steals a click from the video, the filter rectangle or Stash's control bar. Never make the container itself `pointer-events: auto` — it covers the whole player.
 - **`--mf-cb-h` is measured, not guessed.** The control bar's height is not constant across player sizes, so `syncPlayerMetrics()` reads `.vjs-control-bar`'s `getBoundingClientRect().height` into `--mf-cb-h` on mount (plus one re-measure 400 ms later, because video.js can build the bar after our first mount), on `resize` and on `fullscreenchange`, falling back to 8px when there is no bar. Everything in the chrome positions off that variable; a hard-coded 30px drops the pill under the bar at some sizes. It is a layout read — never call it from a per-frame path.
 - **The chrome fades with the player.** `.video-js.vjs-user-inactive` hides it (opacity plus a delayed `visibility` so the fade completes). It stays visible while the panel is open (`--pinned`), while a toast is up (`--toasting` — Alt+M works while the chrome is faded, and a `visibility: hidden` ancestor would swallow both the toast and its live-region announcement), and while focus is inside. Do not re-add the old `!important` "always visible when idle" overrides: being invisible while watching is the whole point.
-- **Panel state is never persisted.** `panelOpen` is in-memory, `teardown()` clears it, and `setupPanel()` sets it false on every fresh mount. Opening a scene must never push a slab of controls over the frame, however the filter was left.
-- **State feedback has two channels.** `announce(message)` writes to the panel's status line when the panel is open and to the toast when it is not. The pill's dot carries the state at a glance (hollow = off, `--mf-accent` = on, `--mf-reverse` amber = reverse), which is what lets the collapsed state stay text-free.
+- **Panel state is never persisted — but the selected filter is.** `panelOpen` is in-memory, `teardown()` clears it, and `setupPanel()` sets it false on every fresh mount: opening a scene must never push a slab of controls over the frame. `selectedId`, by contrast, is part of the persisted layer, because "which region was I editing" is worth restoring with the preset it belongs to and it is what the panel's controls are pointed at.
+- **State feedback has two channels.** `announce(message)` writes to the panel's status line when the panel is open and to the toast when it is not. The pill's dot carries the state at a glance (hollow = off, `--mf-accent` = on, `--mf-reverse` amber = reverse), which is what lets the collapsed state stay text-free. With several regions the pill speaks for the **layer** (`--on` if any region is active, `--reverse` if any active region is reverse, count in the tooltip) while Alt+M and the On/Off switch act on the **selected** region — so messages name the region as soon as there is more than one.
 - **The pill is draggable; its position is NOT plugin config.** Position lives in `localStorage["MosaicFilter.pillPos"]` as `{x, y}` **fractions of the chrome box**, never in the persisted config: it is a per-browser UI preference, not preset data, and `sanitizeState` owns the config schema — a throwaway value there would be synced to Suite Data (same reasoning as SceneRotation's cluster). `pillPos === null` means "never dragged", and then the stylesheet's `right`/`bottom` anchor — the one built around `--mf-cb-h` — applies untouched; once set, `placePill()` writes `left`/`top` and **clears both `right` and `bottom`** (left + right on an inline-flex box would stretch the pill across the player) and clamps to `clientWidth − offsetWidth`. The pill is both the disclosure button and the handle: a press becomes a drag only after `PILL_DRAG_THRESHOLD_PX` (4px) of travel, so a click still opens the panel, and `Enter`/`Space` keep working because they fire no pointerdown. `placeChrome()` (pill + panel) is called from `renderChrome`, `resize`, `fullscreenchange`, the 400ms post-mount re-measure and drag end — never from a per-frame path — and **returns early while `pillDrag` is set**, because writing the committed position mid-drag snaps the pill out from under the pointer.
 - **A floating panel follows the pill and is capped to fit, never laid over it.** The stylesheet anchors the panel with `bottom: calc(--mf-cb-h + 10px + pill + 8px)`, which only describes the bottom-right corner, so with a dragged pill `panelSpot()` does real geometry: right-aligned with the pill, flipped below when there is more room there, clamped into the frame. When neither side can hold the panel's natural height it is capped inline (`PANEL_MIN_H` floor) and scrolls — otherwise the panel would cover the pill, the only control that can close or move it. Measure the **natural** height by clearing that inline cap first (`placePanel` does), or the panel ratchets itself smaller and never grows back; the drag frame reuses `panelNatH` instead of measuring, because `offsetHeight` would report the capped height. **`placePanel` must not run while `pillDrag` is set.**
 - **Bar/pill drag is coalesced.** `onPillPointerMove` only records the cursor in `pillMovePoint` and schedules a frame; `applyPillMove()` does one `getBoundingClientRect` (the chrome rect, which tracks scrolling) plus style writes at the top of that frame. Everything else — frame box, pill size, panel size — is measured once at drag start (`measureDragGeom`), never per event. Pointer capture is taken on the **first movement**, not on `pointerdown`, so a plain press on the pill still produces a normal click. `window` also gets permanent `pointerup`/`pointercancel` listeners: without capture a release outside the document only reaches `window`, and a `pillDrag` left set would disable both dragging and follow mode until reload.
 - **A drag must not be read as a click.** Two mechanisms: `suppressPillClick` (consumed by `onChromeClick`'s `toggle-panel` branch) stops the browser's post-`pointerup` click from opening the panel, and a capture-phase `click` listener swallows clicks that land on the picture for `DRAG_CLICK_SWALLOW_MS` (400ms) — videojs reads those as play/pause. The listener ignores clicks inside the chrome and is time-scoped so ordinary playback clicks keep working. `pointerdown` is `stopPropagation`'d but **not** `preventDefault`'d: preventDefault would suppress the compatibility mouse events and take the pill's click with them.
-- **z-order: mask 7 < rectangle 8 < Stash's control bar and big play button 10 < chrome 11.** The bar is lifted by `#VideoJsPlayer .vjs-control-bar, #VideoJsPlayer .vjs-big-play-button { z-index: 10 }` for two reasons: in reverse mode the full-cover mask was blurring the controls, and a rectangle dragged (or, in follow mode, walked) over the bottom edge painted above the bar and swallowed clicks meant for Play / volume / fullscreen. The chrome sits one layer higher so an open panel — which on a narrow player overlaps the centre of the frame — is not punched through by the big play button. The mask must stay below the rectangle. Captions (`.vjs-text-track-display`) are deliberately NOT lifted: subtitle text inside a redacted region has to stay hidden.
-- **Keyboard: `Alt+M` toggles, `Esc` closes.** Both live in one `document` keydown listener rather than in the panel, so they work while the chrome is collapsed. `Alt+M` ignores `e.repeat` and typing targets (`input`/`textarea`/`select`/`contentEditable`) and avoids every plain-letter video.js hotkey (`m` is mute). `Esc` is never `preventDefault`-ed: Stash uses it for its own dismissals and this panel is not modal.
+- **z-order: mask layers 7 < rectangles 8 < Stash's control bar and big play button 10 < chrome 11.** The bar is lifted by `#VideoJsPlayer .vjs-control-bar, #VideoJsPlayer .vjs-big-play-button { z-index: 10 }` for two reasons: in reverse mode the full-cover mask was blurring the controls, and a rectangle dragged (or, in follow mode, walked) over the bottom edge painted above the bar and swallowed clicks meant for Play / volume / fullscreen. The chrome sits one layer higher so an open panel — which on a narrow player overlaps the centre of the frame — is not punched through by the big play button. The mask must stay below the rectangle. Captions (`.vjs-text-track-display`) are deliberately NOT lifted: subtitle text inside a redacted region has to stay hidden.
+- **Keyboard: `Alt+M` toggles the selected filter, `Esc` closes the panel.** Both live in one `document` keydown listener rather than in the panel, so they work while the chrome is collapsed. `Alt+M` ignores `e.repeat` and typing targets (`input`/`textarea`/`select`/`contentEditable`) and avoids every plain-letter video.js hotkey (`m` is mute). `Esc` is never `preventDefault`-ed: Stash uses it for its own dismissals and this panel is not modal.
 - **The panel compacts with a container query, not a media query.** `.mosaic-filter-chrome` carries `container-type: size`, and `@container mf-chrome (max-height: 460px)` tightens the panel's vertical rhythm. A viewport media query would miss the common phone-portrait case (tall viewport, ~220px-tall 16:9 player). Below roughly 420px of player height the panel scrolls — deliberate: letting it cover the control bar instead would be worse.
 - Same cross-surface race caveat as QuestingAdventurer: overlay and settings maintain separate save locks and do not coordinate; last writer wins the whole config map. Settings edits won't live-reflect in an already-open overlay until next navigation/reload.
 - `csLib.getConfiguration`/`setConfiguration` are BOTH `async` — always `await` them (same silent failure mode as QuestingAdventurer).
-- **Shared module load order.** `MosaicFilter.yml` lists `MosaicFilterShared.js` **first** under `ui.javascript` so `window.MosaicFilterShared` exists before the overlay and settings scripts run, then `MosaicFilterStorage.js`. The shared module owns `CONFIG_KEY`, `FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `MAX_PRESETS`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `makeDefaultConfig`, `mergeStored`, `normalizeConfig`, `resolveState`, `makePreset`, `presetSource`, `sanitizeState`, and `sanitizePresetMap`. Both surfaces must call into it instead of re-declaring defaults — a second copy is how the two surfaces drift apart.
+- **Shared module load order.** `MosaicFilter.yml` lists `MosaicFilterShared.js` **first** under `ui.javascript` so `window.MosaicFilterShared` exists before the overlay and settings scripts run, then `MosaicFilterStorage.js`. The shared module owns `CONFIG_KEY`, `FALLBACK_DEFAULTS`, `MIN_SIZE_PCT`, `MAX_BLUR`, `MAX_PRESETS`, `MAX_FILTERS`, `MAX_NAME_LEN`, `clamp`, `isFiniteNumber`, `makeDefaultState`, `makeDefaultLayer`, `makeDefaultConfig`, `mergeStored`, `normalizeConfig`, `resolveState`, `makePreset`, `makePresetLayer`, `presetSource`, `sanitizeState`, `sanitizeFilter`, `sanitizeLayer`, `sanitizePresetMap`, `filterName`, and the layer operations (`findFilter`, `selectedFilter`, `selectFilter`, `addFilter`, `spawnFilter`, `updateFilter`, `resetFilter`, `removeFilter`). Both surfaces must call into it instead of re-declaring defaults — a second copy is how the two surfaces drift apart — and any new per-filter field must be added to `FALLBACK_DEFAULTS` + `sanitizeFilter` there, which is what the migration and both UIs read.
 - **All writes funnel through `saveNow()`** (coalesced by the `saving`/`pendingSave` lock); unlike QuestingAdventurer there is no separate `queueSave` wrapper.
-- **Files**: `MosaicFilter.yml` (manifest) · `MosaicFilterShared.js` (shared constants + pure helpers) · `MosaicFilterStorage.js` (Suite Data + csLib helper) · `MosaicFilter.js` (overlay) · `MosaicFilterSettings.js` (React settings form + preset manager) · `MosaicFilter.css` · `MosaicFilterSettings.css`.
+- **Files**: `MosaicFilter.yml` (manifest) · `MosaicFilterShared.js` (shared constants, the layer schema/migrations and the filter-list operations) · `MosaicFilterStorage.js` (Suite Data + csLib helper) · `MosaicFilter.js` (overlay) · `MosaicFilterSettings.js` (React settings form + preset manager) · `MosaicFilter.css` · `MosaicFilterSettings.css` · `tests/mosaic-filter-shared.test.mjs` (the model, the migrations and the CRUD — see *Tests*).
 
 ## SceneVersions
 
