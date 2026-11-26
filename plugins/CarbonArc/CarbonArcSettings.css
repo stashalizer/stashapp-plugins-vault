@@ -65,13 +65,16 @@
 
 .ca-set__group-note strong { color: var(--ca-tx-2, #a9aba8); font-weight: 500; }
 
+/* auto-fit instead of a breakpoint: the design has no breakpoints, and an
+   option card too narrow to hold its note should drop to the next row whatever
+   the window is doing. */
 .ca-set__options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 10px;
 }
 
-.ca-set__options--row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.ca-set__options--row { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 
 .ca-set__option {
   display: flex;
@@ -288,9 +291,4 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--ca-tx-3, #8c8f90);
-}
-
-@media (max-width: 720px) {
-  .ca-set__options,
-  .ca-set__options--row { grid-template-columns: 1fr; }
 }

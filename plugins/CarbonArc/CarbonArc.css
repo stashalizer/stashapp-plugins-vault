@@ -4,6 +4,7 @@
  * Design notes and the full rationale live in docs/carbon-arc-theme.html.
  * Structure of this file:
  *
+ *   0. fonts               — IBM Plex, bundled next to this stylesheet
  *   1. tokens              — the whole palette, radii and spacing knobs
  *   2. framework variables — remap what Stash/Bootstrap read
  *   3. base                — page ground, type scale, selection
@@ -28,6 +29,39 @@
  *
  * License: AGPL-3.0
  */
+
+/* ==========================================================================
+   0. fonts
+   IBM Plex Sans (variable, latin) and IBM Plex Mono 400/500 (latin), shipped
+   in fonts/ under the SIL Open Font License — see fonts/OFL.txt. The URLs are
+   relative so they resolve wherever Stash serves this plugin from. A missing
+   file is not an error: the stack in --ca-font below falls back to the system
+   UI font, which is what the theme used before the files were bundled.
+   ========================================================================== */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url("fonts/ibm-plex-sans-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-500-latin.woff2") format("woff2");
+}
 
 /* ==========================================================================
    1. tokens
@@ -70,11 +104,9 @@
   /* spacing knobs the density option moves */
   --ca-card-margin: 6px;
   --ca-card-pad: 11px 12px 12px;
-  --ca-grid-gap: 4px;
 
   /* the only shadow allowed in the theme */
   --ca-shadow: 0 18px 48px -14px rgba(0, 0, 0, 0.62), 0 2px 6px rgba(0, 0, 0, 0.35);
-  --ca-shadow-sm: 0 8px 24px -10px rgba(0, 0, 0, 0.55);
 
   /* type */
   --ca-font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -189,6 +221,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* The app shell paints its own ground too: a transparent wrapper would show
+   the browser default (white) for the frame before React paints. */
+#root,
+.main,
+.content-container {
+  background-color: var(--ca-canvas);
+  color: var(--ca-tx-1);
+}
+
 ::selection {
   background: var(--ca-arc-40);
   color: var(--ca-tx-1);
@@ -205,6 +246,11 @@ h2, .h2, h3, .h3 { font-weight: 500; }
 
 a { color: var(--ca-arc); }
 a:hover, a:focus { color: var(--ca-tx-1); }
+
+/* tabs, pills and the settings menu refine this further down */
+.nav-link { color: var(--ca-tx-2); }
+
+.nav-link:hover { color: var(--ca-tx-1); }
 
 hr {
   border-color: var(--ca-line);
@@ -303,8 +349,8 @@ nav.bg-dark,
   color: var(--ca-tx-1);
 }
 
-/* the nav is fixed; keep its own height, only restyle what sits on it */
-.top-nav { min-height: 48px; }
+/* The nav's height stays Stash's. No min-height here: sticky offsets below it
+   are derived from that number, so the theme only restyles what sits on it. */
 
 /* sidebar / filters */
 .sidebar-pane .sidebar {
@@ -327,6 +373,17 @@ nav.bg-dark,
 }
 
 .sidebar-pane .sidebar .collapse-header .btn:hover {
+  color: var(--ca-tx-1);
+}
+
+/* Filter rows: colour only — Stash owns their margins and heights. */
+.filter-item {
+  color: var(--ca-tx-2);
+  border-radius: var(--ca-r-ctl);
+}
+
+.filter-item:hover {
+  background: var(--ca-card);
   color: var(--ca-tx-1);
 }
 
@@ -514,6 +571,19 @@ button.minimal:hover {
   box-shadow: inset 0 0 0 1px var(--ca-line-2);
 }
 
+/* Stash puts the type class on the same element as .grid-card. Repeating the
+   surface here means a card that lacks .grid-card still matches; geometry is
+   left out so a nested type class cannot double a margin. */
+.scene-card,
+.performer-card,
+.tag-card,
+.studio-card,
+.group-card {
+  background-color: var(--ca-card);
+  border-radius: var(--ca-r-card);
+  color: var(--ca-tx-1);
+}
+
 .grid-card.card.selected,
 .grid-card.card:has(.card-check:checked) {
   background: #20211f;
@@ -527,17 +597,28 @@ button.minimal:hover {
 .grid-card .card-section-title,
 .grid-card .card-section .TruncatedText,
 .grid-card h5 {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 400;
   line-height: 1.4;
   color: var(--ca-tx-1);
+}
+
+/* Two lines at most, in a box that is always two lines tall: a one-line title
+   beside a two-line one would push every card in the row out of alignment. */
+.grid-card .card-section-title,
+.grid-card h5 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  min-height: 2.8em;
 }
 
 .grid-card .card-section p,
 .grid-card .card-section .text-muted,
 .grid-card .card-section small {
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   line-height: 1.5;
   color: var(--ca-tx-3) !important;
 }
@@ -570,7 +651,6 @@ button.minimal:hover {
 
 /* thumbnail chips */
 .overlay-duration,
-.overlay-resolution,
 .scene-specs-overlay,
 .overlay-codec {
   font-family: var(--ca-mono);
@@ -580,6 +660,18 @@ button.minimal:hover {
   border: 1px solid rgba(58, 63, 67, 0.7);
   border-radius: 2px;
   padding: 1px 5px;
+}
+
+/* Resolution sits bare in the corner: the still behind it is the ground, so a
+   second chip would only add a box to a card that already has three. */
+.overlay-resolution {
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--ca-tx-3);
+  background: transparent;
+  border: none;
+  padding: 1px 0;
 }
 
 .card-popovers .btn,
@@ -660,8 +752,9 @@ button.minimal:hover {
    6. detail pages
    ========================================================================== */
 
+/* The header strip is panel; the stage below it is canvas. */
 .detail-header {
-  background: var(--ca-canvas);
+  background: var(--ca-panel);
   border-bottom-color: var(--ca-line);
 }
 
@@ -682,6 +775,13 @@ button.minimal:hover {
 .detail-group .detail-item-value {
   color: var(--ca-tx-1);
   font-size: 0.8125rem;
+  /* Durations, sizes and counts are read down the column, so their digits
+     take one width. The face stays the sans one: the same class also carries
+     text values (titles, names), and forcing mono on those reads as a leak
+     from the metadata style. Long paths wrap instead of being clipped — a
+     middle ellipsis needs the string, which CSS cannot see. */
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .detail-body {
@@ -770,6 +870,24 @@ p.pre {
   background: var(--ca-arc);
 }
 
+/* video.js draws the seek handle as the progress bar's ::before glyph, so it
+   takes the signal as a colour; a background here would paint a square behind
+   the circle. */
+.video-js .vjs-play-progress::before {
+  color: var(--ca-arc);
+}
+
+/* Timecodes are numbers, so they take the mono face like every other number
+   in the theme. */
+.video-js .vjs-current-time,
+.video-js .vjs-duration,
+.video-js .vjs-remaining-time,
+.video-js .vjs-time-divider {
+  color: var(--ca-tx-2);
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+}
+
 .video-js .vjs-slider {
   background: rgba(230, 228, 222, 0.18);
 }
@@ -803,7 +921,9 @@ p.pre {
 
 .scene-player-container,
 .video-js {
-  background: #000;
+  /* The letterbox is sunken, not pure black: #000 beside #0C0E0F reads as a
+     hole punched in the page. Near-black belongs to the picture only. */
+  background: var(--ca-sunken);
 }
 
 .scrubber-wrapper {
@@ -932,6 +1052,16 @@ p.pre {
 .react-select__option--is-selected {
   background: var(--ca-arc-12);
   color: var(--ca-tx-1);
+}
+
+/* A checked entry gets the tick the design asks for. Stash's menus rarely set
+   aria-checked, so this is additive rather than a replacement icon. */
+.dropdown-item[aria-checked="true"]::after {
+  content: "✓";
+  float: right;
+  margin-left: 12px;
+  color: var(--ca-arc);
+  font-size: 0.75rem;
 }
 
 .dropdown-divider {
@@ -1136,14 +1266,23 @@ input[type="range"] {
   accent-color: var(--ca-arc);
 }
 
+/* Bootstrap 4 switch markup: the track is a tint when on, the knob carries the
+   signal colour, so a settings list reads as a tone change rather than a lamp. */
 .custom-control-label::before {
   background: var(--ca-sunken);
   border-color: var(--ca-line-2);
 }
 
+/* A checkbox or radio is a small mark, not a track: it stays solid, or the
+   white tick inside it would sit on a 24 % tint and stop reading as "on". */
 .custom-control-input:checked ~ .custom-control-label::before {
-  background: var(--ca-arc);
+  background-color: var(--ca-arc);
   border-color: var(--ca-arc);
+}
+
+.custom-switch .custom-control-input:checked ~ .custom-control-label::before {
+  background-color: var(--ca-arc-24);
+  border-color: var(--ca-arc-40);
 }
 
 .custom-switch .custom-control-label::after {
@@ -1151,8 +1290,12 @@ input[type="range"] {
 }
 
 .custom-switch .custom-control-input:checked ~ .custom-control-label::after {
-  background: var(--ca-arc-ink);
+  background: var(--ca-arc);
 }
+
+/* Stash still ships Bootstrap 4 switch markup (.custom-control), so the four
+   rules above are the live ones; there is no .form-switch in the shipped CSS
+   and no rule is written for one. */
 
 /* tag chips */
 .tag-item {
@@ -1312,7 +1455,13 @@ textarea:focus-visible,
   .grid-card.card,
   .btn,
   .nav-link,
-  .card-popovers .btn {
+  .dropdown-item,
+  .pagination .btn,
+  .card-popovers .btn,
+  a.minimal,
+  button.minimal,
+  .ca-set__option,
+  .ca-set-launcher {
     transition: none !important;
   }
 }
@@ -1328,12 +1477,14 @@ html[data-ca-density="compact"] {
 
 html[data-ca-density="compact"] .grid-card .card-section-title,
 html[data-ca-density="compact"] .grid-card h5 {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
+/* 0.6875rem is the floor: at a 16 px root it is the 11 px micro step, and
+   nothing in the design goes below that. */
 html[data-ca-density="compact"] .grid-card .card-section p,
 html[data-ca-density="compact"] .grid-card small {
-  font-size: 0.625rem;
+  font-size: 0.6875rem;
 }
 
 html[data-ca-dim="on"] {

@@ -47,7 +47,7 @@
 
   const DENSITY_META = {
     comfortable: { label: "Comfortable", note: "6 px card margin, 11 px padding." },
-    compact: { label: "Compact", note: "3 px margin, 8 px padding — more cards per row." },
+    compact: { label: "Compact", note: "3 px margin, 8 px padding — tighter rows, same columns." },
   };
 
   function Swatch(props) {
@@ -169,10 +169,18 @@
       []
     );
 
+    // Rebuilt from the accent in force, so the pasted block matches the theme.
+    const loginCss =
+      store && config && typeof store.loginCss === "function"
+        ? store.loginCss(config.accent)
+        : store
+        ? store.LOGIN_CSS
+        : "";
+
     const onCopyLoginCss = useCallback(
       function () {
         if (!store) return;
-        const text = store.LOGIN_CSS;
+        const text = loginCss;
         const fallback = function () {
           try {
             const area = document.createElement("textarea");
@@ -198,7 +206,7 @@
           fallback();
         }
       },
-      []
+      [loginCss]
     );
 
     if (!store) {
@@ -228,8 +236,8 @@
         h(
           "p",
           { className: "ca-set__lede" },
-          "Graphite surfaces, bone text, one warm signal. Set Stash’s own theme to Dark before installing — this theme paints surfaces, ",
-          "but Stash’s light theme still owns a few inherited defaults. Changes apply as you click."
+          "Graphite surfaces, bone text, one warm signal. Carbon Arc paints every surface itself — ",
+          "there is nothing to set on Stash’s side first. Changes apply as you click."
         )
       ),
 
@@ -240,7 +248,7 @@
         h(
           "p",
           { className: "ca-set__group-note" },
-          "Used in four places only: active navigation, keyboard focus, rating stars, the playhead."
+          "Used on state, never as a fill: active navigation, keyboard focus, rating stars, the playhead, the switch knob."
         ),
         h(
           "div",
@@ -390,7 +398,7 @@
           h("strong", null, "Settings → Interface → Custom CSS"),
           " and enable custom CSS to match it."
         ),
-        h("pre", { className: "ca-set__code" }, store.LOGIN_CSS),
+        h("pre", { className: "ca-set__code" }, loginCss),
         h(
           "div",
           { className: "ca-set__actions" },

@@ -642,7 +642,20 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **A theme, not a feature.** One stylesheet plus a config helper and a settings
   page: no player overlay, no hooks, no tasks, no GraphQL. Files are
   `CarbonArc.css` (the theme), `CarbonArcSettings.css`,
-  `CarbonArcStore.js` (config + apply) and `CarbonArcSettings.js` (React page).
+  `CarbonArcStore.js` (config + apply), `CarbonArcSettings.js` (React page), and
+  `fonts/` (three woff2 subsets + `OFL.txt`).
+- **Fonts ship with the plugin.** IBM Plex Sans (variable) and Mono 400/500,
+  latin subset only, declared with `@font-face` at the top of `CarbonArc.css`
+  and referenced by **relative** URL (`fonts/…`) so they resolve wherever Stash
+  serves the plugin. Do not swap these for a Google Fonts `@import`: a local
+  instance should not phone a CDN on every page load, and a blocked request
+  would silently drop the theme's type. Missing files degrade to the system
+  stack in `--ca-font`, which is what the theme used before bundling. The
+  licence file must travel with them (SIL OFL 1.1).
+- **Type sizes are rem, calibrated on a 16 px root.** The design's 14/13/11 px
+  steps are written as 0.875/0.8125/0.6875rem, and `0.6875rem` is the floor —
+  compact density used to go to 0.625rem (10 px), which broke the design's
+  "nothing below 11 px" rule. No new size may sit under 0.6875rem.
 - **No `ui.requires`, deliberately.** `ui.requires` is mandatory load order, so
   a missing `CommunityScriptsUILibrary` would stop the theme's CSS from loading
   at all — worse than losing cross-device sync. The store prefers `csLib` when
@@ -669,9 +682,37 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `.react-select__*`, …). `!important` is used only against Bootstrap utilities
   (`.bg-dark`, `.text-muted`) and inline styles. The full selector inventory is
   `docs/carbon-arc-theme.html` §08.
+- **Check a selector against the shipped CSS before writing a rule.** v0.32.0
+  still uses Bootstrap 4 custom controls (`.custom-control`, `.custom-switch`) —
+  there is no `.form-switch` or `.form-check-input:checked` in
+  `assets/index-*.css`, so switch styling belongs on `.custom-control-*`. The
+  switch's on-state is a 24 % track with a signal-coloured knob, not a filled
+  track: a settings list should read as a tone change. Also verified against
+  that stylesheet: `.overlay-resolution` is a bare uppercase label (give it no
+  box), `.vjs-play-progress::before` is a font glyph (give it a colour, never a
+  background), `.overlay-duration` does not exist at all (the spec row is
+  `.scene-specs-overlay`), and `.scene-card` / `.performer-card` / `.tag-card` /
+  `.studio-card` / `.group-card` are card roots beside `.grid-card` — colour-only
+  rules for them are safe, geometry is not.
+- **Do not point users at a theme switch.** v0.32.0's Interface tab has no
+  theme selector at all (`config.ui.*` in the settings bundle has language,
+  custom CSS/JS, details, editing, images — no theme), so "Settings → Interface
+  → Theme" is not a real path and must not come back in the README, the yml
+  description, or the settings page. The theme paints every surface itself.
+  The one path that does exist is **Settings → Interface → Custom CSS**.
 - **The login page cannot be themed from the plugin** — Stash does not load
-  plugin CSS before auth. `LOGIN_CSS` in `CarbonArcStore.js` is the copy-paste
-  block the settings page offers; keep it in sync with the token values.
+  plugin CSS before auth. `loginCss(accent)` in `CarbonArcStore.js` builds the
+  copy-paste block the settings page offers, per accent (signal colour, its two
+  rgba tints, and the ink on the bone primary button); `LOGIN_CSS` is the arc
+  default kept for compatibility. Keep the palette values in that function in
+  sync with the accent blocks in the stylesheet. The block declares IBM Plex but
+  cannot load the bundled files from a logged-out page, so it falls back to the
+  system font — say so rather than promising the font there.
+- **Design items with no Stash selector stay unimplemented, deliberately.** The
+  mock's `.count` / `.seg` view toggle, the toast state bar, the empty state and
+  the brand dot have no corresponding markup in the shipped bundle; inventing
+  class names for them would add dead CSS. A middle ellipsis is also out of
+  reach (it needs the string), so long detail values wrap instead.
 - **Verification without a Stash instance**: `node --check` both scripts, parse
   both stylesheets, then open the settings page in a harness that stubs
   `PluginApi`, `ReactRouterDOM`, `csLib` and `localStorage`. That catches patch

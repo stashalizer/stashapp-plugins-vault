@@ -207,6 +207,34 @@ test("configuration and storage keys are disjoint", () => {
   assert.equal(ca.CONFIG_KEY, "CarbonArc");
 });
 
+test("the login CSS block follows the selected accent", () => {
+  const { window } = loadBoth();
+  const ca = window.CarbonArcStore;
+
+  assert.equal(ca.LOGIN_CSS, ca.loginCss("arc"), "the exported default is the arc block");
+
+  for (const [accent, hex] of [
+    ["arc", "#c2a176"],
+    ["patina", "#8aa79a"],
+    ["dusk", "#a79cb8"],
+  ]) {
+    const css = ca.loginCss(accent);
+    assert.ok(css.includes(hex), accent + " block carries its signal colour");
+    assert.ok(/\.btn-primary \{[^}]*color: #[0-9a-f]{6}/.test(css), accent + " block sets a primary ink");
+    assert.ok(!/--ca-/.test(css), accent + " block inlines values: a login page has no theme tokens");
+  }
+
+  assert.equal(ca.loginCss("nope"), ca.loginCss("arc"), "an unknown accent falls back to arc");
+});
+
+test("the store version matches the manifest", () => {
+  const { window } = loadBoth();
+  const match = read("CarbonArc", "CarbonArc.yml").match(/^version:\s*(\S+)/m);
+
+  assert.ok(match, "the manifest declares a version");
+  assert.equal(window.CarbonArcStore.VERSION, match[1], "data-ca-version tracks the published version");
+});
+
 test("loading both leaves each plugin's globals intact", () => {
   const { window } = loadBoth();
   const names = ["CarbonArcStore", "ExternalLinkGroupsShared", "ExternalLinkGroupsStore", "ExternalLinkGroupsIcons"];

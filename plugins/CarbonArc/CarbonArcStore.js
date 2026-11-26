@@ -21,7 +21,7 @@
 
   var CONFIG_KEY = "CarbonArc";
   var STORAGE_KEY = "carbonArc.config.v1";
-  var VERSION = "0.1.0";
+  var VERSION = "0.2.0";
 
   var DEFAULTS = {
     accent: "arc",
@@ -36,22 +36,46 @@
    * CSS for the login page. Stash does not load plugins before login, so this
    * cannot be injected automatically — the settings page offers it as a
    * copy-paste block for Settings > Interface > Custom CSS.
+   *
+   * The block is rebuilt per accent: only the signal colour, its two
+   * translucent tints and the ink that sits on a bone primary button differ
+   * between the three palettes. The font stack is declared but not loaded —
+   * the login page cannot reach the plugin's bundled woff2 files reliably, so
+   * it falls back to the system UI font until the reader installs IBM Plex.
    */
-  var LOGIN_CSS = [
-    "/* Carbon Arc — login page (paste into Custom CSS) */",
-    ":root { color-scheme: dark; }",
-    "body, html { background: #101213 !important; color: #e6e4de !important; }",
-    "body { font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; }",
-    ".login-page, .login-container, .card { background: #16191b !important; border-color: #2a2e31 !important; }",
-    ".card-header, .card-footer { background: transparent !important; border-color: #2a2e31 !important; }",
-    "h1, h2, h3, h4, label, .form-label { color: #e6e4de !important; }",
-    "p, .text-muted, small { color: #a9aba8 !important; }",
-    ".form-control { background: #0c0e0f !important; border: 1px solid #2a2e31 !important; color: #e6e4de !important; }",
-    ".form-control:focus { border-color: rgba(194,161,118,.4) !important; box-shadow: 0 0 0 3px rgba(194,161,118,.12) !important; }",
-    ".btn-primary { background: #e6e4de !important; border-color: #e6e4de !important; color: #17140f !important; }",
-    ".btn-primary:hover, .btn-primary:focus { background: #d9d6ce !important; border-color: #d9d6ce !important; }",
-    "a { color: #c2a176 !important; }",
-  ].join("\n");
+  var ACCENT_COLORS = {
+    arc: { arc: "#c2a176", rgb: "194, 161, 118", ink: "#17140f" },
+    patina: { arc: "#8aa79a", rgb: "138, 167, 154", ink: "#0f1513" },
+    dusk: { arc: "#a79cb8", rgb: "167, 156, 184", ink: "#14111a" },
+  };
+
+  function loginCss(accent) {
+    var c = ACCENT_COLORS[accent] || ACCENT_COLORS[DEFAULTS.accent];
+
+    return [
+      "/* Carbon Arc — login page (paste into Custom CSS) */",
+      ":root { color-scheme: dark; }",
+      "body, html { background: #101213 !important; color: #e6e4de !important; }",
+      "body { font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif; }",
+      ".login-page, .login-container, .card { background: #16191b !important; border-color: #2a2e31 !important; }",
+      ".card-header, .card-footer { background: transparent !important; border-color: #2a2e31 !important; }",
+      "h1, h2, h3, h4, label, .form-label { color: #e6e4de !important; }",
+      "p, .text-muted, small { color: #a9aba8 !important; }",
+      ".form-control { background: #0c0e0f !important; border: 1px solid #2a2e31 !important; color: #e6e4de !important; }",
+      ".form-control:focus { border-color: rgba(" +
+        c.rgb +
+        ",.4) !important; box-shadow: 0 0 0 3px rgba(" +
+        c.rgb +
+        ",.12) !important; }",
+      ".btn-primary { background: #e6e4de !important; border-color: #e6e4de !important; color: " +
+        c.ink +
+        " !important; }",
+      ".btn-primary:hover, .btn-primary:focus { background: #d9d6ce !important; border-color: #d9d6ce !important; }",
+      "a { color: " + c.arc + " !important; }",
+    ].join("\n");
+  }
+
+  var LOGIN_CSS = loginCss(DEFAULTS.accent);
 
   var memoryConfig = null;
   var current = normalize(DEFAULTS);
@@ -206,6 +230,7 @@
     ACCENTS: ACCENTS,
     DENSITIES: DENSITIES,
     LOGIN_CSS: LOGIN_CSS,
+    loginCss: loginCss,
     normalize: normalize,
     apply: apply,
     load: load,
