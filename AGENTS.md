@@ -644,14 +644,21 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `CarbonArc.css` (the theme), `CarbonArcSettings.css`,
   `CarbonArcStore.js` (config + apply), `CarbonArcSettings.js` (React page), and
   `fonts/` (three woff2 subsets + `OFL.txt`).
-- **Fonts ship with the plugin.** IBM Plex Sans (variable) and Mono 400/500,
-  latin subset only, declared with `@font-face` at the top of `CarbonArc.css`
-  and referenced by **relative** URL (`fonts/…`) so they resolve wherever Stash
-  serves the plugin. Do not swap these for a Google Fonts `@import`: a local
-  instance should not phone a CDN on every page load, and a blocked request
-  would silently drop the theme's type. Missing files degrade to the system
-  stack in `--ca-font`, which is what the theme used before bundling. The
-  licence file must travel with them (SIL OFL 1.1).
+- **Fonts are embedded, not linked.** IBM Plex Sans (variable) and Mono
+  400/500, latin subset, live as base64 data URIs in the generated
+  `CarbonArcFonts.css` (first entry in `ui.css`); the woff2 sources and
+  `OFL.txt` stay in `fonts/`, and `node scripts/build_fonts_css.mjs` rebuilds
+  the stylesheet after a font swap. This is not a style preference: **Stash
+  serves a plugin's stylesheets concatenated at `/plugin/<id>/css` and exposes
+  no route for any other file in the plugin directory** — verified on v0.32.0,
+  2026-11-27, where `/plugin/CarbonArc/fonts/x.woff2` and even
+  `/plugin/CarbonArc/CarbonArc.css` return 404 while `/plugin/CarbonArc/css`
+  returns the concatenation. So `url("fonts/x.woff2")` in the theme resolves to
+  a 404 and the fonts silently never load; a data URI has no path to resolve
+  and also survives a reverse-proxy prefix. Do not "clean this up" into a
+  relative or absolute file URL, and do not reach for a Google Fonts `@import`
+  (a local instance should not phone a CDN every page load). A missing face is
+  still not fatal: `--ca-font` ends in the system UI stack.
 - **Type sizes are rem, calibrated on a 16 px root.** The design's 14/13/11 px
   steps are written as 0.875/0.8125/0.6875rem, and `0.6875rem` is the floor —
   compact density used to go to 0.625rem (10 px), which broke the design's

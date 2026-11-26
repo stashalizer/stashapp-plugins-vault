@@ -289,3 +289,27 @@ test("the theme never targets the plugin's classes", () => {
   assert.ok(!/\.elg-/.test(theme), "Carbon Arc has no rule for the plugin's classes");
   assert.ok(!/external-links-button/.test(theme), "Carbon Arc leaves Stash's link buttons alone");
 });
+
+test("the bundled fonts are embedded, not linked", () => {
+  const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const fonts = strip(read("CarbonArc", "CarbonArcFonts.css"));
+  const theme = strip(read("CarbonArc", "CarbonArc.css"));
+  const yml = read("CarbonArc", "CarbonArc.yml");
+
+  assert.equal(
+    (fonts.match(/@font-face/g) || []).length,
+    3,
+    "one face per source file: sans variable, mono 400, mono 500"
+  );
+  assert.ok(!/url\(\s*["']?fonts\//.test(fonts), "a url() into fonts/ 404s: Stash serves only /plugin/<id>/css");
+  assert.ok(!/url\(\s*["']?fonts\//.test(theme), "the theme must not link font files either");
+  assert.ok(!/@font-face/.test(theme), "the faces live in CarbonArcFonts.css");
+
+  const cssList = yml.match(/css:\r?\n((?:[ \t]*- [^\r\n]*\r?\n)+)/);
+  assert.ok(cssList, "the manifest lists its stylesheets");
+  assert.equal(
+    cssList[1].trim().split(/\r?\n/)[0].trim(),
+    "- CarbonArcFonts.css",
+    "the faces load before the rules that name them"
+  );
+});

@@ -21,7 +21,7 @@
 
   var CONFIG_KEY = "CarbonArc";
   var STORAGE_KEY = "carbonArc.config.v1";
-  var VERSION = "0.2.0";
+  var VERSION = "0.2.1";
 
   var DEFAULTS = {
     accent: "arc",
