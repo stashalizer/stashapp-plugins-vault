@@ -1,0 +1,280 @@
+/**
+ * ExternalLinkGroups — settings page styling.
+ *
+ * Theme-agnostic on purpose: every colour comes from a Bootstrap CSS variable
+ * (which Stash themes override) with a neutral fallback, so the page is legible
+ * in the default light UI, Stash's dark theme and the Carbon Arc theme without
+ * the plugin shipping its own palette.
+ *
+ * License: AGPL-3.0
+ */
+
+.elg-set {
+  max-width: 940px;
+  padding: 1rem 1.25rem 3rem;
+  color: var(--bs-body-color, #212529);
+}
+
+.elg-set__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.elg-set__lede {
+  max-width: 68ch;
+  margin: 0 0 1.25rem;
+  color: var(--bs-secondary-color, #6c757d);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.elg-set__panel {
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 0.5rem;
+}
+
+.elg-set__heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__rules {
+  margin: 0 0 0.9rem;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__rules strong {
+  color: var(--bs-body-color, #212529);
+  font-weight: 600;
+}
+
+.elg-set__empty {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__table {
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+}
+
+.elg-set__row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(190px, auto) 96px 118px;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+}
+
+.elg-set__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.elg-set__row--head {
+  padding: 0.35rem 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__row--off .elg-set__cell--domain input {
+  opacity: 0.55;
+}
+
+.elg-set__row--invalid .elg-set__cell--domain input {
+  border-color: var(--bs-danger, #dc3545);
+}
+
+.elg-set__cell {
+  min-width: 0;
+}
+
+.elg-set__cell--domain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.elg-set__cell--flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+}
+
+.elg-set__cell--icon {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.elg-set__cell--order {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.3rem;
+}
+
+.elg-set__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.elg-set__check input[disabled] + span {
+  opacity: 0.5;
+}
+
+.elg-set__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  object-fit: contain;
+  box-shadow: 0 0 0 1px rgba(128, 128, 128, 0.3);
+  background-color: rgba(128, 128, 128, 0.08);
+}
+
+.elg-set__icon--letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--bs-secondary-color, #6c757d);
+  background-color: rgba(128, 128, 128, 0.16);
+}
+
+.elg-set__icon-button {
+  padding: 0.05rem 0.4rem;
+  line-height: 1.4;
+}
+
+.elg-set__error {
+  font-size: 0.74rem;
+  color: var(--bs-danger, #dc3545);
+}
+
+.elg-set__add {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 440px;
+  margin-top: 0.9rem;
+}
+
+.elg-set__add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.elg-set__note {
+  margin: 0 0 0.7rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.elg-set__notice {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 0.4rem;
+  font-size: 0.84rem;
+}
+
+.elg-set__notice--ok {
+  border-color: var(--bs-success, #198754);
+  color: var(--bs-success, #198754);
+}
+
+.elg-set__notice--error {
+  border-color: var(--bs-danger, #dc3545);
+  color: var(--bs-danger, #dc3545);
+}
+
+.elg-set__notice--info {
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.elg-set__storage {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+/* Launcher card in Settings > Tools */
+.elg-set-launcher {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 6px;
+  color: var(--bs-body-color, #212529);
+  text-decoration: none;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.elg-set-launcher:hover,
+.elg-set-launcher:focus {
+  background: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.08));
+  border-color: var(--bs-secondary-color, rgba(128, 128, 128, 0.5));
+  color: var(--bs-body-color, #212529);
+  text-decoration: none;
+}
+
+.elg-set-launcher h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.elg-set-launcher p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+@media (max-width: 760px) {
+  .elg-set__row {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+    padding: 0.7rem 0;
+  }
+
+  .elg-set__row--head {
+    display: none;
+  }
+
+  .elg-set__cell--order {
+    justify-content: flex-start;
+  }
+}

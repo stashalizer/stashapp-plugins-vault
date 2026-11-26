@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships six plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, **SceneRotation**, **AudioSupport**, and the **CarbonArc** theme.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships seven plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, **SceneRotation**, **AudioSupport**, **ExternalLinkGroups**, and the **CarbonArc** theme.
 
 ## Architecture
 
@@ -83,10 +83,12 @@ All code comments, commit messages, documentation, and user-facing text in this 
 ```
 plugins/<PluginId>/
   <PluginId>.yml            # manifest: name, description, version, ui.requires/javascript/css
-  <PluginId>.js             # player overlay (vanilla JS, uses window.csLib)
+  <PluginId>.js             # entry surface: player overlay (vanilla) or component patch (React)
+  <PluginId>Shared.js       # optional pure model, loaded first (MosaicFilter, ExternalLinkGroups)
   <PluginId>Storage.js       # optional Suite Data + csLib fallback helper
   <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
-  <PluginId>Store.js        # optional config helper, no player surface (CarbonArc only)
+  <PluginId>Store.js        # optional config helper, no player surface (CarbonArc, ExternalLinkGroups)
+  <PluginId>Icons.js        # optional icon resolver + cache (ExternalLinkGroups only)
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
 build_site.sh               # zips each plugin + writes index.yml
@@ -132,6 +134,14 @@ AGENTS.md                   # architecture + conventions (this file)
   dragging, hiding and deleting a region produces independent nodes and
   independent saved state. If you want to assert on `innerHTML`, the logic
   probably belongs in the shared module instead.
+- **ExternalLinkGroups has the same split.** `external-link-groups.test.mjs`
+  asserts the config schema, domain matching and URL partition against the real
+  module. `external-link-groups-render.test.mjs` supplies a ~120-line React
+  stub (function components, `useState` returning its initial value, `useMemo`
+  computed, `useEffect` run immediately) and executes one render of the
+  `ExternalLinkButtons` patch — enough to prove the original renderer still
+  receives the leftover URLs and that one URL produces a link while several
+  produce a dropdown. It proves nothing about CSS or icon loading.
 - **The stub DOM is deliberately dumb.** `querySelector` only answers the
   lookups the overlay actually makes, `requestAnimationFrame` runs
   synchronously, and every node reports a 640x360 player. When the overlay
@@ -618,6 +628,102 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   paints Stash's real DOM, which is why the checks in `README.md` are still
   required before calling a release verified.
 
+## ExternalLinkGroups
+
+- **What it does.** Promotes the domains a user configures out of Stash's
+  generic link menu and onto their own icon buttons. Everything the plugin
+  claims is pulled out of the list handed to Stash; everything else is rendered
+  by Stash exactly as before. No GraphQL, no hooks, no tasks — one page patch,
+  one settings page.
+- **Injection point: `ExternalLinkButtons`** (`ui/v2.5/src/components/Shared/
+  ExternalLinksButton.tsx`, `PatchComponent("ExternalLinkButtons")`). It is
+  rendered inside `<span class="name-icons">` of the detail title by
+  `Performer.tsx` (line ~452), `Studio.tsx` (~502) and `Group.tsx` (~408), so a
+  single patch covers all three pages — there is no per-page code. Props are
+  `{ urls: string[] | undefined }`. Stash's own split is `others` (faLink) /
+  `twitter` / `instagram`; the plugin never reimplements it.
+- **`patch.instead`, not `patch.before`.** `patch.before` transforms the
+  **arguments** of a render function (`args = beforeFn.apply(...)` in
+  `patch.tsx`) — it cannot inject elements. `instead` receives
+  `(props, ctx, next)` where `next()` returns the next render function, and the
+  original is only reached if we call it.
+- **The original renderer is called unconditionally, on every render.** It
+  contains a `useMemo`. Skipping it while the config loads and calling it on the
+  second render changes the hook count of `PatchedButtons` and React throws.
+  Same reason the call sits after our own hooks and is not wrapped in a
+  condition: `useConfig` → `useMemo` → `renderOriginal`.
+- **Patched surface, not a copy.** `PatchedButtons` passes
+  `{ urls: parts.rest }` to the original, so unconfigured and disabled links
+  keep Stash's groups, its classes and its behaviour. Do not "simplify" this by
+  re-rendering the three default groups here — that is how the two drift.
+- **Config key `ExternalLinkGroups`**, shape
+  `{ version: 1, domains: [{ domain, enabled, separate }] }`. `domain` is a bare
+  hostname, normalized on read and write (`ExternalLinkGroupsShared.
+  normalizeDomain`): lowercase, a pasted URL is reduced to its host, a leading
+  `www.` and trailing dot are removed, ports/userinfo/paths are dropped, and
+  non-http schemes and single-label hosts are rejected. Duplicates keep the
+  first entry, the list is capped at `MAX_DOMAINS` (32), and config order is
+  button order.
+- **Matching is exact hostname equality after that normalization.**
+  `onlyfans.com` does not claim `fan.onlyfans.com` — a deliberate difference
+  from Stash's own `https?://(?:www\.)?instagram.com/` regex. A URL the plugin
+  cannot parse stays with Stash.
+- **The two flags are not synonyms.** `enabled: false` → the entry is ignored
+  and its URLs go back to Stash, with no icon request. `enabled && separate` →
+  own icon button. `enabled && !separate` → the URLs are still owned by the
+  plugin but share one "Configured links" button, because a button cannot show
+  one favicon for several domains.
+- **Icon cache: the source URL, not the bytes.** `fetch()` cannot read a
+  cross-origin icon (CORS), and Stash's CSP is `img-src data: *` with
+  `connect-src` limited to `'self'` plus whatever plugins declare — so images
+  load but a programmatic fetch to an icon service is blocked. The browser
+  already caches the bytes; what this plugin caches in
+  `localStorage["externalLinkGroups.icons.v1"]` is which candidate worked.
+  Candidates in order: `https://<domain>/favicon.ico` (accurate, no third
+  party, works wherever the site itself does) → DuckDuckGo → Google S2. Each is
+  probed with an `Image` and a 4 s deadline (a black-holed host never fires
+  `onload`/`onerror`), one at a time.
+- **Invalidation has four paths**: (1) `<img onerror>` →
+  `Icons.reportBroken()` blacklists that source for the session, drops the cache
+  entry and calls `ensure()` again, which advances to the next candidate — it
+  must call `ensure()` explicitly, because the icon effect is keyed on the
+  domain and will not re-run by itself; (2) TTL — 30 days for a hit, 6 hours for
+  a miss, so a site that was down is retried the same day; (3) "Refresh" per row
+  and "Clear icon cache" in the settings page; (4) the blob's `v` field, bumped
+  when the shape changes. When every candidate fails the entry is cached as a
+  negative and the button shows a letter tile.
+- **Click behaviour is per group**: one URL renders an `<a target="_blank">`
+  (Stash's own `openIfSingle` rule, applied per site), several render Stash's
+  dropdown markup (`external-links-button` + `minimal link`, menu portalled to
+  `document.body` like Stash does) with the URL list and a small count badge.
+  The single-link markup uses Stash's classes rather than
+  `components.ExternalLinksButton`, because that component only accepts a
+  FontAwesome `IconDefinition` and the icon here is an `<img>`.
+- **Storage is csLib-optional**, same reasoning and shape as CarbonArc:
+  `ExternalLinkGroupsStore.js` reads `csLib.getConfiguration` when it answers
+  and mirrors every write to `localStorage["externalLinkGroups.config.v1"]`
+  (the synchronous `get()` the first render depends on). The server wins on
+  load **unless** it has no domains and the browser copy has some — that is the
+  "installed csLib after configuring" case, and it is pushed up rather than
+  discarded. No `ui.requires`, no `# requires:`.
+- **Do not run it beside External Links Enhanced.** Both `instead`-patch
+  `ExternalLinkButtons`; that plugin never calls `next()`, so depending on
+  registration order the two either fight over the list or both render
+  twitter/instagram groups. This is a known incompatibility, not a bug to
+  paper over.
+- **Verification**: `tests/external-link-groups.test.mjs` covers the schema,
+  matching and partition against the real module under `node:test`;
+  `tests/external-link-groups-render.test.mjs` runs one stub render pass to
+  prove the original still receives the leftover URLs and that one URL vs
+  several produce a link vs a dropdown. Neither proves CSS or icon loading —
+  those need a live Stash.
+- **Files**: `ExternalLinkGroups.yml` · `ExternalLinkGroupsShared.js` (schema,
+  domain normalization, partition, icon candidate list) ·
+  `ExternalLinkGroupsStore.js` (csLib + localStorage) ·
+  `ExternalLinkGroupsIcons.js` (probe, cache, invalidation) ·
+  `ExternalLinkGroups.js` (the component patch) ·
+  `ExternalLinkGroupsSettings.js` + two stylesheets.
+
 ## Conventions
 
 - One plugin per directory. No cross-plugin imports.
@@ -678,6 +784,7 @@ use a top-level component name:
 - `SceneRotation` — the SceneRotation plugin
 - `AudioSupport` — the AudioSupport plugin
 - `CarbonArc` — the CarbonArc theme plugin
+- `ExternalLinkGroups` — the ExternalLinkGroups plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`

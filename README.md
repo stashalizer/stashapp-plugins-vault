@@ -12,13 +12,14 @@ A collection of Stash plugins — player overlays, page additions, and one theme
 - **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene and applied to the player, the card preview and the cover, without re-encoding the file or writing anything to disk.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
 - **[Carbon Arc](#carbon-arc)** — a desktop-first dark theme: graphite surfaces, bone text, one low-chroma signal and monospaced numbers, with three signal colours and two card densities to choose from.
+- **[External Link Groups](#external-link-groups)** — puts the sites you actually use on their own icon buttons on performer, studio and group pages, with each site's favicon fetched and cached, one link opening directly and several opening a menu.
 
 ## Requirements (all plugins)
 
 - [Stash](https://github.com/stashapp/stash) (functionally tested against the v0.31.x line; see [Tested environment](#tested-environment) for the v0.32.0 status).
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions, SceneRotation and Carbon Arc are standalone and do not require csLib.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions, SceneRotation, Carbon Arc and External Link Groups are standalone and do not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
-- **Carbon Arc without csLib still works**, but its three options are then saved in that browser's `localStorage` instead of the plugin configuration, so they do not follow you to another browser or device. The settings page tells you which of the two is in use.
+- **Carbon Arc without csLib still works**, but its three options are then saved in that browser's `localStorage` instead of the plugin configuration, so they do not follow you to another browser or device. The settings page tells you which of the two is in use. **External Link Groups** behaves the same way: the domain list is kept in `localStorage` without csLib.
 
 ## Tested environment
 
@@ -366,6 +367,37 @@ The full token set, the measured contrast pairs and the selector inventory are i
 
 ---
 
+## External Link Groups
+
+Stash already collects every profile URL a performer or studio has. What it does with them is one generic link icon plus a hard-coded Twitter and Instagram split, so the sites you actually use — OnlyFans, ManyVids, a personal site — are buried three clicks deep in a menu of raw URLs. This plugin lets you name those sites once, and gives each one its own button in the title row.
+
+### Features
+
+- **Exact-domain control.** A domain on your list claims only URLs on that host (a leading `www.` is ignored, subdomains are not). Everything else — plus every entry you switch off — is handed back to Stash, which renders it exactly as it did before the plugin existed.
+- **Two behaviours per site.** *Separate* gives the site its own icon button. *Not separate* groups it into one "Configured links" button, for sites you want convenient but not prominent.
+- **Real favicons, cached.** The button shows the site's own icon, found by trying the site's `/favicon.ico` first, then DuckDuckGo, then Google. Only the source URL is cached locally (30 days for a hit, 6 hours for a miss); a broken image falls through to the next source by itself and ends on a letter tile rather than a hole.
+- **One click or a menu.** A site with a single URL opens it in a new tab directly. A site with several opens a list — the same rule Stash applies to its own link button, applied per site.
+- **Config order is button order.** Reorder with the arrows in the settings page; the icons follow.
+- **No dependencies.** No csLib requirement, no GraphQL, no backend hook. With csLib installed the domain list is stored in Stash's plugin configuration; without it, in this browser.
+
+### How to use it
+
+1. Install **External Link Groups** from the source list and enable it.
+2. Open **Settings → Tools → External Link Groups** (or `/plugins/externalurlgroups`).
+3. Add a domain — `onlyfans.com` or a pasted profile URL both work, it is reduced to the host. Choose **Enabled** and, if you want it promoted, **Separate button**.
+4. Save, then open any performer, studio or group page. The configured sites appear as their own icons next to the favourite star, before Stash's own buttons.
+5. Icons that look wrong or blank: use **↻** on that row, or **Clear icon cache**, and reload.
+
+### Known limitations
+
+- **Exact host only.** `onlyfans.com` does not claim `fan.onlyfans.com`; add the subdomain as its own entry if a site puts profiles there.
+- **Icons come from the network.** First load of a new domain makes one request per candidate (up to three, 4 s each) before falling back to the letter tile. Offline, or behind a block on the icon services, only the site's own `/favicon.ico` can succeed.
+- **Not a StashDB feature.** The plugin reads the URLs already on the entity; it does not fetch new ones, and it does not touch the URLs shown in the edit form.
+- **Conflicts with External Links Enhanced.** Both replace the same component and that plugin does not chain, so enable one of the two, not both.
+- **Not yet through a live functional pass.** The model and the patch are covered by `node:test` (including a stub render), but CSS placement and icon loading have not been exercised against a running Stash in the November 2026 pass (see [Tested environment](#tested-environment)).
+
+---
+
 ## Repository layout
 
 ```
@@ -376,6 +408,7 @@ plugins/                    # one subdirectory per plugin
   SceneRotation/            # manifest + JS/CSS assets
   AudioSupport/             # manifest + JS/CSS assets + backend hook
   CarbonArc/                # theme: stylesheet + config helper + settings page
+  ExternalLinkGroups/       # detail-title button patch + settings page
 build_site.sh               # zips each plugin and generates index.yml
 scripts/sync_labels.py      # creates/updates issue labels from .github/labels.json
 .github/workflows/          # deploys the source index to GitHub Pages
