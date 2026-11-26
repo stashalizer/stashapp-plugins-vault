@@ -706,6 +706,23 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   load **unless** it has no domains and the browser copy has some — that is the
   "installed csLib after configuring" case, and it is pushed up rather than
   discarded. No `ui.requires`, no `# requires:`.
+- **Coexistence with Carbon Arc is verified, not assumed.**
+  `tests/plugin-coexistence.test.mjs` loads both plugins' real files into one
+  sandbox in plugin-id order and asserts: both `PluginRoutes` and
+  `SettingsToolsSection` `before` chains survive intact (one route and one
+  launcher card each, original children neither dropped nor duplicated), the
+  config/storage keys are disjoint, and the stylesheet stays inside `.elg-*`
+  with no `:root` block and no `--ca-*` reads. Two constraints follow from that
+  and must not be relaxed:
+  - **Colour comes from `--bs-*`, never `--ca-*`.** Carbon Arc remaps
+    `--bs-body-color`, `--bs-secondary-color`, `--bs-border-color`,
+    `--bs-emphasis-color` and the semantic colours, so the same rules restyle
+    correctly under it and under Stash's own themes. `--ca-*` only exists while
+    that theme is enabled.
+  - **Inside a `.btn`, do not size by `em` alone.** Carbon Arc sets
+    `.btn { font-size: 0.8125rem }`, so an em-based size shrinks ~19% there. The
+    icon box should scale (it sits next to 1em FontAwesome glyphs and must track
+    them), the count badge should not — it is pinned to 9px.
 - **Do not run it beside External Links Enhanced.** Both `instead`-patch
   `ExternalLinkButtons`; that plugin never calls `next()`, so depending on
   registration order the two either fight over the list or both render
