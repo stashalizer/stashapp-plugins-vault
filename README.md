@@ -1,6 +1,6 @@
 # stashapp-plugins-vault
 
-A collection of Stash plugins that add interactive overlays to the scene player. Install once from a single plugin source, then turn on whichever plugins you want.
+A collection of Stash plugins — player overlays, page additions, and one theme — installed from a single plugin source. Install once, then turn on whichever ones you want.
 
 > **Looking for feedback!** This project is still evolving and I'd love to hear what you'd use, what feels awkward, and what features you wish existed. Please open a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues) or find the announcement thread on the [stashapp community forum](https://discourse.stashapp.cc/c/plugins/18/none).
 
@@ -11,12 +11,14 @@ A collection of Stash plugins that add interactive overlays to the scene player.
 - **[Scene Versions](#scene-versions)** — a "Related Scenes" tab on the scene page that links alternate versions of a scene bidirectionally, with a suggest-from-folder helper.
 - **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene and applied to the player, the card preview and the cover, without re-encoding the file or writing anything to disk.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
+- **[Carbon Arc](#carbon-arc)** — a desktop-first dark theme: graphite surfaces, bone text, one low-chroma signal and monospaced numbers, with three signal colours and two card densities to choose from.
 
 ## Requirements (all plugins)
 
 - [Stash](https://github.com/stashapp/stash) (functionally tested against the v0.31.x line; see [Tested environment](#tested-environment) for the v0.32.0 status).
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions and SceneRotation are standalone and do not require csLib.
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions, SceneRotation and Carbon Arc are standalone and do not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
+- **Carbon Arc without csLib still works**, but its three options are then saved in that browser's `localStorage` instead of the plugin configuration, so they do not follow you to another browser or device. The settings page tells you which of the two is in use.
 
 ## Tested environment
 
@@ -40,10 +42,10 @@ Add this repository as a plugin source in Stash:
    ```
    https://stashalizer.github.io/stashapp-plugins-vault/main/index.yml
    ```
-3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, **Scene Rotation**, and/or **Audio Support** from the list.
+3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, **Scene Rotation**, **Audio Support** and/or **Carbon Arc** from the list.
 4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it (Audio Support's overlay and settings page both require it).
 
-QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner and rotates scene media wherever it appears — player, card preview, cover (no settings page).
+QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner and rotates scene media wherever it appears — player, card preview, cover (no settings page). Carbon Arc adds no surface of its own: it restyles every existing one and adds a **Settings → Tools → Carbon Arc** card for its three options.
 
 ---
 
@@ -309,6 +311,46 @@ Plays audio files (mp3, flac, m4a, ogg, opus, wav) inside Stash. Because Stash h
 
 ---
 
+## Carbon Arc
+
+A dark theme built for one setup: a 24-inch desktop screen, used at night, with a wall of thumbnails in front of you. The interface is graphite and quietly stepped; the only warm colour in it is a single low-chroma signal used in four places. Nothing on screen is brighter than the picture you are looking at.
+
+### Features
+
+- **Five surfaces, not one.** Sunken wells, page ground, panels, cards and floating menus sit between L\* 3.9 and 15.4. Structure comes from the luminance step; hairline borders only confirm it, which is why nothing reads as a drawn box.
+- **Bone instead of white.** Text is `#E6E4DE` (13.2:1 on a card), not `#FFF` — white on a dark ground grows a halo and makes 13 px labels shimmer. Three text steps only, so hierarchy is unambiguous.
+- **One signal, four jobs.** The accent appears on the active nav underline, the keyboard focus ring, filled rating stars and the player's playhead. Primary buttons are filled bone, not coloured, so the highest-contrast thing on screen is always the next action — with zero saturation.
+- **Every number is monospaced.** Durations, counts, resolutions, dates and file paths use IBM Plex Mono, so a row of cards aligns on its data instead of its prose.
+- **Three signals, two densities, one dimmer.** Arc (brass, default), Patina (oxidised green) and Dusk (muted violet); comfortable or compact card spacing; thumbnails at full or 90% brightness.
+- **It only paints.** Nav height, sidebar width, root font size, grid column maths and every control stay exactly where Stash put them — the theme rewrites colour, type, radii, shadows and spacing inside cards, and hides nothing. Every Stash feature keeps working, including plugins layered on top.
+- **Details that keep a dark UI usable.** A 2 px focus ring on every interactive element, `prefers-reduced-motion` respected, `scrollbar-gutter: stable` so filtering does not reflow the grid, and a thin dark scrollbar.
+
+### How to use it
+
+1. **Set Stash's own theme to Dark** (**Settings → Interface → Theme**). Carbon Arc paints the surfaces itself, but a few inherited defaults come from Stash's theme, and the light theme will leak through them.
+2. Install **Carbon Arc** from the source list, enable it, and reload. Nothing else is required — no csLib, no other plugin.
+3. Open **Settings → Tools → Carbon Arc** (or `/plugins/carbonarc`): pick a signal, a card density and preview brightness. Changes apply as you click.
+4. **Optional — the login page.** Stash does not load plugins before you log in, so that page cannot inherit the theme. The settings page has a **Copy login CSS** button; paste the block into **Settings → Interface → Custom CSS** and enable custom CSS.
+5. Turn off other themes and custom CSS colour overrides. Two themes on one page fight, and the last stylesheet wins section by section.
+
+### What it covers
+
+Shell and top nav, filter rail and toolbars, grid cards and their overlays, list and table views, detail pages and tabs, the video.js player and scrubber, the lightbox, modals and menus and popovers and toasts, forms and React-Select and tag chips, settings pages and log output, scrollbars, and focus/hover/disabled states.
+
+The full token set, the measured contrast pairs and the selector inventory are in [`docs/carbon-arc-theme.html`](docs/carbon-arc-theme.html).
+
+### Known limitations
+
+- **Stash's Dark theme is still required underneath** (step 1). A few components inherit colour from Stash's theme rather than from a variable this theme can reach.
+- **The login page needs the custom CSS step.** It is the one screen a plugin cannot touch.
+- **Third-party plugins that hard-code colours** (overlays with their own palettes) will keep those colours. The theme covers Stash's own markup, not other plugins' inline styles.
+- **No mobile pass.** The design targets 1920×1080 on a 24-inch display; phone layouts are left to Stash and are not tuned.
+- **Without csLib, the three options live in `localStorage`** for that browser only. The settings page says which storage is in use.
+- **Compact density changes card padding and margin, not column count** — Stash owns the grid maths, and a theme that overrode it would break card sizing on other screens.
+- **Not yet through a live functional pass.** The CSS is reviewed against the current Stash markup and the settings page is exercised in a browser harness, but the November 2026 pass has not re-run the full live matrix (see [Tested environment](#tested-environment)). Report anything that stays Stash-blue.
+
+---
+
 ## Repository layout
 
 ```
@@ -318,6 +360,7 @@ plugins/                    # one subdirectory per plugin
   SceneVersions/            # manifest + JS/CSS assets
   SceneRotation/            # manifest + JS/CSS assets
   AudioSupport/             # manifest + JS/CSS assets + backend hook
+  CarbonArc/                # theme: stylesheet + config helper + settings page
 build_site.sh               # zips each plugin and generates index.yml
 scripts/sync_labels.py      # creates/updates issue labels from .github/labels.json
 .github/workflows/          # deploys the source index to GitHub Pages
@@ -333,7 +376,7 @@ To publish manually from a fork: open **Settings → Pages** and set the source 
 
 ## Feedback
 
-All four plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
+All plugins are actively being shaped by user feedback. If you have a use case the current features don't cover, a workflow that feels awkward, or an idea for a new mode/trigger/move behavior, please:
 
 - Open a [GitHub issue](https://github.com/stashalizer/stashapp-plugins-vault/issues), or
 - Reply to the announcement thread on the [stashapp community forum](https://discourse.stashapp.cc/c/plugins/18/none).

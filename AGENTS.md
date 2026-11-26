@@ -1,6 +1,6 @@
 # AGENTS.md — stashapp-plugins-vault
 
-A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships five plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, **SceneRotation**, and **AudioSupport**.
+A Stash plugin source-index repository: zips each `plugins/<PluginId>/` directory and publishes `index.yml` to GitHub Pages. Built on the official [CommunityScripts](https://github.com/stashapp/CommunityScripts) template. Currently ships six plugins: **QuestingAdventurer**, **MosaicFilter**, **SceneVersions**, **SceneRotation**, **AudioSupport**, and the **CarbonArc** theme.
 
 ## Architecture
 
@@ -85,6 +85,7 @@ plugins/<PluginId>/
   <PluginId>.js             # player overlay (vanilla JS, uses window.csLib)
   <PluginId>Storage.js       # optional Suite Data + csLib fallback helper
   <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
+  <PluginId>Store.js        # optional config helper, no player surface (CarbonArc only)
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
 build_site.sh               # zips each plugin + writes index.yml
@@ -499,6 +500,48 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Files**: `AudioSupport.yml` (manifest: `interface: js`, `exec: AudioSupportHook.js`, hooks `Scene.Create.Post`, tasks `tagAll` + `generateVideo`) · `AudioSupportStorage.js` (Suite Data + csLib helper) · `AudioSupport.js` (overlay + dock + long-form) · `AudioSupportHook.js` (backend Goja hook, ES5.1, server-side) · `AudioSupportSettings.js` (React browse/setup/generate/covers page) · `AudioSupport.css` · `AudioSupportSettings.css`.
 - **No migrations** (new plugin, no legacy data).
 
+## Carbon Arc
+
+- **A theme, not a feature.** One stylesheet plus a config helper and a settings
+  page: no player overlay, no hooks, no tasks, no GraphQL. Files are
+  `CarbonArc.css` (the theme), `CarbonArcSettings.css`,
+  `CarbonArcStore.js` (config + apply) and `CarbonArcSettings.js` (React page).
+- **No `ui.requires`, deliberately.** `ui.requires` is mandatory load order, so
+  a missing `CommunityScriptsUILibrary` would stop the theme's CSS from loading
+  at all — worse than losing cross-device sync. The store prefers `csLib` when
+  it answers and otherwise falls back to `localStorage`
+  (`carbonArc.config.v1`); the settings page states which one is in force. Do
+  not add a `# requires:` line either, for the same reason.
+- **Config key `CarbonArc`**, shape
+  `{ accent: "arc" | "patina" | "dusk", density: "comfortable" | "compact",
+  dimPreviews: boolean }`. `normalize()` runs on every read and on every write,
+  so a hand-edited or older value cannot reach the DOM.
+- **Options are data attributes on `<html>`**: `data-ca-accent`,
+  `data-ca-density`, `data-ca-dim`. The stylesheet keys off those, so switching
+  is a restyle, not a reload. `apply()` runs synchronously at parse time, so the
+  first paint already carries the saved accent.
+- **Layout maths is off limits.** Nav height, sidebar width and root font size
+  stay whatever Stash set them to: `body`'s top padding and the sticky detail
+  header are derived from those numbers in Stash's own SCSS, and a theme that
+  changes them breaks offsets it cannot see. The design's 56 px nav / 280 px
+  rail / 15 px root were dropped for that reason, not forgotten. Colour, radii,
+  shadows and spacing *inside* cards are fair game.
+- **Colour overrides come in two layers**: remap the Bootstrap `--bs-*`
+  variables Stash reads, then override the components that still hard-code SCSS
+  colours (`.top-nav`, `.grid-card`, `.detail-header`, `.video-js`, `.Lightbox`,
+  `.react-select__*`, …). `!important` is used only against Bootstrap utilities
+  (`.bg-dark`, `.text-muted`) and inline styles. The full selector inventory is
+  `docs/carbon-arc-theme.html` §08.
+- **The login page cannot be themed from the plugin** — Stash does not load
+  plugin CSS before auth. `LOGIN_CSS` in `CarbonArcStore.js` is the copy-paste
+  block the settings page offers; keep it in sync with the token values.
+- **Verification without a Stash instance**: `node --check` both scripts, parse
+  both stylesheets, then open the settings page in a harness that stubs
+  `PluginApi`, `ReactRouterDOM`, `csLib` and `localStorage`. That catches patch
+  shape, option wiring and the store round-trip; it does not prove the theme
+  paints Stash's real DOM, which is why the checks in `README.md` are still
+  required before calling a release verified.
+
 ## Conventions
 
 - One plugin per directory. No cross-plugin imports.
@@ -558,6 +601,7 @@ use a top-level component name:
 - `SceneVersions` — the SceneVersions plugin
 - `SceneRotation` — the SceneRotation plugin
 - `AudioSupport` — the AudioSupport plugin
+- `CarbonArc` — the CarbonArc theme plugin
 - `manifest` — `*.yml` plugin manifests
 - `site` — `build_site.sh`, `index.yml`, GitHub Pages publish
 - `ci` — `.github/workflows/`

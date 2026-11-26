@@ -1,0 +1,1341 @@
+/*
+ * Carbon Arc — a desktop-first dark theme for Stash.
+ *
+ * Design notes and the full rationale live in docs/carbon-arc-theme.html.
+ * Structure of this file:
+ *
+ *   1. tokens              — the whole palette, radii and spacing knobs
+ *   2. framework variables — remap what Stash/Bootstrap read
+ *   3. base                — page ground, type scale, selection
+ *   4. shell               — top nav, sidebar, toolbar
+ *   5. cards               — grid cards and their overlays
+ *   6. detail pages        — headers, tabs, metadata, edit bars
+ *   7. player              — video.js controls, scrubber, lightbox
+ *   8. overlays            — modal, dropdown, popover, tooltip, toast, alert
+ *   9. forms               — inputs, selects, chips, switches, progress
+ *  10. settings & logs     — settings cards, tables, code blocks
+ *  11. scrollbars
+ *  12. focus, selection, motion
+ *  13. options             — density and preview dimming
+ *
+ * Rules followed throughout:
+ *   - No layout math is changed except spacing inside components we own.
+ *     Nav height, sidebar width and root font size are left to Stash so its
+ *     fixed-offset arithmetic keeps working.
+ *   - Colour overrides use `!important` only where Stash sets a value through
+ *     a Bootstrap utility (`.bg-dark`, `.text-muted`) or an inline style.
+ *   - Every selector is additive: a missing class is a no-op, never a break.
+ *
+ * License: AGPL-3.0
+ */
+
+/* ==========================================================================
+   1. tokens
+   ========================================================================== */
+
+:root {
+  /* surfaces, L* 3.9 – 15.4 — nothing here should glare */
+  --ca-sunken: #0c0e0f;
+  --ca-canvas: #101213;
+  --ca-panel: #16191b;
+  --ca-card: #1b1e20;
+  --ca-raised: #23272a;
+
+  /* hairlines */
+  --ca-line: #2a2e31;
+  --ca-line-2: #3a3f43;
+
+  /* text, bone not white */
+  --ca-tx-1: #e6e4de;
+  --ca-tx-2: #a9aba8;
+  --ca-tx-3: #8c8f90;
+
+  /* one signal, low chroma */
+  --ca-arc: #c2a176;
+  --ca-arc-ink: #17140f;
+  --ca-arc-12: rgba(194, 161, 118, 0.12);
+  --ca-arc-24: rgba(194, 161, 118, 0.24);
+  --ca-arc-40: rgba(194, 161, 118, 0.4);
+
+  /* states */
+  --ca-danger: #c96a60;
+  --ca-ok: #7f9f79;
+  --ca-warn: #c6a25e;
+
+  /* geometry */
+  --ca-r-card: 6px;
+  --ca-r-ctl: 4px;
+  --ca-r-chip: 3px;
+
+  /* spacing knobs the density option moves */
+  --ca-card-margin: 6px;
+  --ca-card-pad: 11px 12px 12px;
+  --ca-grid-gap: 4px;
+
+  /* the only shadow allowed in the theme */
+  --ca-shadow: 0 18px 48px -14px rgba(0, 0, 0, 0.62), 0 2px 6px rgba(0, 0, 0, 0.35);
+  --ca-shadow-sm: 0 8px 24px -10px rgba(0, 0, 0, 0.55);
+
+  /* type */
+  --ca-font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --ca-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+
+  /* preview dimming strength, overridden by the option below */
+  --ca-dim: 1;
+}
+
+/* accent variants — three low-chroma signals, picked in settings */
+html[data-ca-accent="arc"] {
+  --ca-arc: #c2a176;
+  --ca-arc-ink: #17140f;
+  --ca-arc-12: rgba(194, 161, 118, 0.12);
+  --ca-arc-24: rgba(194, 161, 118, 0.24);
+  --ca-arc-40: rgba(194, 161, 118, 0.4);
+  --ca-arc-rgb: 194, 161, 118;
+}
+
+html[data-ca-accent="patina"] {
+  --ca-arc: #8aa79a;
+  --ca-arc-ink: #0f1513;
+  --ca-arc-12: rgba(138, 167, 154, 0.12);
+  --ca-arc-24: rgba(138, 167, 154, 0.24);
+  --ca-arc-40: rgba(138, 167, 154, 0.4);
+  --ca-arc-rgb: 138, 167, 154;
+}
+
+html[data-ca-accent="dusk"] {
+  --ca-arc: #a79cb8;
+  --ca-arc-ink: #14111a;
+  --ca-arc-12: rgba(167, 156, 184, 0.12);
+  --ca-arc-24: rgba(167, 156, 184, 0.24);
+  --ca-arc-40: rgba(167, 156, 184, 0.4);
+  --ca-arc-rgb: 167, 156, 184;
+}
+
+/* ==========================================================================
+   2. framework variables
+   Stash compiles Bootstrap 5 over hand-written SCSS, so remapping these is
+   necessary but not sufficient — the component rules below cover the rest.
+   ========================================================================== */
+
+:root,
+html[data-ca-accent] {
+  color-scheme: dark;
+
+  --bs-body-bg: var(--ca-canvas);
+  --bs-body-color: var(--ca-tx-1);
+  --bs-body-font-family: var(--ca-font);
+  --bs-emphasis-color: var(--ca-tx-1);
+  --bs-secondary-color: var(--ca-tx-3);
+  --bs-tertiary-bg: var(--ca-sunken);
+  --bs-border-color: var(--ca-line);
+  --bs-border-color-translucent: var(--ca-line);
+  --bs-primary: var(--ca-arc);
+  --bs-primary-rgb: var(--ca-arc-rgb, 194, 161, 118);
+  --bs-secondary: var(--ca-line-2);
+  --bs-success: var(--ca-ok);
+  --bs-danger: var(--ca-danger);
+  --bs-warning: var(--ca-warn);
+  --bs-link-color: var(--ca-arc);
+  --bs-link-hover-color: var(--ca-tx-1);
+  --bs-card-bg: var(--ca-card);
+  --bs-card-border-color: var(--ca-line);
+  --bs-card-cap-bg: transparent;
+  --bs-modal-bg: var(--ca-raised);
+  --bs-modal-border-color: var(--ca-line-2);
+  --bs-dropdown-bg: var(--ca-raised);
+  --bs-dropdown-border-color: var(--ca-line-2);
+  --bs-dropdown-link-hover-bg: var(--ca-card);
+  --bs-popover-bg: var(--ca-raised);
+  --bs-popover-border-color: var(--ca-line-2);
+  --bs-popover-header-bg: var(--ca-card);
+  --bs-tooltip-bg: var(--ca-raised);
+  --bs-tooltip-color: var(--ca-tx-1);
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--ca-tx-2);
+  --bs-table-border-color: var(--ca-line);
+}
+
+/* Stash's own theme variables, in case the build exposes them as custom
+   properties (they are SCSS variables upstream; harmless when absent). */
+:root {
+  --body-bg: var(--ca-canvas);
+  --body-color: var(--ca-tx-1);
+  --text-color: var(--ca-tx-1);
+  --text-muted: var(--ca-tx-3);
+  --secondary: var(--ca-line-2);
+  --muted-gray: var(--ca-tx-2);
+  --link-color: var(--ca-arc);
+  --link-hover-color: var(--ca-tx-1);
+  --card-bg: var(--ca-card);
+  --input-bg: var(--ca-sunken);
+  --navbar-bg: var(--ca-panel);
+  --popover-bg: var(--ca-raised);
+}
+
+/* ==========================================================================
+   3. base
+   ========================================================================== */
+
+html {
+  background-color: var(--ca-canvas);
+}
+
+body {
+  background-color: var(--ca-canvas);
+  color: var(--ca-tx-1);
+  font-family: var(--ca-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--ca-arc-40);
+  color: var(--ca-tx-1);
+}
+
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+  color: var(--ca-tx-1);
+  letter-spacing: -0.012em;
+}
+
+h1, .h1 { font-weight: 600; }
+h2, .h2, h3, .h3 { font-weight: 500; }
+
+a { color: var(--ca-arc); }
+a:hover, a:focus { color: var(--ca-tx-1); }
+
+hr {
+  border-color: var(--ca-line);
+  opacity: 1;
+}
+
+.text-muted { color: var(--ca-tx-3) !important; }
+.text-secondary { color: var(--ca-tx-2) !important; }
+.bg-dark { background-color: var(--ca-panel) !important; }
+.bg-secondary { background-color: var(--ca-card) !important; }
+.bg-body { background-color: var(--ca-canvas) !important; }
+.border, .border-top, .border-bottom, .border-start, .border-end {
+  border-color: var(--ca-line) !important;
+}
+
+pre, code, kbd, samp {
+  font-family: var(--ca-mono);
+  font-size: 0.8125rem;
+  color: var(--ca-tx-2);
+}
+
+pre {
+  background: var(--ca-sunken);
+  border: 1px solid var(--ca-line);
+  border-radius: var(--ca-r-ctl);
+  padding: 12px 14px;
+}
+
+code {
+  background: var(--ca-sunken);
+  border-radius: 2px;
+  padding: 1px 4px;
+}
+
+pre code { background: none; padding: 0; }
+
+/* ==========================================================================
+   4. shell — top nav, sidebar, toolbar
+   ========================================================================== */
+
+.top-nav,
+.navbar.bg-dark,
+nav.bg-dark,
+.navbar-dark {
+  background: var(--ca-panel) !important;
+  border-bottom: 1px solid var(--ca-line);
+  box-shadow: none;
+}
+
+.top-nav .navbar-brand,
+.top-nav .navbar-brand a {
+  color: var(--ca-tx-1);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.top-nav .navbar-nav .nav-link a.btn,
+.top-nav .navbar-nav a.btn {
+  color: var(--ca-tx-2);
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  /* inset rule instead of a real border: nav items keep their exact height */
+  box-shadow: inset 0 -2px 0 transparent;
+  font-size: 0.875rem;
+}
+
+.top-nav .navbar-nav .nav-link a.btn:hover,
+.top-nav .navbar-nav a.btn:hover {
+  color: var(--ca-tx-1);
+  background: var(--ca-card);
+  box-shadow: inset 0 -2px 0 var(--ca-line-2);
+}
+
+.top-nav .navbar-nav .nav-link a.btn.active,
+.top-nav .navbar-nav a.btn.active {
+  color: var(--ca-tx-1);
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--ca-arc);
+}
+
+.top-nav .nav-utility .btn,
+.top-nav .nav-utility svg {
+  color: var(--ca-tx-2);
+  fill: currentColor;
+}
+
+.top-nav .nav-utility .btn:hover {
+  color: var(--ca-tx-1);
+  background: var(--ca-card);
+}
+
+.top-nav .btn-primary:not(:disabled):not(.disabled).active {
+  background: var(--ca-arc-12);
+  border-color: var(--ca-arc-40);
+  color: var(--ca-tx-1);
+}
+
+/* the nav is fixed; keep its own height, only restyle what sits on it */
+.top-nav { min-height: 48px; }
+
+/* sidebar / filters */
+.sidebar-pane .sidebar {
+  background: var(--ca-panel);
+  /* recolour, do not add: Stash already draws this edge */
+  border-right-color: var(--ca-line);
+}
+
+.sidebar-pane .sidebar .sidebar-section + .sidebar-section {
+  border-top: 1px solid var(--ca-line);
+}
+
+.sidebar-pane .sidebar .collapse-header .btn {
+  color: var(--ca-tx-3);
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  background: transparent;
+  border: none;
+}
+
+.sidebar-pane .sidebar .collapse-header .btn:hover {
+  color: var(--ca-tx-1);
+}
+
+.scene-tabs,
+.detail-body .sidebar,
+.filtered-list-toolbar {
+  background: transparent;
+}
+
+.filtered-list-toolbar {
+  border-bottom-color: var(--ca-line);
+}
+
+.filtered-list-toolbar .btn,
+.filtered-list-toolbar .form-control {
+  border-color: var(--ca-line);
+}
+
+/* generic buttons */
+.btn {
+  border-radius: var(--ca-r-ctl);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.btn-secondary,
+.btn-dark {
+  background: var(--ca-card);
+  border-color: var(--ca-line-2);
+  color: var(--ca-tx-1);
+}
+
+.btn-secondary:hover,
+.btn-secondary:focus,
+.btn-dark:hover,
+.btn-dark:focus,
+.btn-secondary:not(:disabled):not(.disabled).active,
+.btn-dark:not(:disabled):not(.disabled).active {
+  background: #212427;
+  border-color: var(--ca-tx-3);
+  color: var(--ca-tx-1);
+}
+
+.btn-primary {
+  background: var(--ca-tx-1);
+  border-color: var(--ca-tx-1);
+  color: var(--ca-arc-ink);
+  --bs-btn-bg: var(--ca-tx-1);
+  --bs-btn-border-color: var(--ca-tx-1);
+  --bs-btn-color: var(--ca-arc-ink);
+  --bs-btn-hover-bg: #d9d6ce;
+  --bs-btn-hover-border-color: #d9d6ce;
+  --bs-btn-active-bg: #cfccc4;
+  --bs-btn-active-border-color: #cfccc4;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:not(:disabled):not(.disabled).active,
+.btn-primary:not(:disabled):not(.disabled):active {
+  background: #d9d6ce;
+  border-color: #d9d6ce;
+  color: var(--ca-arc-ink);
+}
+
+.btn-primary:disabled,
+.btn-primary.disabled {
+  background: var(--ca-line);
+  border-color: var(--ca-line);
+  color: var(--ca-tx-3);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: rgba(201, 106, 96, 0.35);
+  color: var(--ca-danger);
+}
+
+.btn-danger:hover,
+.btn-danger:focus {
+  background: rgba(201, 106, 96, 0.1);
+  border-color: var(--ca-danger);
+  color: var(--ca-danger);
+}
+
+.btn-success {
+  background: rgba(127, 159, 121, 0.14);
+  border-color: rgba(127, 159, 121, 0.4);
+  color: var(--ca-ok);
+}
+
+.btn-warning {
+  background: rgba(198, 162, 94, 0.14);
+  border-color: rgba(198, 162, 94, 0.4);
+  color: var(--ca-warn);
+}
+
+.btn-link {
+  color: var(--ca-arc);
+}
+
+.btn-link:hover {
+  color: var(--ca-tx-1);
+}
+
+a.minimal,
+button.minimal {
+  background: none;
+  border: none;
+  color: var(--ca-tx-2);
+}
+
+a.minimal:hover,
+button.minimal:hover {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+/* nav tabs and pills */
+.nav-tabs {
+  border-bottom: 1px solid var(--ca-line);
+}
+
+.nav-tabs .nav-link {
+  color: var(--ca-tx-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-size: 0.8125rem;
+}
+
+.nav-tabs .nav-link:hover {
+  color: var(--ca-tx-1);
+  border-bottom-color: var(--ca-line-2);
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--ca-tx-1);
+  background: transparent;
+  border-bottom-color: var(--ca-arc);
+}
+
+.nav-pills .nav-link {
+  color: var(--ca-tx-2);
+  border-radius: var(--ca-r-ctl);
+}
+
+.nav-pills .nav-link:hover {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+.nav-pills .nav-link.active {
+  background: var(--ca-arc-12);
+  color: var(--ca-tx-1);
+}
+
+/* ==========================================================================
+   5. cards
+   ========================================================================== */
+
+.card {
+  background: var(--ca-card);
+  border: none;
+  border-radius: var(--ca-r-card);
+  box-shadow: none;
+  color: var(--ca-tx-1);
+}
+
+.card .card {
+  background: var(--ca-panel);
+}
+
+.grid-card.card {
+  margin: var(--ca-card-margin);
+  border-radius: var(--ca-r-card);
+  background: var(--ca-card);
+  box-shadow: inset 0 0 0 1px transparent;
+  overflow: hidden;
+  transition: background-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.grid-card.card:hover {
+  background: #212427;
+  box-shadow: inset 0 0 0 1px var(--ca-line-2);
+}
+
+.grid-card.card.selected,
+.grid-card.card:has(.card-check:checked) {
+  background: #20211f;
+  box-shadow: inset 0 0 0 1px var(--ca-arc-40);
+}
+
+.grid-card .card-section {
+  padding: var(--ca-card-pad);
+}
+
+.grid-card .card-section-title,
+.grid-card .card-section .TruncatedText,
+.grid-card h5 {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ca-tx-1);
+}
+
+.grid-card .card-section p,
+.grid-card .card-section .text-muted,
+.grid-card .card-section small {
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--ca-tx-3) !important;
+}
+
+.grid-card a:not(.btn) {
+  color: var(--ca-tx-1);
+}
+
+.grid-card a:not(.btn):hover {
+  color: var(--ca-arc);
+}
+
+.card hr {
+  border-color: var(--ca-line);
+  margin: 0;
+}
+
+/* thumbnail well — cards keep their own crop, we only set the ground */
+.scene-card-preview,
+.thumbnail-section,
+.grid-card .card-img-top {
+  background: var(--ca-sunken);
+}
+
+.scene-card-preview img,
+.thumbnail-section img,
+.grid-card img {
+  filter: brightness(var(--ca-dim));
+}
+
+/* thumbnail chips */
+.overlay-duration,
+.overlay-resolution,
+.scene-specs-overlay,
+.overlay-codec {
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  color: var(--ca-tx-2);
+  background: rgba(12, 14, 15, 0.72);
+  border: 1px solid rgba(58, 63, 67, 0.7);
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+
+.card-popovers .btn,
+.card-popovers .minimal {
+  color: var(--ca-tx-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--ca-r-ctl);
+}
+
+.card-popovers .btn:hover,
+.card-popovers .minimal:hover {
+  color: var(--ca-tx-1);
+  background: rgba(12, 14, 15, 0.55);
+}
+
+.card-check:checked {
+  accent-color: var(--ca-arc);
+}
+
+.rating-banner {
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  border-radius: 2px;
+}
+
+/* list view rows */
+.table-list table,
+.table {
+  color: var(--ca-tx-2);
+  border-color: var(--ca-line);
+}
+
+.table thead th {
+  color: var(--ca-tx-3);
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  border-bottom: 1px solid var(--ca-line);
+  border-top: none;
+}
+
+.table td,
+.table th {
+  border-color: var(--ca-line);
+}
+
+.table-striped tbody tr:nth-of-type(odd) td {
+  background: transparent;
+}
+
+.table-hover tbody tr:hover td,
+.table-list tbody tr:hover td {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+/* pagination */
+.pagination .btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ca-tx-2);
+  font-family: var(--ca-mono);
+}
+
+.pagination .btn:hover {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+.pagination .btn.active {
+  background: var(--ca-card);
+  border-color: var(--ca-line-2);
+  color: var(--ca-tx-1);
+}
+
+/* ==========================================================================
+   6. detail pages
+   ========================================================================== */
+
+.detail-header {
+  background: var(--ca-canvas);
+  border-bottom-color: var(--ca-line);
+}
+
+.detail-header h1,
+.detail-header h2,
+.detail-header .name {
+  color: var(--ca-tx-1);
+}
+
+.detail-header .detail-item-title,
+.detail-group .detail-item-title {
+  color: var(--ca-tx-3);
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+}
+
+.detail-header .detail-item-value,
+.detail-group .detail-item-value {
+  color: var(--ca-tx-1);
+  font-size: 0.8125rem;
+}
+
+.detail-body {
+  background: var(--ca-canvas);
+}
+
+.detail-body nav {
+  border-bottom: 1px solid var(--ca-line);
+}
+
+.organized-button {
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+  border-radius: var(--ca-r-chip);
+}
+
+.organized-button.organized {
+  color: var(--ca-arc);
+  border-color: var(--ca-arc-40);
+  background: var(--ca-arc-12);
+}
+
+.rating-stars .filled-star,
+.rating-stars .unfilled-star,
+.rating-star {
+  color: var(--ca-arc);
+}
+
+.rating-stars .unfilled-star,
+.rating-star.unfilled {
+  color: #4a4f53;
+}
+
+.edit-buttons-container,
+.details-edit {
+  background: var(--ca-panel);
+  border-top: 1px solid var(--ca-line);
+}
+
+.details-edit .btn {
+  margin-right: 4px;
+}
+
+.details-edit .btn-primary:not(.edit),
+.edit-buttons .btn-primary {
+  background: var(--ca-tx-1);
+  border-color: var(--ca-tx-1);
+  color: var(--ca-arc-ink);
+}
+
+.details-edit .btn-danger:not(:disabled) {
+  color: var(--ca-danger);
+  border-color: rgba(201, 106, 96, 0.35);
+  background: transparent;
+}
+
+.scene-description,
+.scene-tabs p.pre,
+p.pre {
+  color: var(--ca-tx-2);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  max-width: 68ch;
+}
+
+/* studio / performer header marks stay legible on the panel */
+.detail-header-image img,
+.performer-head .name-icons svg,
+.name-icons svg {
+  color: var(--ca-tx-2);
+}
+
+/* ==========================================================================
+   7. player, scrubber, lightbox
+   the only place near-black is allowed: the picture is the light source
+   ========================================================================== */
+
+.video-js .vjs-control-bar {
+  background: linear-gradient(to top, rgba(8, 10, 11, 0.92), rgba(8, 10, 11, 0));
+  color: var(--ca-tx-2);
+}
+
+.video-js .vjs-play-progress,
+.video-js .vjs-volume-level,
+.video-js .vjs-load-progress div {
+  background: var(--ca-arc);
+}
+
+.video-js .vjs-slider {
+  background: rgba(230, 228, 222, 0.18);
+}
+
+.video-js .vjs-menu-button-popup .vjs-menu .vjs-menu-content {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  border-radius: var(--ca-r-ctl);
+}
+
+.vjs-menu li.vjs-selected,
+.vjs-menu li.vjs-selected:focus,
+.vjs-menu li.vjs-selected:hover {
+  background: var(--ca-arc-12);
+  color: var(--ca-tx-1);
+}
+
+.video-js .vjs-big-play-button {
+  background: rgba(12, 14, 15, 0.28);
+  border: 1px solid rgba(230, 228, 222, 0.55);
+  border-radius: 50%;
+  box-shadow: none;
+  color: var(--ca-tx-1);
+}
+
+.video-js:hover .vjs-big-play-button,
+.video-js .vjs-big-play-button:focus {
+  background: rgba(12, 14, 15, 0.45);
+  border-color: var(--ca-tx-1);
+}
+
+.scene-player-container,
+.video-js {
+  background: #000;
+}
+
+.scrubber-wrapper {
+  background: var(--ca-sunken);
+  border-top: 1px solid var(--ca-line);
+}
+
+.scrubber-viewport .scrubber-content .scrubber-item {
+  border: 1px solid var(--ca-line);
+}
+
+#scrubber-position-indicator,
+.scrubber-position-indicator {
+  background: var(--ca-arc);
+}
+
+#scrubber-current-position,
+.scrubber-current-position {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  color: var(--ca-tx-1);
+  font-family: var(--ca-mono);
+  font-size: 0.6875rem;
+}
+
+/* lightbox */
+.Lightbox {
+  background: #08090a;
+}
+
+.Lightbox-header,
+.Lightbox-footer {
+  background: rgba(8, 9, 10, 0.86);
+  border-color: var(--ca-line);
+  color: var(--ca-tx-2);
+}
+
+.Lightbox-header-indicator,
+.Lightbox-header-indicator b {
+  color: var(--ca-tx-1);
+  font-family: var(--ca-mono);
+}
+
+.Lightbox .btn-link,
+.Lightbox-footer .btn.minimal {
+  color: var(--ca-tx-2);
+}
+
+.Lightbox .btn-link:hover,
+.Lightbox-footer .btn.minimal:hover {
+  color: var(--ca-tx-1);
+}
+
+.Lightbox-navbutton {
+  background: rgba(12, 14, 15, 0.55);
+  border: 1px solid var(--ca-line-2);
+  color: var(--ca-tx-2);
+}
+
+.Lightbox-navbutton:hover {
+  background: rgba(12, 14, 15, 0.8);
+  color: var(--ca-tx-1);
+}
+
+/* ==========================================================================
+   8. overlays
+   ========================================================================== */
+
+.modal-content {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  border-radius: var(--ca-r-card);
+  box-shadow: var(--ca-shadow);
+  color: var(--ca-tx-1);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: var(--ca-line);
+  background: transparent;
+}
+
+.modal-body {
+  color: var(--ca-tx-2);
+}
+
+.modal-backdrop.show {
+  background: #060708;
+  opacity: 0.72;
+}
+
+.modal .close,
+.modal-header .close {
+  color: var(--ca-tx-2);
+  text-shadow: none;
+}
+
+.modal .close:hover {
+  color: var(--ca-tx-1);
+}
+
+.dropdown-menu,
+.react-select__menu {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  border-radius: var(--ca-r-ctl);
+  box-shadow: var(--ca-shadow);
+  color: var(--ca-tx-1);
+}
+
+.dropdown-item,
+.react-select__option {
+  color: var(--ca-tx-2);
+  border-radius: 3px;
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus,
+.react-select__option--is-focused {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+.dropdown-item.active,
+.dropdown-item:active,
+.react-select__option--is-selected {
+  background: var(--ca-arc-12);
+  color: var(--ca-tx-1);
+}
+
+.dropdown-divider {
+  border-color: var(--ca-line);
+}
+
+.dropdown-menu.bg-secondary,
+.dropdown-item.bg-secondary {
+  background: var(--ca-raised) !important;
+}
+
+.popover {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  border-radius: var(--ca-r-ctl);
+  box-shadow: var(--ca-shadow);
+  color: var(--ca-tx-1);
+  max-width: inherit;
+}
+
+.popover-header {
+  background: var(--ca-card);
+  border-bottom: 1px solid var(--ca-line);
+  color: var(--ca-tx-1);
+}
+
+.popover-body {
+  color: var(--ca-tx-2);
+}
+
+.popover .arrow::after,
+.popover .arrow::before {
+  border-color: transparent;
+}
+
+.tooltip-inner {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  color: var(--ca-tx-1);
+  font-size: 0.75rem;
+}
+
+.toast {
+  background: var(--ca-raised);
+  border: 1px solid var(--ca-line-2);
+  border-radius: var(--ca-r-ctl);
+  box-shadow: var(--ca-shadow);
+  color: var(--ca-tx-1);
+}
+
+.toast-header {
+  background: var(--ca-card);
+  border-bottom: 1px solid var(--ca-line);
+  color: var(--ca-tx-2);
+}
+
+.alert {
+  border-radius: var(--ca-r-ctl);
+  border-width: 1px;
+}
+
+.alert-danger {
+  background: rgba(201, 106, 96, 0.1);
+  border-color: rgba(201, 106, 96, 0.35);
+  color: var(--ca-tx-1);
+}
+
+.alert-warning {
+  background: rgba(198, 162, 94, 0.1);
+  border-color: rgba(198, 162, 94, 0.35);
+  color: var(--ca-tx-1);
+}
+
+.alert-success {
+  background: rgba(127, 159, 121, 0.1);
+  border-color: rgba(127, 159, 121, 0.35);
+  color: var(--ca-tx-1);
+}
+
+.alert-info,
+.alert-primary,
+.alert-secondary,
+.alert-dark,
+.alert-light {
+  background: var(--ca-card);
+  border-color: var(--ca-line-2);
+  color: var(--ca-tx-2);
+}
+
+.badge-secondary,
+.badge-dark {
+  background: var(--ca-card);
+  color: var(--ca-tx-2);
+  border: 1px solid var(--ca-line);
+}
+
+.badge-primary {
+  background: var(--ca-arc-12);
+  color: var(--ca-arc);
+  border: 1px solid var(--ca-arc-40);
+}
+
+/* ==========================================================================
+   9. forms
+   ========================================================================== */
+
+.form-control,
+.text-input,
+textarea.form-control,
+.input-control,
+div.react-select__control,
+.react-datepicker__input-container input {
+  background: var(--ca-sunken);
+  border: 1px solid var(--ca-line);
+  border-radius: var(--ca-r-ctl);
+  color: var(--ca-tx-1);
+  font-family: var(--ca-font);
+  font-size: 0.8125rem;
+}
+
+.form-control::placeholder,
+.text-input::placeholder {
+  color: var(--ca-tx-3);
+  opacity: 1;
+}
+
+.form-control:focus,
+.text-input:focus,
+textarea.form-control:focus,
+div.react-select__control--is-focused {
+  background: var(--ca-sunken);
+  border-color: var(--ca-arc-40);
+  box-shadow: 0 0 0 3px var(--ca-arc-12);
+  color: var(--ca-tx-1);
+  outline: none;
+}
+
+.form-control:disabled,
+.form-control[readonly],
+.text-input:disabled {
+  background: #101314;
+  color: var(--ca-tx-3);
+  opacity: 1;
+}
+
+.text-input.form-control-plaintext {
+  background: transparent;
+  border-color: transparent;
+}
+
+.custom-select,
+select.form-control,
+select.form-select {
+  background-color: var(--ca-sunken);
+  border-color: var(--ca-line);
+  color: var(--ca-tx-1);
+}
+
+.input-group-text {
+  background: var(--ca-card);
+  border-color: var(--ca-line);
+  color: var(--ca-tx-3);
+}
+
+.react-select__single-value,
+.react-select__input-container,
+.react-select__input,
+.react-select__placeholder {
+  color: var(--ca-tx-1);
+}
+
+.react-select__placeholder { color: var(--ca-tx-3); }
+
+.react-select__multi-value {
+  background: var(--ca-arc-12);
+  border: 1px solid var(--ca-arc-40);
+  border-radius: var(--ca-r-chip);
+}
+
+.react-select__multi-value__label {
+  color: var(--ca-tx-1);
+  font-size: 0.75rem;
+}
+
+.react-select__multi-value__remove:hover {
+  background: rgba(201, 106, 96, 0.2);
+  color: var(--ca-danger);
+}
+
+.react-select__indicator-separator {
+  background: var(--ca-line);
+}
+
+.react-select__indicator {
+  color: var(--ca-tx-3);
+}
+
+/* native controls */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--ca-arc);
+}
+
+.custom-control-label::before {
+  background: var(--ca-sunken);
+  border-color: var(--ca-line-2);
+}
+
+.custom-control-input:checked ~ .custom-control-label::before {
+  background: var(--ca-arc);
+  border-color: var(--ca-arc);
+}
+
+.custom-switch .custom-control-label::after {
+  background: var(--ca-tx-3);
+}
+
+.custom-switch .custom-control-input:checked ~ .custom-control-label::after {
+  background: var(--ca-arc-ink);
+}
+
+/* tag chips */
+.tag-item {
+  background: var(--ca-sunken);
+  border: 1px solid var(--ca-line);
+  border-radius: var(--ca-r-chip);
+  color: var(--ca-tx-2);
+  font-size: 0.75rem;
+}
+
+.tag-item:hover {
+  border-color: var(--ca-line-2);
+  color: var(--ca-tx-1);
+  background: var(--ca-card);
+}
+
+.tag-item a,
+.tag-item .btn,
+.tag-item .tag-icon {
+  color: inherit;
+}
+
+.tag-item.unsupported {
+  border-style: dashed;
+  color: var(--ca-tx-3);
+}
+
+.filter-tags .tag-item {
+  background: var(--ca-arc-12);
+  border-color: var(--ca-arc-40);
+  color: var(--ca-tx-1);
+}
+
+.progress {
+  background: var(--ca-sunken);
+  border-radius: 2px;
+  height: 4px;
+}
+
+.progress-bar {
+  background: var(--ca-arc);
+}
+
+/* ==========================================================================
+   10. settings, tasks, tables of settings
+   ========================================================================== */
+
+#settings-container .setting-section .card,
+.setting-section .card,
+.settings-section .card {
+  background: var(--ca-card);
+  border: 1px solid var(--ca-line);
+  border-radius: var(--ca-r-card);
+}
+
+#settings-menu-container .nav-link {
+  color: var(--ca-tx-2);
+  border-radius: var(--ca-r-ctl);
+}
+
+#settings-menu-container .nav-link:hover {
+  background: var(--ca-card);
+  color: var(--ca-tx-1);
+}
+
+#settings-menu-container .nav-link.active {
+  background: var(--ca-arc-12);
+  color: var(--ca-tx-1);
+}
+
+.settings-section h1,
+.settings-section h2,
+.setting-section h1,
+.setting-section h2 {
+  color: var(--ca-tx-1);
+}
+
+.setting .sub-heading {
+  color: var(--ca-tx-2);
+  font-weight: 500;
+}
+
+.setting .text-muted {
+  color: var(--ca-tx-3) !important;
+}
+
+/* task / log output */
+.log-viewer,
+.task-log,
+pre.log {
+  background: var(--ca-sunken);
+  color: var(--ca-tx-2);
+}
+
+/* ==========================================================================
+   11. scrollbars
+   `scrollbar-gutter: stable` prevents the grid reflowing when filters change
+   ========================================================================== */
+
+html {
+  scrollbar-gutter: stable;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ca-line-2) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ca-line-2);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4f53;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ==========================================================================
+   12. focus, motion
+   ========================================================================== */
+
+.btn:focus-visible,
+a:focus-visible,
+button:focus-visible,
+.nav-link:focus-visible,
+.dropdown-item:focus-visible,
+.card:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--ca-arc);
+  outline-offset: 2px;
+}
+
+.grid-card:has(a:focus-visible) {
+  box-shadow: inset 0 0 0 1px var(--ca-arc-40);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-card.card,
+  .btn,
+  .nav-link,
+  .card-popovers .btn {
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   13. options
+   ========================================================================== */
+
+html[data-ca-density="compact"] {
+  --ca-card-margin: 3px;
+  --ca-card-pad: 8px 10px 9px;
+}
+
+html[data-ca-density="compact"] .grid-card .card-section-title,
+html[data-ca-density="compact"] .grid-card h5 {
+  font-size: 0.75rem;
+}
+
+html[data-ca-density="compact"] .grid-card .card-section p,
+html[data-ca-density="compact"] .grid-card small {
+  font-size: 0.625rem;
+}
+
+html[data-ca-dim="on"] {
+  --ca-dim: 0.9;
+}
