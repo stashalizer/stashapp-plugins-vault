@@ -33,7 +33,7 @@
   var LEGACY_STORAGE_KEY = "carbonArc.config.v1";
   var OFF_KEY = "carbonArc.off";
   var URL_PARAM = "carbonarc";
-  var VERSION = "0.4.1";
+  var VERSION = "0.4.2";
 
   var DEFAULTS = {
     accent: "arc",
@@ -521,15 +521,16 @@
       "body.login .login-error { color: #c96a60; }",
       "",
       "body.login .btn-primary {",
-      "  background-color: " + BONE + ";",
-      "  border-color: " + BONE + ";",
-      "  color: " + signal.ink + ";",
+      "  background-color: rgba(" + signal.rgbText + ", 0.12);",
+      "  border-color: rgba(" + signal.rgbText + ", 0.4);",
+      "  color: " + signal.hex + ";",
       "}",
       "",
       "body.login .btn-primary:hover,",
       "body.login .btn-primary:focus {",
-      "  background-color: #d9d6ce;",
-      "  border-color: #d9d6ce;",
+      "  background-color: rgba(" + signal.rgbText + ", 0.24);",
+      "  border-color: " + signal.hex + ";",
+      "  color: " + BONE + ";",
       "}",
       "",
       "body.login .btn-primary:focus-visible {",

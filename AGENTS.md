@@ -819,6 +819,19 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `!important` is used only against Bootstrap utilities
   (`.bg-dark`, `.text-muted`) and inline styles. The full selector inventory is
   `docs/carbon-arc-theme.html` §08.
+- **Primary buttons are a signal tint, never a bone block.** `.btn-primary` is
+  `--ca-arc-12` fill + `--ca-arc-40` rim + `--ca-arc` label (5.6:1), hover is
+  `--ca-arc-24` with the label lifted to bone (8.6:1); disabled drops the fill
+  and keeps only a `--ca-line` outline. The bone fill this replaced (0.4.1 and
+  earlier) was the loudest object on every settings card, because Stash gives
+  `Add directory`, `Edit` and `Troubleshooting mode` the default variant —
+  a settings page is a wall of primaries, not one CTA. Keep the fill under
+  ~25 %: the label has to stay ≥4.5:1 on it, which is why hover switches the
+  label to bone instead of keeping the signal. `loginCss()` paints the same
+  shape from the raw signal triple (the page has no tokens), and the
+  `.details-edit` override that used to re-fill bone is gone — the base rule
+  covers the edit bar. Scope it to `.btn-primary`, not `.btn`: `.btn-secondary`
+  is the flat `--ca-card` step and the two must stay distinguishable.
 - **Check a selector against the shipped CSS before writing a rule.** v0.32.0
   still uses Bootstrap 4 custom controls (`.custom-control`, `.custom-switch`) —
   there is no `.form-switch` or `.form-check-input:checked` in

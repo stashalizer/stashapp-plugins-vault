@@ -460,8 +460,8 @@ h3.sub {
   transition: background .12s ease, border-color .12s ease;
 }
 .btn:hover { background: var(--card); border-color: var(--tx-3); }
-.btn--primary { background: var(--tx-1); border-color: var(--tx-1); color: #17140F; }
-.btn--primary:hover { background: #D9D6CE; border-color: #D9D6CE; }
+.btn--primary { background: var(--arc-a12); border-color: var(--arc-a40); color: var(--arc); }
+.btn--primary:hover { background: var(--arc-a24); border-color: var(--arc); color: var(--tx-1); }
 .btn--quiet { border-color: transparent; color: var(--tx-2); }
 .btn--quiet:hover { background: var(--card); color: var(--tx-1); }
 .btn--danger { border-color: transparent; color: var(--danger); }
@@ -1422,7 +1422,7 @@ footer { padding: 40px 0 0; color: var(--tx-3); font-size: .75rem; font-family: 
   <section>
     <div class="shead">
       <div class="kicker">07 / components</div>
-      <h2>Controls: light fill for the primary act, hairlines for everything else.</h2>
+      <h2>Controls: signal fill for the primary act, hairlines for everything else.</h2>
     </div>
 
     <div class="comp-grid">
@@ -1437,7 +1437,7 @@ footer { padding: 40px 0 0; color: var(--tx-3); font-size: .75rem; font-family: 
           <button class="btn btn--danger">Delete</button>
           <button class="btn" disabled style="opacity:.42;cursor:not-allowed">Disabled</button>
         </div>
-        <p class="s-micro" style="margin:14px 0 0">Primary is bone-filled, not coloured: the highest-contrast object on the page is always the thing to do next.</p>
+        <p class="s-micro" style="margin:14px 0 0">Primary wears the signal as a 12 % fill inside a 40 % rim, not a bone block: Stash gives every settings action the default variant, and a bone fill made each of them the brightest rectangle on a graphite card. The warm tint still outranks Cancel without the glare.</p>
       </div>
 
       <div class="panel">
@@ -1659,7 +1659,7 @@ footer { padding: 40px 0 0; color: var(--tx-3); font-size: .75rem; font-family: 
           <li><b>One signal, four jobs.</b> Active underline, focus ring, stars, playhead.</li>
           <li><b>Mono for all numbers.</b> Card rows align on data; file paths and durations stop jittering.</li>
           <li><b>Bone instead of white.</b> #E6E4DE at 13:1 — legible without the halo that #FFF gets on dark.</li>
-          <li><b>Bone-filled primary buttons.</b> The clearest possible “next action”, with zero colour saturation.</li>
+          <li><b>Signal-filled primary buttons.</b> 12 % of the signal under 40 % of its rim: the next action still ranks above Cancel, but no bone rectangle out-glows the artwork.</li>
         </ul>
       </div>
       <div>

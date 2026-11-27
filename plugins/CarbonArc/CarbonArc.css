@@ -283,31 +283,43 @@ nav.bg-dark,
   color: var(--ca-tx-1);
 }
 
+/* Primary is a soft signal fill, not a bone block. Stash gives every settings
+   action (Add directory, Edit, Troubleshooting mode) the default variant, so a
+   bone fill turned each of them into a 13:1 bright rectangle on a graphite
+   card — the loudest thing on the page, and the opposite of this theme's rule
+   that elevation is luminance. A 12 % signal fill with a 40 % rim keeps the
+   action legible and its rank above .btn-secondary, without the glare:
+   arc text on the tint is 5.5:1, and hover lifts the label to bone (7.9:1)
+   because signal-on-24 % would fall to 4.2:1. */
 .btn-primary {
-  background: var(--ca-tx-1);
-  border-color: var(--ca-tx-1);
-  color: var(--ca-arc-ink);
-  --bs-btn-bg: var(--ca-tx-1);
-  --bs-btn-border-color: var(--ca-tx-1);
-  --bs-btn-color: var(--ca-arc-ink);
-  --bs-btn-hover-bg: #d9d6ce;
-  --bs-btn-hover-border-color: #d9d6ce;
-  --bs-btn-active-bg: #cfccc4;
-  --bs-btn-active-border-color: #cfccc4;
+  background: var(--ca-arc-12);
+  border-color: var(--ca-arc-40);
+  color: var(--ca-arc);
+  --bs-btn-bg: var(--ca-arc-12);
+  --bs-btn-border-color: var(--ca-arc-40);
+  --bs-btn-color: var(--ca-arc);
+  --bs-btn-hover-bg: var(--ca-arc-24);
+  --bs-btn-hover-border-color: var(--ca-arc);
+  --bs-btn-hover-color: var(--ca-tx-1);
+  --bs-btn-active-bg: var(--ca-arc-24);
+  --bs-btn-active-border-color: var(--ca-arc);
+  --bs-btn-active-color: var(--ca-tx-1);
 }
 
 .btn-primary:hover,
 .btn-primary:focus,
 .btn-primary:not(:disabled):not(.disabled).active,
 .btn-primary:not(:disabled):not(.disabled):active {
-  background: #d9d6ce;
-  border-color: #d9d6ce;
-  color: var(--ca-arc-ink);
+  background: var(--ca-arc-24);
+  border-color: var(--ca-arc);
+  color: var(--ca-tx-1);
 }
 
+/* Inert reads as an outline: a grey fill would be brighter than the resting
+   tint and make a dead control the most prominent thing in the row. */
 .btn-primary:disabled,
 .btn-primary.disabled {
-  background: var(--ca-line);
+  background: transparent;
   border-color: var(--ca-line);
   color: var(--ca-tx-3);
 }
@@ -695,13 +707,6 @@ button.minimal {
 
 .details-edit .btn {
   margin-right: 4px;
-}
-
-.details-edit .btn-primary:not(.edit),
-.edit-buttons .btn-primary {
-  background: var(--ca-tx-1);
-  border-color: var(--ca-tx-1);
-  color: var(--ca-arc-ink);
 }
 
 .details-edit .btn-danger:not(:disabled) {
