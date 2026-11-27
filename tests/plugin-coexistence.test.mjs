@@ -1,20 +1,22 @@
 /**
  * Coexistence test: ExternalLinkGroups alongside the Carbon Arc theme.
  *
- *   node --test tests/
+ *   node --test "tests/**\/*.test.mjs"
  *
- * (Do not write the recursive test glob in this header: the star-slash inside
- * it closes the block comment. See the note in AGENTS.md.)
+ * (Do not write the recursive test glob unescaped in this header: the
+ * star-slash inside it closes the block comment. See the note in AGENTS.md.)
  *
  * Both plugins are installed from this repository at the same time, so they run
  * in one Stash UI. This suite loads the real files of both, in the order Stash
  * loads plugins (plugin id, so CarbonArc first), into one sandbox and asserts
  * the parts that can actually collide:
  *
- *   1. `patch.before("PluginRoutes")` chain — both routes survive the chain and
- *      the original children are neither dropped nor duplicated.
- *   2. `patch.before("SettingsToolsSection")` chain — both launcher cards are
- *      added on the same (even) call and neither one lands on the odd call.
+ *   1. `patch.before("PluginRoutes")` and `patch.before("SettingsToolsSection")`
+ *      — the route and launcher card ExternalLinkGroups adds survive intact,
+ *      because the theme registers neither and cannot consume the chain.
+ *   2. `patch.instead("StringSetting")` — this is the theme's one patch, and it
+ *      sees *every* string setting in Stash. A setting it does not own has to
+ *      come back through the original renderer with its arguments untouched.
  *   3. Configuration and storage keys are disjoint, so neither plugin can read
  *      or overwrite the other's saved settings.
  *   4. Stylesheet scoping — the plugin's CSS touches only its own `.elg-`
@@ -23,7 +25,8 @@
  *
  * `patch.before` semantics are reproduced from `ui/v2.5/src/patch.tsx`: each
  * registered function receives the current argument list and returns the next
- * one.
+ * one. `patch.instead` appends the next renderer to that list, so the last
+ * argument is a function the wrapper calls to draw the original.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -76,6 +79,16 @@ function loadBoth() {
     return args;
   }
 
+  /**
+   * Run an instead-chain for one render. `next` is the renderer Stash would
+   * have used; the chain passes it as the last argument.
+   */
+  function applyInstead(name, props, next) {
+    const fns = instead[name] || [];
+    assert.ok(fns.length > 0, name + " has no instead patch");
+    return fns[0].apply(null, [props, undefined, next]);
+  }
+
   const Route = function Route() {
     return null;
   };
@@ -96,7 +109,7 @@ function loadBoth() {
 
   const documentElement = {
     attributes: {},
-    classList: { add() {} },
+    classList: { add() {}, contains: () => false },
     setAttribute(name, value) {
       this.attributes[name] = value;
     },
@@ -140,57 +153,125 @@ function loadBoth() {
     vm.runInContext(read(...file), sandbox, { filename: file.join("/") });
   }
 
-  return { window, applyBefore, before, instead, sandbox };
+  return { window, applyBefore, applyInstead, before, instead, sandbox };
 }
 
-/** Depth-first walk over a stub element tree. */
-function walk(node, visit) {
+/**
+ * Depth-first walk over a stub element tree. Function components are rendered
+ * once (the stub hooks return their initial values), so a nested block like the
+ * login-page panel is inspected too.
+ */
+function walk(node, visit, depth = 0) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
-    node.forEach((child) => walk(child, visit));
+    node.forEach((child) => walk(child, visit, depth));
+    return;
+  }
+  if (typeof node.type === "function" && node.props && depth < 8) {
+    // Visit the element itself (a <Route> carries its path as a prop) and then
+    // whatever it renders, so a nested block such as the login-page panel is
+    // inspected too.
+    visit(node);
+    walk(node.type(node.props), visit, depth + 1);
     return;
   }
   visit(node);
-  walk(node.props && node.props.children, visit);
+  walk(node.props && node.props.children, visit, depth);
 }
 
-test("both plugins register their patches without clobbering each other", () => {
+test("each plugin registers only the patches it owns", () => {
   const { before, instead } = loadBoth();
 
-  assert.equal((before.PluginRoutes || []).length, 2, "one route patch per plugin");
-  assert.equal((before.SettingsToolsSection || []).length, 2, "one launcher patch per plugin");
-  assert.deepEqual(Object.keys(instead), ["ExternalLinkButtons"], "only the link buttons are replaced");
+  assert.equal((before.PluginRoutes || []).length, 1, "the route belongs to ExternalLinkGroups alone");
+  assert.equal((before.SettingsToolsSection || []).length, 1, "and so does the Settings > Tools card");
+  assert.deepEqual(Object.keys(instead).sort(), ["ExternalLinkButtons", "StringSetting"]);
+  assert.equal((instead.StringSetting || []).length, 1, "the theme patches exactly one Stash component");
 });
 
-test("the PluginRoutes chain keeps both routes and the original children", () => {
-  const { window, applyBefore } = loadBoth();
-  const React = window.PluginApi.React;
-  const original = React.createElement("div", { "data-original": "1" });
+test("the theme never touches the routes or the tools section", () => {
+  const { applyBefore } = loadBoth();
+  const original = { type: "div", props: { "data-original": "1" } };
 
-  const args = applyBefore("PluginRoutes", { children: original });
+  const routes = applyBefore("PluginRoutes", { children: original });
   const paths = [];
   let originalCount = 0;
-
-  walk(args[0].children, (node) => {
+  walk(routes[0].children, (node) => {
     if (node.props && node.props.path) paths.push(node.props.path);
     if (node.props && node.props["data-original"]) originalCount += 1;
   });
 
-  assert.deepEqual(paths.sort(), ["/plugins/carbonarc", "/plugins/externalurlgroups"]);
+  assert.deepEqual(paths, ["/plugins/externalurlgroups"], "the plugin's own route, and nothing else");
   assert.equal(originalCount, 1, "the app's own routes are wrapped once, not duplicated");
-});
-
-test("both launcher cards land on the same SettingsToolsSection call", () => {
-  const { applyBefore } = loadBoth();
 
   const first = applyBefore("SettingsToolsSection", { children: [] });
-  assert.deepEqual(first[0].children, [], "the odd call is passed through untouched");
+  assert.deepEqual(first[0].children, [], "the odd call is still passed through untouched");
 
   const second = applyBefore("SettingsToolsSection", { children: [] });
   const cards = (second[0].children || []).map((card) => card.props && card.props.to);
+  assert.deepEqual(cards, ["/plugins/externalurlgroups"], "one card, no duplicate");
+});
 
-  assert.deepEqual(cards.sort(), ["/plugins/carbonarc", "/plugins/externalurlgroups"]);
-  assert.equal(cards.length, 2, "exactly one card each, no duplicate");
+test("a setting the theme does not own comes back through the original renderer", () => {
+  const { applyInstead } = loadBoth();
+
+  const props = { id: "plugin-SomeOtherPlugin-apiKey", heading: "API key", value: "abc", onChange() {} };
+  let calls = 0;
+  const next = (received) => {
+    calls += 1;
+    return { type: "Original", props: received };
+  };
+
+  const node = applyInstead("StringSetting", props, next);
+
+  assert.equal(calls, 1, "the original renderer is called once");
+  assert.equal(node.type, "Original");
+  assert.equal(node.props, props, "with the arguments it was given, not a copy");
+});
+
+test("the theme draws tiles for its own three settings", () => {
+  const { applyInstead } = loadBoth();
+
+  const cases = [
+    ["plugin-CarbonArc-accent", 4, "ca-login"],
+    ["plugin-CarbonArc-density", 2, null],
+    ["plugin-CarbonArc-dimpreviews", 2, null],
+  ];
+
+  for (const [id, tiles, extra] of cases) {
+    const props = { id, heading: "Heading", subHeading: "Sub", value: "", onChange() {} };
+    let fallback = 0;
+    const next = (received) => {
+      fallback += 1;
+      return { type: "Original", props: received };
+    };
+
+    const node = applyInstead("StringSetting", props, next);
+    assert.equal(fallback, 0, id + " must not fall through to Stash's row");
+
+    // The patch returns an element whose type is the tile component; render it
+    // the way React would, with the stub hooks.
+    const tree = node.type(node.props);
+    const buttons = [];
+    const classNames = [];
+    walk(tree, (child) => {
+      if (child.props && typeof child.props.className === "string") classNames.push(child.props.className);
+      if (child.props && child.props["aria-pressed"] !== undefined && child.type === "button") buttons.push(child);
+    });
+
+    assert.ok(
+      classNames.some((name) => name.includes("ca-tiles")),
+      id + " renders the tile group"
+    );
+    assert.equal(buttons.length, tiles, id + " renders one button per choice");
+    assert.equal(tree.props.id, props.id, "the setting keeps its id, so Stash can still scroll to it");
+
+    if (extra) {
+      assert.ok(
+        classNames.some((name) => name.includes(extra)),
+        id + " carries the login-page block"
+      );
+    }
+  }
 });
 
 test("configuration and storage keys are disjoint", () => {
@@ -205,34 +286,6 @@ test("configuration and storage keys are disjoint", () => {
   assert.notEqual(ca.STORAGE_KEY, shared.CONFIG_STORAGE_KEY);
   assert.equal(shared.CONFIG_KEY, "ExternalLinkGroups");
   assert.equal(ca.CONFIG_KEY, "CarbonArc");
-});
-
-test("the login CSS block follows the selected accent", () => {
-  const { window } = loadBoth();
-  const ca = window.CarbonArcStore;
-
-  assert.equal(ca.LOGIN_CSS, ca.loginCss("arc"), "the exported default is the arc block");
-
-  for (const [accent, hex] of [
-    ["arc", "#c2a176"],
-    ["patina", "#8aa79a"],
-    ["dusk", "#a79cb8"],
-  ]) {
-    const css = ca.loginCss(accent);
-    assert.ok(css.includes(hex), accent + " block carries its signal colour");
-    assert.ok(/\.btn-primary \{[^}]*color: #[0-9a-f]{6}/.test(css), accent + " block sets a primary ink");
-    assert.ok(!/--ca-/.test(css), accent + " block inlines values: a login page has no theme tokens");
-  }
-
-  assert.equal(ca.loginCss("nope"), ca.loginCss("arc"), "an unknown accent falls back to arc");
-});
-
-test("the store version matches the manifest", () => {
-  const { window } = loadBoth();
-  const match = read("CarbonArc", "CarbonArc.yml").match(/^version:\s*(\S+)/m);
-
-  assert.ok(match, "the manifest declares a version");
-  assert.equal(window.CarbonArcStore.VERSION, match[1], "data-ca-version tracks the published version");
 });
 
 test("loading both leaves each plugin's globals intact", () => {
@@ -285,31 +338,17 @@ test("the plugin stylesheet stays inside its own selector prefix", () => {
 });
 
 test("the theme never targets the plugin's classes", () => {
-  const theme = read("CarbonArc", "CarbonArc.css");
+  const theme = read("CarbonArc", "CarbonArc.css") + read("CarbonArc", "CarbonArcTokens.css");
   assert.ok(!/\.elg-/.test(theme), "Carbon Arc has no rule for the plugin's classes");
   assert.ok(!/external-links-button/.test(theme), "Carbon Arc leaves Stash's link buttons alone");
 });
 
-test("the bundled fonts are embedded, not linked", () => {
-  const strip = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
-  const fonts = strip(read("CarbonArc", "CarbonArcFonts.css"));
-  const theme = strip(read("CarbonArc", "CarbonArc.css"));
-  const yml = read("CarbonArc", "CarbonArc.yml");
-
-  assert.equal(
-    (fonts.match(/@font-face/g) || []).length,
-    3,
-    "one face per source file: sans variable, mono 400, mono 500"
-  );
-  assert.ok(!/url\(\s*["']?fonts\//.test(fonts), "a url() into fonts/ 404s: Stash serves only /plugin/<id>/css");
-  assert.ok(!/url\(\s*["']?fonts\//.test(theme), "the theme must not link font files either");
-  assert.ok(!/@font-face/.test(theme), "the faces live in CarbonArcFonts.css");
-
-  const cssList = yml.match(/css:\r?\n((?:[ \t]*- [^\r\n]*\r?\n)+)/);
-  assert.ok(cssList, "the manifest lists its stylesheets");
-  assert.equal(
-    cssList[1].trim().split(/\r?\n/)[0].trim(),
-    "- CarbonArcFonts.css",
-    "the faces load before the rules that name them"
-  );
+test("the theme's own settings row is not a Stash component the plugin relies on", () => {
+  // The tiles replace StringSetting for three ids only. If a future release of
+  // Stash renames the component, the patch silently stops matching, so the
+  // name is asserted here rather than discovered in a screenshot.
+  const settings = read("CarbonArc", "CarbonArcSettings.js");
+  assert.match(settings, /patch\.instead\("StringSetting"/);
+  assert.ok(!/patch\.before\("SettingsToolsSection"/.test(settings), "no Settings > Tools card any more");
+  assert.ok(!/PluginRoutes/.test(settings), "no route any more");
 });

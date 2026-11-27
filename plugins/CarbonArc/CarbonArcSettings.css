@@ -1,87 +1,41 @@
 /*
- * Carbon Arc — settings page styles.
- * Everything here reads the theme tokens from CarbonArc.css, so the page
- * follows the accent immediately when the user switches it.
+ * Carbon Arc — the option tiles and the login-page block.
+ *
+ * Both are drawn inside Stash's own plugin settings page (Settings > Plugins
+ * > Carbon Arc): CarbonArcSettings.js replaces the three string rows with
+ * tiles and hands every other row back to Stash. Everything here reads the
+ * theme tokens from CarbonArcTokens.css, so a signal change repaints the
+ * tiles at the same time as the page.
+ *
+ * Every class is prefixed `ca-` and no rule here is a token definition: this
+ * sheet loads in the app for anyone with the theme enabled.
  *
  * License: AGPL-3.0
  */
 
-.ca-set {
-  max-width: 780px;
-  padding-bottom: 64px;
-  color: var(--ca-tx-1, #e6e4de);
+/* Stash lays a setting out as two columns and right-aligns the second one.
+   The tiles need the row to themselves. */
+.setting-section .setting > .ca-field {
+  width: 100%;
+  text-align: left;
 }
 
-.ca-set__head { margin-bottom: 34px; }
-
-.ca-set__kicker {
-  margin: 0 0 10px;
-  font-family: var(--ca-mono, monospace);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--ca-tx-3, #8c8f90);
-}
-
-.ca-set__title {
-  margin: 0 0 12px;
-  font-size: 32px;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  font-weight: 600;
-  color: var(--ca-tx-1, #e6e4de);
-}
-
-.ca-set__lede {
-  margin: 0;
-  max-width: 62ch;
-  font-size: 15px;
-  line-height: 1.65;
-  color: var(--ca-tx-2, #a9aba8);
-}
-
-.ca-set__group {
-  padding: 22px 0;
-  border-top: 1px solid var(--ca-line, #2a2e31);
-}
-
-.ca-set__group--last { border-bottom: 1px solid var(--ca-line, #2a2e31); }
-
-.ca-set__group-title {
-  margin: 0 0 6px;
-  font-family: var(--ca-mono, monospace);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  color: var(--ca-tx-3, #8c8f90);
-}
-
-.ca-set__group-note {
-  margin: 0 0 16px;
-  max-width: 68ch;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--ca-tx-3, #8c8f90);
-}
-
-.ca-set__group-note strong { color: var(--ca-tx-2, #a9aba8); font-weight: 500; }
-
-/* auto-fit instead of a breakpoint: the design has no breakpoints, and an
-   option card too narrow to hold its note should drop to the next row whatever
-   the window is doing. */
-.ca-set__options {
+.ca-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 10px;
+  /* auto-fit, not a breakpoint: the design has none, and a tile too narrow
+     for its note drops to the next row whatever the window is doing. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 10px 0 0;
+  max-width: 720px;
 }
 
-.ca-set__options--row { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
-
-.ca-set__option {
+.ca-tile {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  padding: 14px;
+  gap: 5px;
+  padding: 10px 12px;
   text-align: left;
   background: var(--ca-card, #1b1e20);
   border: 1px solid var(--ca-line, #2a2e31);
@@ -92,138 +46,93 @@
   transition: border-color 120ms ease-out, background-color 120ms ease-out;
 }
 
-.ca-set__option:hover:not(:disabled) {
-  border-color: var(--ca-line-2, #3a3f43);
-  background: #212427;
+@media (hover: hover) and (pointer: fine) {
+  .ca-tile:hover {
+    border-color: var(--ca-line-2, #3a3f43);
+    background: #212427;
+  }
 }
 
-.ca-set__option:disabled { cursor: default; opacity: 0.65; }
-
-.ca-set__option--on {
+.ca-tile--on {
   border-color: var(--ca-arc-40, rgba(194, 161, 118, 0.4));
   background: var(--ca-arc-12, rgba(194, 161, 118, 0.12));
   box-shadow: inset 2px 0 0 var(--ca-arc, #c2a176);
 }
 
-.ca-set__option--on .ca-set__option-label { color: var(--ca-tx-1, #e6e4de); }
+.ca-tile--on .ca-tile__label { color: var(--ca-tx-1, #e6e4de); }
 
-.ca-set__swatch {
-  width: 18px;
-  height: 18px;
+.ca-tile:focus-visible {
+  outline: 2px solid var(--ca-arc, #c2a176);
+  outline-offset: 2px;
+}
+
+.ca-tile__swatch {
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 1px solid rgba(0, 0, 0, 0.45);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
-.ca-set__option-label {
-  font-size: 14px;
+/* "Custom" with nothing usable saved yet: an empty ring, not a colour. */
+.ca-tile__swatch--empty {
+  background: transparent;
+  border: 1px dashed var(--ca-line-2, #3a3f43);
+  box-shadow: none;
+}
+
+.ca-tile__label {
+  font-size: 13px;
   color: var(--ca-tx-1, #e6e4de);
 }
 
-.ca-set__option-note {
+.ca-tile__note {
   font-family: var(--ca-mono, monospace);
   font-size: 11px;
   line-height: 1.5;
   color: var(--ca-tx-3, #8c8f90);
 }
 
-/* live preview */
-.ca-set__preview {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  flex-wrap: wrap;
+/* --- login page block ------------------------------------------------- */
+
+.ca-login {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--ca-line, #2a2e31);
+  max-width: 720px;
 }
 
-.ca-set__preview-card {
-  width: 236px;
-  background: var(--ca-card, #1b1e20);
-  border-radius: 6px;
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px var(--ca-line, #2a2e31);
+.ca-login summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ca-tx-2, #a9aba8);
 }
 
-.ca-set__preview-thumb {
-  aspect-ratio: 16 / 9;
-  background:
-    radial-gradient(110% 85% at 28% 18%, #3a4044, transparent 62%),
-    linear-gradient(158deg, #22282b, #14181a);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
-}
-
-.ca-set__preview-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 11px 12px 12px;
-}
-
-.ca-set__preview-title {
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--ca-tx-1, #e6e4de);
-}
-
-.ca-set__preview-meta {
-  font-family: var(--ca-mono, monospace);
-  font-size: 11px;
-  color: var(--ca-tx-3, #8c8f90);
-}
-
-.ca-set__preview-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding-top: 4px;
-}
-
-.ca-set__preview-focus {
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 4px;
-  border: 1px solid var(--ca-line-2, #3a3f43);
-  font-size: 13px;
-  color: var(--ca-tx-1, #e6e4de);
+.ca-login summary:focus-visible {
   outline: 2px solid var(--ca-arc, #c2a176);
   outline-offset: 2px;
 }
 
-.ca-set__preview-stars {
-  font-size: 15px;
-  letter-spacing: 2px;
-  color: var(--ca-arc, #c2a176);
+.ca-login__note {
+  margin: 8px 0 10px;
+  max-width: 70ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ca-tx-3, #8c8f90);
 }
 
-/* notices */
-.ca-set__notice {
-  margin: 16px 0 0;
-  padding: 10px 12px;
-  border-radius: 4px;
-  border: 1px solid var(--ca-line-2, #3a3f43);
-  background: var(--ca-card, #1b1e20);
-  font-size: 13px;
+.ca-login__note strong { color: var(--ca-tx-2, #a9aba8); font-weight: 500; }
+
+.ca-login__note code {
+  font-family: var(--ca-mono, monospace);
+  font-size: 11px;
   color: var(--ca-tx-2, #a9aba8);
 }
 
-.ca-set__notice--error {
-  border-color: rgba(201, 106, 96, 0.35);
-  background: rgba(201, 106, 96, 0.08);
-  color: var(--ca-tx-1, #e6e4de);
-}
-
-.ca-set__notice--ok {
-  border-color: rgba(127, 159, 121, 0.35);
-  background: rgba(127, 159, 121, 0.08);
-}
-
-/* login css block */
-.ca-set__code {
+.ca-login__code {
   max-height: 260px;
   overflow: auto;
-  margin: 0 0 14px;
+  margin: 0 0 10px;
   padding: 12px 14px;
   background: var(--ca-sunken, #0c0e0f);
   border: 1px solid var(--ca-line, #2a2e31);
@@ -236,59 +145,9 @@
   tab-size: 2;
 }
 
-.ca-set__actions {
+.ca-login__actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.ca-set__reset { margin-left: auto; }
-
-/* Stash/Bootstrap has no .btn-quiet; keep the reset button quiet locally. */
-.ca-set .btn-quiet {
-  background: transparent;
-  border-color: transparent;
-  color: var(--ca-tx-3, #8c8f90);
-}
-
-.ca-set .btn-quiet:hover:not(:disabled),
-.ca-set .btn-quiet:focus:not(:disabled) {
-  background: var(--ca-card, #1b1e20);
-  border-color: var(--ca-line, #2a2e31);
-  color: var(--ca-tx-1, #e6e4de);
-}
-
-/* launcher card in Settings > Tools */
-.ca-set-launcher {
-  display: block;
-  padding: 14px 16px;
-  background: var(--ca-card, #1b1e20);
-  border: 1px solid var(--ca-line, #2a2e31);
-  border-radius: 6px;
-  color: var(--ca-tx-1, #e6e4de);
-  text-decoration: none;
-  transition: border-color 120ms ease-out, background-color 120ms ease-out;
-}
-
-.ca-set-launcher:hover,
-.ca-set-launcher:focus {
-  background: #212427;
-  border-color: var(--ca-line-2, #3a3f43);
-  color: var(--ca-tx-1, #e6e4de);
-  text-decoration: none;
-}
-
-.ca-set-launcher h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--ca-tx-1, #e6e4de);
-}
-
-.ca-set-launcher p {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--ca-tx-3, #8c8f90);
 }

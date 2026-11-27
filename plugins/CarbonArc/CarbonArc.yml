@@ -1,12 +1,35 @@
 name: Carbon Arc
-description: "A desktop-first dark theme for 24-inch screens: graphite surfaces, bone text, one low-chroma signal and monospaced numbers in bundled IBM Plex. Restyles the shell, filters, cards, detail pages, player, dialogs, forms, settings and scrollbars, and changes no layout maths, so every Stash feature keeps working. Pick a signal colour, card density and preview brightness under Settings > Tools > Carbon Arc."
-version: 0.2.1
+description: "A desktop-first dark theme for 24-inch screens: graphite surfaces, bone text, one low-chroma signal and monospaced numbers in bundled IBM Plex. Restyles the shell, filters, cards, detail pages, player, dialogs, forms, settings and scrollbars, and changes no layout maths, so every Stash feature keeps working. Set the signal colour, card density and preview brightness under Settings > Plugins > Carbon Arc."
+version: 0.3.0
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:
     - CarbonArcStore.js
     - CarbonArcSettings.js
   css:
+    - CarbonArcTokens.css
     - CarbonArcFonts.css
     - CarbonArc.css
     - CarbonArcSettings.css
+  # Publishes {pluginDir}/fonts at /plugin/CarbonArc/assets/fonts, which is
+  # what the url() in CarbonArcFonts.css resolves to. Without this map the
+  # route answers 404: only the /assets subtree is served from disk.
+  assets:
+    fonts: fonts
+settings:
+  accent:
+    displayName: Signal colour
+    description: "arc (default), patina, dusk or custom. Custom uses the colour in Custom signal below, and is ignored while that one is empty or under 4.5:1 contrast against the page."
+    type: STRING
+  customSignal:
+    displayName: Custom signal colour
+    description: "#rrggbb for the custom signal. It needs 4.5:1 contrast against the page ground (#101213); anything darker or lighter than that keeps Arc, because the signal is also the focus ring and the link colour."
+    type: STRING
+  density:
+    displayName: Card density
+    description: "comfortable (default) or compact. Only the card's own padding and margin change; the grid maths stays Stash's."
+    type: STRING
+  dimPreviews:
+    displayName: Preview brightness
+    description: "full (default) or dimmed, which draws thumbnails at 90% brightness so a bright still does not blow out the room."
+    type: STRING

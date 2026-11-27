@@ -86,7 +86,7 @@ plugins/<PluginId>/
   <PluginId>.js             # entry surface: player overlay (vanilla) or component patch (React)
   <PluginId>Shared.js       # optional pure model, loaded first (MosaicFilter, ExternalLinkGroups, QuestingAdventurer)
   <PluginId>Storage.js       # optional Suite Data + csLib fallback helper
-  <PluginId>Settings.js     # optional full-page settings UI (React via window.PluginApi)
+  <PluginId>Settings.js     # optional settings UI: a route/page, or a patch of Stash's own rows (CarbonArc)
   <PluginId>Store.js        # optional config helper, no player surface (CarbonArc, ExternalLinkGroups)
   <PluginId>Icons.js        # optional icon resolver + cache (ExternalLinkGroups only)
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
@@ -148,6 +148,17 @@ AGENTS.md                   # architecture + conventions (this file)
   reporting) and then asserts on the two surfaces' source that every config
   write carries `tagBindings` — a data-loss bug that no DOM stub would catch,
   because the overlay only ever *preserves* the key.
+- **Carbon Arc's suite tests the store, not the stylesheet.**
+  `carbon-arc.test.mjs` runs `CarbonArcStore.js` in a `node:vm` sandbox whose
+  `fetch` returns a promise that never resolves — that is what the first paint
+  really is — and asserts the cached options are already on `<html>`. Then it
+  covers `normalize` (including the 4.5:1 rule for a custom signal and the 0.2
+  `true`/`false` shape), the login block's `body.login` scoping against the
+  classes the page really has, the two halves of the palette, the manifest
+  (settings = `DEFAULTS`, stylesheet order, the `assets:` font map, no base64
+  faces) and the kill switch. CSS is asserted as text: proving a rule paints
+  would need a stylesheet engine, and that is what the README's live checks are
+  for.
 - **The stub DOM is deliberately dumb.** `querySelector` only answers the
   lookups the overlay actually makes, `requestAnimationFrame` runs
   synchronously, and every node reports a 640x360 player. When the overlay
@@ -171,7 +182,22 @@ AGENTS.md                   # architecture + conventions (this file)
   Quote the value (`description: "… Optional: …"`, escaping inner `"` as `\"`) and keep it on one line. `build_site.sh` re-quotes what it emits, so the index itself tolerates a hostile description, but Stash parses the manifest independently — the source of truth has to be valid YAML on its own.
 - **Dependencies are read from a comment line, not from `ui.requires`.** Keep `# requires: PluginA, PluginB` (comma-separated) at the bottom of the yml in sync with `ui.requires`. See `QuestingAdventurer.yml:7,16`. The two locations must agree.
 - `ui.javascript` / `ui.css` entries are paths relative to the plugin directory.
-- **Runtime globals are not bundled.** The plugin expects `window.csLib` and `window.PluginApi` to be provided by Stash; users must install **CommunityScriptsUILibrary** first (declared in `ui.requires`).
+- **`settings:` is top-level; `assets:` sits under `ui:`.** `settings:` makes
+  Stash draw a plugin's options under Settings > Plugins and save them itself
+  (via `configurePlugin`); the element ids it generates are
+  `plugin-<pluginID>-<settingName>`, which is what a `StringSetting` patch
+  matches on. Renaming a key renames the stored key — the old value stays in the
+  plugin configuration, orphaned, with no migration. `assets:` maps a URL prefix
+  to a directory relative to the yml and **only that subtree is served**, at
+  `/plugin/<id>/assets/…` (`internal/api/routes_plugin.go`); the rest of the
+  plugin directory has no route, which is why Carbon Arc's fonts need
+  `assets: fonts: fonts` as well as their `url()`.
+- **Runtime globals are not bundled.** Plugins that use `window.csLib` expect
+  CommunityScriptsUILibrary to provide it, and users must install it first
+  (declared in `ui.requires`). Carbon Arc, ExternalLinkGroups and
+  SceneVersions/SceneRotation do not use it; do not add it to a plugin that
+  does not need it, and never add `ui.requires` for an optional helper (see the
+  Architecture notes).
 
 ## QuestingAdventurer
 
@@ -639,44 +665,97 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 
 ## Carbon Arc
 
-- **A theme, not a feature.** One stylesheet plus a config helper and a settings
-  page: no player overlay, no hooks, no tasks, no GraphQL. Files are
-  `CarbonArc.css` (the theme), `CarbonArcSettings.css`,
-  `CarbonArcStore.js` (config + apply), `CarbonArcSettings.js` (React page), and
-  `fonts/` (three woff2 subsets + `OFL.txt`).
-- **Fonts are embedded, not linked.** IBM Plex Sans (variable) and Mono
-  400/500, latin subset, live as base64 data URIs in the generated
-  `CarbonArcFonts.css` (first entry in `ui.css`); the woff2 sources and
-  `OFL.txt` stay in `fonts/`, and `node scripts/build_fonts_css.mjs` rebuilds
-  the stylesheet after a font swap. This is not a style preference: **Stash
-  serves a plugin's stylesheets concatenated at `/plugin/<id>/css` and exposes
-  no route for any other file in the plugin directory** — verified on v0.32.0,
-  2026-11-27, where `/plugin/CarbonArc/fonts/x.woff2` and even
-  `/plugin/CarbonArc/CarbonArc.css` return 404 while `/plugin/CarbonArc/css`
-  returns the concatenation. So `url("fonts/x.woff2")` in the theme resolves to
-  a 404 and the fonts silently never load; a data URI has no path to resolve
-  and also survives a reverse-proxy prefix. Do not "clean this up" into a
-  relative or absolute file URL, and do not reach for a Google Fonts `@import`
-  (a local instance should not phone a CDN every page load). A missing face is
-  still not fatal: `--ca-font` ends in the system UI stack.
+- **A theme, not a feature.** Two stylesheets, a bundled type sheet, a config
+  helper and a tile patch: no player overlay, no hooks, no tasks, no custom
+  route, no Settings > Tools card. Files are `CarbonArcTokens.css` (palette,
+  the three signal blocks, the `--bs-*` remap), `CarbonArc.css` (everything
+  painted), `CarbonArcFonts.css` (three `@font-face` rules),
+  `CarbonArcSettings.css` (the tiles and the login block inside Stash's own
+  settings page), `CarbonArcStore.js` (read + apply) and `CarbonArcSettings.js`
+  (the `StringSetting` patch), plus `fonts/` (three woff2 subsets + `OFL.txt`).
+  No changelog file: see *Version bumping in this project*.
+- **The options are manifest settings, not a plugin config key.** `settings:`
+  in the yml declares `accent`, `customSignal`, `density` and `dimPreviews`, so
+  Stash renders them under Settings > Plugins > Carbon Arc and saves them with
+  `configurePlugin` itself. Nothing in the plugin writes configuration, which
+  is why there is no CommunityScriptsUILibrary dependency, no `localStorage`
+  fallback for the values and no `ui.requires`. Read-only flow:
+  `configuration { plugins }` → `CarbonArcStore` → attributes on `<html>`.
+- **Settings ids are `plugin-<pluginID>-<settingName>`**
+  (`SettingsPluginsPanel.tsx`), and `CarbonArcSettings.js` matches them
+  case-insensitively after deriving the plugin id from its own script URL
+  (`/plugin/<id>/javascript`), so a renamed copy still works. The patch is
+  `patch.instead("StringSetting")` — `StringSetting` renders a
+  `ModalSetting`/`ChangeButtonSetting` button, not an inline field, so a row
+  replaced by tiles has to draw Stash's own `div.setting > div > h3 +
+  .sub-heading` markup and keep the `id`; a tile must call
+  `CarbonArcStore.preview()` (repaint now) *and* `props.onChange(value)` (let
+  Stash save it). Every id it does not own goes back through the original
+  renderer with its arguments untouched — that patch sees every string setting
+  in Stash, and `tests/plugin-coexistence.test.mjs` asserts the pass-through.
+- **A custom signal is inline properties, not a stylesheet block.** The value
+  is not known at build time, so `CarbonArcStore` writes `--ca-arc`,
+  `--ca-arc-rgb`, `--ca-arc-ink` and the three tints on `<html>` (inline beats
+  every selector). It refuses a colour under 4.5:1 against `--ca-canvas` —
+  the signal is also the focus ring and the link colour — and falls back to
+  arc rather than painting an invisible ring. `--ca-arc-ink` is whichever of
+  `#17140f` / `#e6e4de` reads better on a signal-filled surface.
+- **Fonts are served as files through the manifest's `assets:` map.** `assets:
+  fonts: fonts` publishes `{pluginDir}/fonts` at `/plugin/<id>/assets/fonts`,
+  and `CarbonArcFonts.css` links them relatively (`url("assets/fonts/…")`),
+  which resolves against the sheet's own address at `/plugin/<id>/css` and
+  survives a reverse-proxy prefix. Read from the v0.32.0 tag —
+  `internal/api/routes_plugin.go` registers `/assets` and `/assets/*`,
+  `pkg/plugin/plugins.go` carries `Assets utils.URLMap`, and the CSP's
+  `default-src` includes `'self'` — so both a same-origin file and a `data:`
+  URI are allowed; the file wins because the three faces are 75 KB together
+  and load on demand. **Only the `/assets` subtree maps to disk**: a
+  `url("fonts/x.woff2")` (no `assets` map entry, or a path outside it) 404s,
+  which is what the 0.2.1 note saw. This was not exercised on a live instance
+  yet; if the woff2 404s there, the data-URI sheet is in commit `0a1e8b1`.
+  Do not reach for a Google Fonts `@import` either (a local instance should
+  not phone a CDN every page load). A missing face stays non-fatal: `--ca-font`
+  ends in the system UI stack.
 - **Type sizes are rem, calibrated on a 16 px root.** The design's 14/13/11 px
   steps are written as 0.875/0.8125/0.6875rem, and `0.6875rem` is the floor —
   compact density used to go to 0.625rem (10 px), which broke the design's
   "nothing below 11 px" rule. No new size may sit under 0.6875rem.
-- **No `ui.requires`, deliberately.** `ui.requires` is mandatory load order, so
-  a missing `CommunityScriptsUILibrary` would stop the theme's CSS from loading
-  at all — worse than losing cross-device sync. The store prefers `csLib` when
-  it answers and otherwise falls back to `localStorage`
-  (`carbonArc.config.v1`); the settings page states which one is in force. Do
-  not add a `# requires:` line either, for the same reason.
-- **Config key `CarbonArc`**, shape
-  `{ accent: "arc" | "patina" | "dusk", density: "comfortable" | "compact",
-  dimPreviews: boolean }`. `normalize()` runs on every read and on every write,
-  so a hand-edited or older value cannot reach the DOM.
+- **No `ui.requires`, and no csLib at all.** `ui.requires` is mandatory load
+  order, so a missing entry would stop the theme's CSS from loading. The theme
+  never needed csLib for the values (see above), and since 0.3.0 it does not
+  touch it in any form.
+- **Config shape** `{ accent: "arc" | "patina" | "dusk" | "custom",
+  customSignal: "#rrggbb" | "", density: "comfortable" | "compact",
+  dimPreviews: boolean }`, stored as plain strings by the settings map
+  (`dimPreviews` arrives as `"full"` / `"dimmed"`, and the 0.2 shape —
+  `true` / `false` — is still accepted). `normalize()` runs on every read and
+  every write, so a hand-edited or older value cannot reach the DOM; it also
+  demotes `accent: "custom"` to arc when `customSignal` is missing or fails
+  the contrast check, because that combination cannot be painted.
 - **Options are data attributes on `<html>`**: `data-ca-accent`,
-  `data-ca-density`, `data-ca-dim`. The stylesheet keys off those, so switching
-  is a restyle, not a reload. `apply()` runs synchronously at parse time, so the
-  first paint already carries the saved accent.
+  `data-ca-density`, `data-ca-dim`, plus `data-ca-version` and a `ca-theme`
+  class. The stylesheets key off those, so switching is a restyle, not a
+  reload. `apply()` runs synchronously at parse time, from the browser cache,
+  so the first paint already carries the saved option — the async GraphQL read
+  only confirms or corrects it (the server wins; an empty server value keeps
+  the cache instead of resetting). Without that cached first paint, a saved
+  Patina or Dusk flashed Arc on every load.
+- **`?carbonarc=off` is the kill switch** (`?carbonarc=on` brings it back,
+  remembered per tab in `sessionStorage`). It parks the stylesheet instead of
+  removing it: `link.media = "not all"` plus `link.disabled = true`, retried for
+  three seconds and once on `load`, because setting `disabled` before the file
+  finishes downloading does not hold. Nothing is applied while off, so the page
+  is Stash as it ships — that makes "is this the theme's doing?" a five-second
+  question instead of disabling the plugin and reloading. Keep the two paths in
+  step: any new attribute or class the store applies has to be skipped under
+  `off` too.
+- **Hover affordances are gated** with `@media (hover: hover) and
+  (pointer: fine)`. A pointer that never hovers leaves a tapped card or button
+  wearing its hover paint, and Stash gives the theme no signal that the hover
+  would end. Focus and active states stay outside the query on purpose; the
+  combined `:hover, :focus` button groups (`.btn-primary`, `.btn-secondary`,
+  `.dropdown-item`, …) are left alone for the same reason. Scrollbar hovers and
+  plain link colour changes are not gated either.
 - **Layout maths is off limits.** Nav height, sidebar width and root font size
   stay whatever Stash set them to: `body`'s top padding and the sticky detail
   header are derived from those numbers in Stash's own SCSS, and a theme that
@@ -708,24 +787,46 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   description, or the settings page. The theme paints every surface itself.
   The one path that does exist is **Settings → Interface → Custom CSS**.
 - **The login page cannot be themed from the plugin** — Stash does not load
-  plugin CSS before auth. `loginCss(accent)` in `CarbonArcStore.js` builds the
-  copy-paste block the settings page offers, per accent (signal colour, its two
-  rgba tints, and the ink on the bone primary button); `LOGIN_CSS` is the arc
-  default kept for compatibility. Keep the palette values in that function in
-  sync with the accent blocks in the stylesheet. The block declares IBM Plex but
-  cannot load the bundled files from a logged-out page, so it falls back to the
-  system font — say so rather than promising the font there.
+  plugin CSS before auth. What it does load is Custom CSS
+  (`<link rel="stylesheet" href="css">` in `ui/login/login.html`), so
+  `loginCss()` in `CarbonArcStore.js` builds the copy-paste block offered under
+  the signal tile; it accepts a config object or a bare accent key, and
+  `LOGIN_CSS` is the arc default kept for compatibility.
+  **Every selector must start with `body.login`** (or `html:has(body.login)`
+  inside `@supports selector(:has(a))`): Stash loads that same Custom CSS into
+  the app, so one unscoped `p { color }` repaints every paragraph in Stash —
+  that is what 0.2.1 shipped, together with `.login-page`, `.login-container`,
+  `.card-header`, `.card-footer` and `.form-label`, none of which exist on the
+  page. The real markup is `body.login > .dialog > .card`, `h6` headings,
+  `.text-input.form-control`, `.login-error` and `#login-button.btn.btn-primary`;
+  check a selector against `ui/login/login.html` before adding one.
+  `body.login .x` outranks the login sheet's own `.x` and `.x:focus`, so the
+  block needs no `!important`. It declares IBM Plex but cannot load the bundled
+  files from a logged-out page, so it falls back to the system font — say so
+  rather than promising the font there. `tests/carbon-arc.test.mjs` asserts the
+  scoping and the dead classes.
 - **Design items with no Stash selector stay unimplemented, deliberately.** The
   mock's `.count` / `.seg` view toggle, the toast state bar, the empty state and
   the brand dot have no corresponding markup in the shipped bundle; inventing
   class names for them would add dead CSS. A middle ellipsis is also out of
   reach (it needs the string), so long detail values wrap instead.
-- **Verification without a Stash instance**: `node --check` both scripts, parse
-  both stylesheets, then open the settings page in a harness that stubs
-  `PluginApi`, `ReactRouterDOM`, `csLib` and `localStorage`. That catches patch
-  shape, option wiring and the store round-trip; it does not prove the theme
-  paints Stash's real DOM, which is why the checks in `README.md` are still
-  required before calling a release verified.
+- **The palette lives in two halves.** `ACCENT_COLORS` in `CarbonArcStore.js`
+  (the tiles' swatches, the ink on a filled surface, the login block) and the
+  three `html[data-ca-accent="…"]` blocks in `CarbonArcTokens.css`. They are
+  two copies of the same three colours and nothing but a test keeps them equal:
+  `tests/carbon-arc.test.mjs` compares the hex, the ink, the `--ca-arc-rgb`
+  triple and the 12% tint, so changing one half fails in CI instead of in a
+  screenshot.
+- **Verification without a Stash instance**:
+  `node --test "tests/**/*.test.mjs"` — the store in a `node:vm` sandbox
+  (first paint from cache, `normalize`, the login scoping, the kill switch) plus
+  `tests/plugin-coexistence.test.mjs` for the `StringSetting` pass-through. That
+  catches patch shape, option wiring and the store round-trip; it does not prove
+  the theme paints Stash's real DOM, which is why the checks in `README.md` are
+  still required before calling a release verified. The `assets:` font route is
+  the one thing only a live instance can confirm: an authenticated request for
+  `/plugin/CarbonArc/assets/fonts/ibm-plex-sans-latin.woff2` answering
+  `200 font/woff2` rather than 404.
 
 ## ExternalLinkGroups
 
@@ -927,6 +1028,14 @@ affected plugin's `*.yml`**:
 published version, so editing the yml is the only manual step. State the
 bump in the commit body (e.g. `Bump version to 0.2.1 (small fix)`) so the
 release history is self-documenting.
+
+**Release notes are not a file.** There is no `CHANGELOG.md` in this repository
+and none should be added, in a plugin directory or at the root: nobody reads
+files inside an installed plugin, and a changelog there would only ride along
+in the zip. The notes for a release go on that plugin's announcement thread on
+the stashapp community forum (`discourse.stashapp.cc`, Plugins category), where
+users actually look, with the same one-line summary as the commit body. Do not
+re-introduce a changelog "for convenience" — it duplicates the thread and rots.
 
 ### Plugin → issue associations
 

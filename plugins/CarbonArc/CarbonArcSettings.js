@@ -1,467 +1,248 @@
 /**
- * CarbonArcSettings — the theme's settings page.
+ * CarbonArcSettings — the option tiles inside Stash's own settings page.
  *
- * Registered the same way as the other plugins in this repository:
- * a route through `PluginApi.patch.before("PluginRoutes")` and a launcher card
- * in Settings > Tools. Options are applied live as they are clicked (the
- * stylesheet reads them off <html>), then persisted by CarbonArcStore.
+ * The options are declared in CarbonArc.yml under `settings:`, so Stash owns
+ * the form: the values are saved by the plugin settings page itself
+ * (`configurePlugin`) and read back by CarbonArcStore. That leaves exactly one
+ * job here — Stash would draw `accent` and `density` as a button that opens a
+ * text modal, and these are three or four choices, so the row is replaced with
+ * colour/weight tiles.
  *
- * Failure modes handled here:
- *   - PluginApi missing            → nothing registers, one console error.
- *   - CarbonArcStore missing       → page renders a readable error, no crash.
- *   - read/write failure           → inline message, change stays applied for
- *                                    the session because the store already
- *                                    wrote the browser copy.
- *   - double patching (StrictMode) → the tools-section patch is idempotent.
+ * The patch is narrow on purpose:
+ *   - `patch.instead("StringSetting")` and it only takes over the ids
+ *     `plugin-<id>-accent`, `plugin-<id>-density` and `plugin-<id>-dimpreviews`;
+ *     every other string setting in Stash is handed straight back to the
+ *     original renderer, with its arguments untouched.
+ *   - A tile calls CarbonArcStore.preview() first, so the page repaints on
+ *     click, then Stash's own onChange, so the value is saved exactly as if it
+ *     had been typed into the field it replaced.
+ *   - Nothing is registered under Settings > Tools and no route is added: the
+ *     theme adds no surface of its own.
+ *
+ * Failure modes handled here: PluginApi missing, CarbonArcStore missing, a
+ * clipboard that refuses to work. Each leaves Stash's own settings working.
  *
  * License: AGPL-3.0
  */
 (function () {
   "use strict";
 
-  if (!window.PluginApi || !window.PluginApi.patch || !window.PluginApi.React) {
-    console.error("CarbonArc settings: PluginApi is unavailable; settings page not registered.");
+  var api = window.PluginApi;
+  if (!api || !api.patch || typeof api.patch.instead !== "function" || !api.React) {
+    console.error("CarbonArc settings: PluginApi is unavailable; the option tiles are not registered.");
     return;
   }
 
-  const PluginApi = window.PluginApi;
-  const React = PluginApi.React;
-  const h = React.createElement;
-  const { useState, useEffect, useCallback, useRef } = React;
-
-  const ReactRouterDOM = PluginApi.libraries && PluginApi.libraries.ReactRouterDOM;
-  if (!ReactRouterDOM || !ReactRouterDOM.Route || !ReactRouterDOM.Link) {
-    console.error("CarbonArc settings: ReactRouterDOM is unavailable; settings page not registered.");
+  var store = window.CarbonArcStore;
+  if (!store) {
+    console.error("CarbonArc settings: CarbonArcStore did not load; the option tiles are not registered.");
     return;
   }
-  const { Route, Link } = ReactRouterDOM;
 
-  const PLUGIN_ROUTE = "/plugins/carbonarc";
-  const store = window.CarbonArcStore;
+  var React = api.React;
+  var h = React.createElement;
+  var useState = React.useState;
+  var useEffect = React.useEffect;
 
-  const ACCENT_META = {
-    arc: { label: "Arc", hex: "#c2a176", note: "Brass lamplight. The default." },
-    patina: { label: "Patina", hex: "#8aa79a", note: "Oxidised copper-green." },
-    dusk: { label: "Dusk", hex: "#a79cb8", note: "Muted violet, coolest of the three." },
+  var PREFIX = "plugin-" + String(store.PLUGIN_ID).toLowerCase() + "-";
+
+  var ACCENT_META = {
+    arc: { label: "Arc", note: "Brass lamplight. The default." },
+    patina: { label: "Patina", note: "Oxidised copper-green." },
+    dusk: { label: "Dusk", note: "Muted violet, coolest of the three." },
+    custom: { label: "Custom", note: "Needs a hex below; stays on Arc until then." },
   };
 
-  const DENSITY_META = {
+  var DENSITY_META = {
     comfortable: { label: "Comfortable", note: "6 px card margin, 11 px padding." },
-    compact: { label: "Compact", note: "3 px margin, 8 px padding — tighter rows, same columns." },
+    compact: { label: "Compact", note: "3 px margin, 8 px padding — same columns." },
   };
+
+  var DIM_META = {
+    full: { label: "Full", note: "No filter on thumbnails." },
+    dimmed: { label: "Dimmed", note: "Thumbnails at 90% brightness." },
+  };
+
+  var CHOICES = {
+    accent: store.ACCENTS,
+    density: store.DENSITIES,
+    dimPreviews: ["full", "dimmed"],
+  };
+
+  var META = {
+    accent: ACCENT_META,
+    density: DENSITY_META,
+    dimPreviews: DIM_META,
+  };
+
+  /** Which of our settings a Stash setting id belongs to, or null. */
+  function settingKey(id) {
+    var value = String(id == null ? "" : id).toLowerCase();
+    if (value.indexOf(PREFIX) !== 0) return null;
+    var key = value.slice(PREFIX.length);
+    if (key === "accent") return "accent";
+    if (key === "density") return "density";
+    if (key === "dimpreviews") return "dimPreviews";
+    return null;
+  }
+
+  /** The value in force, read from the store so it matches what is painted. */
+  function paintedValue(key) {
+    var config = store.get();
+    if (key === "accent") return config.accent;
+    if (key === "density") return config.density;
+    return config.dimPreviews ? "dimmed" : "full";
+  }
 
   function Swatch(props) {
+    var config = store.get();
+    var colour = props.value === "custom" ? config.customSignal : (store.ACCENT_COLORS[props.value] || {}).hex;
     return h("span", {
-      className: "ca-set__swatch",
-      style: { background: props.hex },
+      className: "ca-tile__swatch" + (colour ? "" : " ca-tile__swatch--empty"),
+      style: colour ? { background: colour } : undefined,
       "aria-hidden": "true",
     });
   }
 
-  function OptionButton(props) {
-    return h(
-      "button",
-      {
-        type: "button",
-        className: "ca-set__option" + (props.selected ? " ca-set__option--on" : ""),
-        "aria-pressed": props.selected ? "true" : "false",
-        onClick: props.onClick,
-        disabled: props.disabled,
-      },
-      props.children
-    );
-  }
+  function LoginBlock() {
+    var pair = useState("idle"); // idle | ok | fail
+    var copied = pair[0];
+    var setCopied = pair[1];
+    var css = store.loginCss(store.get());
 
-  function CarbonArcSettingsPage() {
-    const [config, setConfig] = useState(function () {
-      return store ? store.get() : null;
-    });
-    const [status, setStatus] = useState("idle"); // idle | saving | saved | error
-    const [message, setMessage] = useState("");
-    const [copied, setCopied] = useState("idle"); // idle | ok | fail
-    const mounted = useRef(true);
-    const saveToken = useRef(0);
-
-    useEffect(function () {
-      mounted.current = true;
-      return function () {
-        mounted.current = false;
-      };
-    }, []);
-
-    // Keep in sync when the store changes underneath us (another tab, reset).
-    useEffect(function () {
-      if (!store) return undefined;
-      return store.subscribe(function (next) {
-        if (mounted.current) setConfig(next);
-      });
-    }, []);
-
-    // Reload from storage on mount: the synchronous defaults may already have
-    // been replaced by the async read before this page appeared.
-    useEffect(function () {
-      if (!store) return;
-      store
-        .load()
-        .then(function (next) {
-          if (mounted.current) setConfig(next);
-        })
-        .catch(function (err) {
-          console.error("CarbonArc settings: load failed", err);
-          if (mounted.current) {
-            setStatus("error");
-            setMessage("Could not read the saved configuration. Using defaults for this session.");
-          }
-        });
-    }, []);
-
-    const persist = useCallback(
-      function (patch) {
-        if (!store) return;
-        const next = Object.assign({}, config || {}, patch);
-        setConfig(store.normalize(next));
-        setStatus("saving");
-        setMessage("");
-
-        const token = ++saveToken.current;
-        store
-          .save(next)
-          .then(function (result) {
-            if (!mounted.current || token !== saveToken.current) return;
-            setStatus("saved");
-            setMessage(
-              result.scope === "plugin"
-                ? "Saved to the plugin configuration."
-                : "Saved in this browser only — CommunityScriptsUI library is not installed."
-            );
-          })
-          .catch(function (err) {
-            if (!mounted.current || token !== saveToken.current) return;
-            console.error("CarbonArc settings: save failed", err);
-            setStatus("error");
-            setMessage("Could not save. The change applies until you reload the page.");
-          });
-      },
-      [config]
-    );
-
-    const onReset = useCallback(
-      function () {
-        if (!store) return;
-        setStatus("saving");
-        setMessage("");
-        store
-          .reset()
-          .then(function () {
-            if (!mounted.current) return;
-            setConfig(store.get());
-            setStatus("saved");
-            setMessage("Back to the theme defaults.");
-          })
-          .catch(function (err) {
-            console.error("CarbonArc settings: reset failed", err);
-            if (mounted.current) {
-              setStatus("error");
-              setMessage("Could not reset. Reload the page and try again.");
-            }
-          });
-      },
-      []
-    );
-
-    // Rebuilt from the accent in force, so the pasted block matches the theme.
-    const loginCss =
-      store && config && typeof store.loginCss === "function"
-        ? store.loginCss(config.accent)
-        : store
-        ? store.LOGIN_CSS
-        : "";
-
-    const onCopyLoginCss = useCallback(
-      function () {
-        if (!store) return;
-        const text = loginCss;
-        const fallback = function () {
-          try {
-            const area = document.createElement("textarea");
-            area.value = text;
-            area.setAttribute("readonly", "readonly");
-            area.style.position = "fixed";
-            area.style.opacity = "0";
-            document.body.appendChild(area);
-            area.select();
-            const ok = document.execCommand("copy");
-            document.body.removeChild(area);
-            setCopied(ok ? "ok" : "fail");
-          } catch (err) {
-            setCopied("fail");
-          }
-        };
-
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function () {
-            setCopied("ok");
-          }, fallback);
-        } else {
-          fallback();
-        }
-      },
-      [loginCss]
-    );
-
-    if (!store) {
-      return h(
-        "div",
-        { className: "ca-set" },
-        h("h1", { className: "ca-set__title" }, "Carbon Arc"),
-        h(
-          "div",
-          { className: "ca-set__notice ca-set__notice--error", role: "alert" },
-          "The theme's configuration module did not load. Reinstall the plugin, then reload Stash."
-        )
-      );
+    function fallback() {
+      try {
+        var area = document.createElement("textarea");
+        area.value = css;
+        area.setAttribute("readonly", "readonly");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(area);
+        setCopied(ok ? "ok" : "fail");
+      } catch (err) {
+        setCopied("fail");
+      }
     }
 
-    const saving = status === "saving";
+    function onCopy() {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(css).then(function () {
+          setCopied("ok");
+        }, fallback);
+      } else {
+        fallback();
+      }
+    }
 
     return h(
-      "div",
-      { className: "ca-set" },
-
+      "details",
+      { className: "ca-login" },
+      h("summary", null, "Login page CSS"),
       h(
-        "header",
-        { className: "ca-set__head" },
-        h("p", { className: "ca-set__kicker" }, "theme · desktop only"),
-        h("h1", { className: "ca-set__title" }, "Carbon Arc"),
-        h(
-          "p",
-          { className: "ca-set__lede" },
-          "Graphite surfaces, bone text, one warm signal. Carbon Arc paints every surface itself — ",
-          "there is nothing to set on Stash’s side first. Changes apply as you click."
-        )
+        "p",
+        { className: "ca-login__note" },
+        "Stash does not load plugins on the sign-in screen. Copy this block into ",
+        h("strong", null, "Settings → Interface → Custom CSS"),
+        " and tick “Custom CSS enabled”. Every rule is scoped to ",
+        h("code", null, "body.login"),
+        ", so it changes nothing in the app. It is rebuilt from the signal colour above, ",
+        "and it cannot load the bundled font on a logged-out page — that page falls back to the system UI font."
       ),
-
+      h("pre", { className: "ca-login__code" }, css),
       h(
         "div",
-        { className: "ca-set__group" },
-        h("h2", { className: "ca-set__group-title" }, "signal"),
+        { className: "ca-login__actions" },
         h(
-          "p",
-          { className: "ca-set__group-note" },
-          "Used on state, never as a fill: active navigation, keyboard focus, rating stars, the playhead, the switch knob."
-        ),
-        h(
-          "div",
-          { className: "ca-set__options", role: "group", "aria-label": "Signal colour" },
-          store.ACCENTS.map(function (key) {
-            const meta = ACCENT_META[key] || { label: key, hex: "#c2a176", note: "" };
-            return h(
-              OptionButton,
-              {
-                key: key,
-                selected: config.accent === key,
-                disabled: saving,
-                onClick: function () {
-                  persist({ accent: key });
-                },
-              },
-              h(Swatch, { hex: meta.hex }),
-              h("span", { className: "ca-set__option-label" }, meta.label),
-              h("span", { className: "ca-set__option-note" }, meta.note)
-            );
-          })
-        )
-      ),
-
-      h(
-        "div",
-        { className: "ca-set__group" },
-        h("h2", { className: "ca-set__group-title" }, "card density"),
-        h(
-          "p",
-          { className: "ca-set__group-note" },
-          "Only the card's own padding and margin change; Stash’s grid maths and column sizing are untouched."
-        ),
-        h(
-          "div",
-          { className: "ca-set__options ca-set__options--row", role: "group", "aria-label": "Card density" },
-          store.DENSITIES.map(function (key) {
-            const meta = DENSITY_META[key] || { label: key, note: "" };
-            return h(
-              OptionButton,
-              {
-                key: key,
-                selected: config.density === key,
-                disabled: saving,
-                onClick: function () {
-                  persist({ density: key });
-                },
-              },
-              h("span", { className: "ca-set__option-label" }, meta.label),
-              h("span", { className: "ca-set__option-note" }, meta.note)
-            );
-          })
-        )
-      ),
-
-      h(
-        "div",
-        { className: "ca-set__group" },
-        h("h2", { className: "ca-set__group-title" }, "preview brightness"),
-        h(
-          "p",
-          { className: "ca-set__group-note" },
-          "Dims thumbnails by 10% so a bright still does not blow out the room. Off keeps Stash’s rendering exactly as it is."
-        ),
-        h(
-          "div",
-          { className: "ca-set__options ca-set__options--row", role: "group", "aria-label": "Preview brightness" },
-          h(
-            OptionButton,
-            {
-              selected: !config.dimPreviews,
-              disabled: saving,
-              onClick: function () {
-                persist({ dimPreviews: false });
-              },
-            },
-            h("span", { className: "ca-set__option-label" }, "Full"),
-            h("span", { className: "ca-set__option-note" }, "No filter on thumbnails.")
-          ),
-          h(
-            OptionButton,
-            {
-              selected: config.dimPreviews,
-              disabled: saving,
-              onClick: function () {
-                persist({ dimPreviews: true });
-              },
-            },
-            h("span", { className: "ca-set__option-label" }, "Dimmed"),
-            h("span", { className: "ca-set__option-note" }, "Thumbnails at 90% brightness.")
-          )
-        )
-      ),
-
-      // live preview of the tokens currently in force
-      h(
-        "div",
-        { className: "ca-set__group" },
-        h("h2", { className: "ca-set__group-title" }, "preview"),
-        h(
-          "div",
-          { className: "ca-set__preview" },
-          h(
-            "div",
-            { className: "ca-set__preview-card" },
-            h("div", { className: "ca-set__preview-thumb" }),
-            h(
-              "div",
-              { className: "ca-set__preview-body" },
-              h("span", { className: "ca-set__preview-title" }, "A scene title on two lines at most"),
-              h("span", { className: "ca-set__preview-meta" }, "24:31 · 1080p · h264")
-            )
-          ),
-          h(
-            "div",
-            { className: "ca-set__preview-controls" },
-            h("button", { type: "button", className: "btn btn-primary" }, "Save"),
-            h("button", { type: "button", className: "btn btn-secondary" }, "Cancel"),
-            h("span", { className: "ca-set__preview-focus" }, "Focus ring"),
-            h("span", { className: "ca-set__preview-stars" }, "★★★★★")
-          )
-        )
-      ),
-
-      status !== "idle" && message
-        ? h(
-            "div",
-            {
-              className:
-                "ca-set__notice" +
-                (status === "error" ? " ca-set__notice--error" : "") +
-                (status === "saved" ? " ca-set__notice--ok" : ""),
-              role: status === "error" ? "alert" : "status",
-            },
-            message
-          )
-        : null,
-
-      h(
-        "div",
-        { className: "ca-set__group ca-set__group--last" },
-        h("h2", { className: "ca-set__group-title" }, "login page"),
-        h(
-          "p",
-          { className: "ca-set__group-note" },
-          "Stash does not load plugins on the login screen, so that page cannot inherit the theme. Copy the block below into ",
-          h("strong", null, "Settings → Interface → Custom CSS"),
-          " and enable custom CSS to match it."
-        ),
-        h("pre", { className: "ca-set__code" }, loginCss),
-        h(
-          "div",
-          { className: "ca-set__actions" },
-          h(
-            "button",
-            { type: "button", className: "btn btn-secondary", onClick: onCopyLoginCss },
-            copied === "ok"
-              ? "Copied"
-              : copied === "fail"
-              ? "Copy failed — select the text above"
-              : "Copy login CSS"
-          ),
-          h(
-            "button",
-            { type: "button", className: "btn btn-quiet ca-set__reset", onClick: onReset, disabled: saving },
-            "Reset to defaults"
-          )
+          "button",
+          { type: "button", className: "btn btn-secondary", onClick: onCopy },
+          copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed — select the text above" : "Copy login CSS"
         )
       )
     );
   }
 
-  // --- registration -------------------------------------------------------
+  var refreshed = false;
 
-  try {
-    PluginApi.patch.before("PluginRoutes", function (props) {
-      const children = h(
-        React.Fragment,
-        null,
-        props.children,
-        h(Route, { path: PLUGIN_ROUTE, component: CarbonArcSettingsPage })
-      );
-      return [Object.assign({}, props, { children: children })];
-    });
-  } catch (err) {
-    console.error("CarbonArc settings: could not register route", err);
+  function Tiles(props) {
+    var key = props.settingKey;
+    var selected = paintedValue(key);
+
+    // Stash has just saved something we cannot see yet (another tab, or a
+    // colour typed into its own field): one read per page keeps the tiles and
+    // the painted theme telling the same story. Three rows mount, so it runs
+    // once, not once per row.
+    useEffect(function () {
+      if (refreshed) return;
+      refreshed = true;
+      store.refresh();
+    }, []);
+
+    function choose(value) {
+      var patch = {};
+      if (key === "dimPreviews") patch.dimPreviews = value === "dimmed";
+      else patch[key] = value;
+
+      store.preview(patch);
+      if (props.source && typeof props.source.onChange === "function") {
+        props.source.onChange(value);
+      }
+    }
+
+    return h(
+      "div",
+      { className: "setting", id: props.source.id },
+      h(
+        "div",
+        { className: "ca-field" },
+        h("h3", null, props.source.heading),
+        props.source.subHeading ? h("div", { className: "sub-heading" }, props.source.subHeading) : null,
+        h(
+          "div",
+          { className: "ca-tiles", role: "group", "aria-label": props.source.heading || key },
+          CHOICES[key].map(function (value) {
+            var meta = META[key][value] || { label: value, note: "" };
+            var on = selected === value;
+            return h(
+              "button",
+              {
+                key: value,
+                type: "button",
+                className: "ca-tile" + (on ? " ca-tile--on" : ""),
+                "aria-pressed": on ? "true" : "false",
+                onClick: function () {
+                  choose(value);
+                },
+              },
+              key === "accent" ? h(Swatch, { value: value }) : null,
+              h("span", { className: "ca-tile__label" }, meta.label),
+              h("span", { className: "ca-tile__note" }, meta.note)
+            );
+          })
+        ),
+        key === "accent" ? h(LoginBlock) : null
+      )
+    );
   }
 
-  // This patch can fire twice per render (StrictMode double-invoke), so the
-  // odd call is passed through untouched and only the even one adds the card.
-  let toolsSectionCalls = 0;
+  /* --- registration ------------------------------------------------------ */
 
   try {
-    PluginApi.patch.before("SettingsToolsSection", function (props) {
-      toolsSectionCalls += 1;
-      if (toolsSectionCalls % 2 !== 0) {
-        return [props];
-      }
+    api.patch.instead("StringSetting", function () {
+      var args = Array.prototype.slice.call(arguments);
+      // patch.tsx appends the next renderer to the argument list; it is the
+      // last one, and it must be called with the same arguments for Stash's
+      // own rows.
+      var original = args.pop();
+      var source = args[0] || {};
+      var key = settingKey(source.id);
 
-      const card = h(
-        Link,
-        { to: PLUGIN_ROUTE, className: "ca-set-launcher" },
-        h("h3", null, "Carbon Arc"),
-        h("p", null, "Signal colour, card density and preview brightness")
-      );
-
-      const children = Array.isArray(props.children)
-        ? props.children.concat([card])
-        : [props.children, card];
-
-      return [Object.assign({}, props, { children: children })];
+      if (!key) return original.apply(null, args);
+      return h(Tiles, { settingKey: key, source: source });
     });
   } catch (err) {
-    console.error("CarbonArc settings: could not register tools launcher", err);
+    console.error("CarbonArc settings: could not register the option tiles", err);
   }
 })();

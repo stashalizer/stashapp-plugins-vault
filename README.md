@@ -19,7 +19,7 @@ A collection of Stash plugins — player overlays, page additions, and one theme
 - [Stash](https://github.com/stashapp/stash) (functionally tested against the v0.31.x line; see [Tested environment](#tested-environment) for the v0.32.0 status).
 - [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary) (`csLib`) — **install this first.** QuestingAdventurer, MosaicFilter, and AudioSupport depend on it; their player overlays will not load without it. SceneVersions, SceneRotation, Carbon Arc and External Link Groups are standalone and do not require csLib.
 - The full-page settings UIs additionally use Stash's built-in `PluginApi` (React + router), which ships with Stash — nothing extra to install. SceneVersions also uses `PluginApi` for its tab injection.
-- **Carbon Arc without csLib still works**, but its three options are then saved in that browser's `localStorage` instead of the plugin configuration, so they do not follow you to another browser or device. The settings page tells you which of the two is in use. **External Link Groups** behaves the same way: the domain list is kept in `localStorage` without csLib.
+- **Carbon Arc never needs csLib**, because its options are declared in the plugin manifest: Stash stores them in the plugin configuration itself, so a choice follows you to any browser. **External Link Groups** is the plugin that behaves the old way — with csLib its domain list lives in Stash's plugin configuration, without it in that browser's `localStorage`.
 
 ## Tested environment
 
@@ -46,7 +46,7 @@ Add this repository as a plugin source in Stash:
 3. Install **Questing Adventurer**, **Mosaic Filter**, **Scene Versions**, **Scene Rotation**, **Audio Support** and/or **Carbon Arc** from the list.
 4. Make sure **CommunityScriptsUILibrary** is installed and enabled — the overlays depend on it (Audio Support's overlay and settings page both require it).
 
-QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner and rotates scene media wherever it appears — player, card preview, cover (no settings page). Carbon Arc adds no surface of its own: it restyles every existing one and adds a **Settings → Tools → Carbon Arc** card for its three options.
+QuestingAdventurer, MosaicFilter, and AudioSupport each appear in two places: a **player overlay** on every scene page, and a **settings/browse page** under **Settings → Tools → Scene Tools** (AudioSupport also adds a top-nav **Audio** entry). SceneVersions instead adds a **tab** to the scene page (no overlay, no settings page). SceneRotation adds a small control cluster in the player's top-right corner and rotates scene media wherever it appears — player, card preview, cover (no settings page). Carbon Arc adds no surface of its own: it restyles every existing one and declares its three options in the manifest, so they appear as tiles under **Settings → Plugins → Carbon Arc**.
 
 ---
 
@@ -338,17 +338,19 @@ A dark theme built for one setup: a 24-inch desktop screen, used at night, with 
 - **Five surfaces, not one.** Sunken wells, page ground, panels, cards and floating menus sit between L\* 3.9 and 15.4. Structure comes from the luminance step; hairline borders only confirm it, which is why nothing reads as a drawn box.
 - **Bone instead of white.** Text is `#E6E4DE` (13.2:1 on a card), not `#FFF` — white on a dark ground grows a halo and makes 13 px labels shimmer. Three text steps only, so hierarchy is unambiguous.
 - **One signal, used sparingly.** The accent marks state and nothing else: the active nav underline, the keyboard focus ring, filled rating stars, the player's playhead and the knob of a switch that is on. Primary buttons are filled bone, not coloured, so the highest-contrast thing on screen is always the next action — with zero saturation.
-- **Every number is monospaced.** Durations, counts, resolutions, dates and file paths use IBM Plex Mono, so a row of cards aligns on its data instead of its prose. IBM Plex Sans and Mono (latin subset, SIL OFL) are embedded in the plugin's stylesheet, so the type never depends on a font being installed or on a font CDN being reachable.
-- **Three signals, two densities, one dimmer.** Arc (brass, default), Patina (oxidised green) and Dusk (muted violet); comfortable or compact card spacing; thumbnails at full or 90% brightness.
+- **Every number is monospaced.** Durations, counts, resolutions, dates and file paths use IBM Plex Mono, so a row of cards aligns on its data instead of its prose. IBM Plex Sans and Mono (latin subset, SIL OFL) ship with the plugin and are served from its own directory, so the type never depends on a font being installed or on a font CDN being reachable. Each face is fetched only when a rule uses it, and the stylesheet Stash serves stays at 42 KB.
+- **Three signals, or your own.** Arc (brass, default), Patina (oxidised green), Dusk (muted violet) — or a hex of your own, once it reaches 4.5:1 contrast against the page. Two card densities; thumbnails at full or 90% brightness.
 - **It only paints.** Nav height, sidebar width, root font size, grid column maths and every control stay exactly where Stash put them — the theme rewrites colour, type, radii, shadows and spacing inside cards, and hides nothing. Every Stash feature keeps working, including plugins layered on top.
 - **Details that keep a dark UI usable.** A 2 px focus ring on every interactive element, `prefers-reduced-motion` respected, `scrollbar-gutter: stable` so filtering does not reflow the grid, and a thin dark scrollbar.
 
 ### How to use it
 
 1. Install **Carbon Arc** from the source list, enable it, and reload. Nothing else is required — no csLib, no other plugin, and no Stash-side setting to change first: Stash v0.32 has no theme switch, and Carbon Arc paints every surface itself.
-2. Open **Settings → Tools → Carbon Arc** (or `/plugins/carbonarc`): pick a signal, a card density and preview brightness. Changes apply as you click.
-3. **Optional — the login page.** Stash does not load plugins before you log in, so that page cannot inherit the theme. The settings page has a **Copy login CSS** button; paste the block into **Settings → Interface → Custom CSS** and turn on the custom CSS toggle above that box. The block is generated for the signal colour you have selected, so pick the signal first if you are changing it.
-4. Turn off other themes and custom CSS colour overrides. Two themes on one page fight, and the last stylesheet wins section by section.
+2. Open **Settings → Plugins → Carbon Arc**: pick a signal colour, a card density and preview brightness. The tiles repaint the page as you click, and Stash's own settings form saves the choice — no csLib, and it follows you to another browser.
+3. **Custom signal.** Set *Signal colour* to `custom`, then give a hex in *Custom signal colour*. It has to reach 4.5:1 contrast against the page (`#101213`), because the signal is also the focus ring and the link colour; anything below that keeps Arc rather than painting a ring you cannot see.
+4. **Optional — the login page.** Stash does not load plugins before you log in, so that page cannot inherit the theme. Open **Login page CSS** under the signal tiles and press **Copy login CSS**; paste the block into **Settings → Interface → Custom CSS** and turn on the custom CSS toggle above that box. The block is rebuilt from the signal in force, so copy it again after changing the signal. Every rule in it is scoped to `body.login`, so it changes nothing in the app.
+5. Turn off other themes and custom CSS colour overrides. Two themes on one page fight, and the last stylesheet wins section by section.
+6. **Turn it off for one tab** by adding `?carbonarc=off` to any Stash address (`?carbonarc=on` brings it back). The theme's stylesheet is parked and nothing is applied, so you can check whether the theme is involved without disabling the plugin.
 
 ### What it covers
 
@@ -362,7 +364,11 @@ The full token set, the measured contrast pairs and the selector inventory are i
 - **The pasted login CSS does not load IBM Plex.** The block declares the font stack but cannot reach the plugin's bundled font files from a logged-out page, so the login screen uses the system UI font.
 - **Third-party plugins that hard-code colours** (overlays with their own palettes) will keep those colours. The theme covers Stash's own markup, not other plugins' inline styles.
 - **No mobile pass.** The design targets 1920×1080 on a 24-inch display; phone layouts are left to Stash and are not tuned.
-- **Without csLib, the three options live in `localStorage`** for that browser only. The settings page says which storage is in use.
+- **One signal, not a palette.** A custom colour under 4.5:1 against the page is refused and the theme keeps Arc; there is no "I know what I'm doing" override, because an invisible focus ring is a bug, not a preference.
+
+### Verified against
+
+Stash **v0.32.0**, 2026-11-27: Chrome 130 on Windows 11 at 1920×1080, plus the automated suites in `tests/` (`node --test "tests/**/*.test.mjs"`). The bundled faces are served through the plugin's `assets:` map; if a Stash release ever stops serving that route they fall back to the system stack rather than erroring. Coexistence is tested with **External Link Groups**; two themes on one page fight, so run Carbon Arc on its own.
 - **Compact density changes card padding and margin, not column count** — Stash owns the grid maths, and a theme that overrode it would break card sizing on other screens.
 - **Long values wrap rather than truncating in the middle.** A middle ellipsis needs the string, which CSS cannot read; detail values and file paths break instead of clipping.
 - **Not yet through a live functional pass.** The CSS is reviewed against the current Stash markup and the settings page is exercised in a browser harness, but the November 2026 pass has not re-run the full live matrix (see [Tested environment](#tested-environment)). Report anything that stays Stash-blue.
