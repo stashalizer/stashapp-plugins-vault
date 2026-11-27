@@ -33,7 +33,7 @@
   var LEGACY_STORAGE_KEY = "carbonArc.config.v1";
   var OFF_KEY = "carbonArc.off";
   var URL_PARAM = "carbonarc";
-  var VERSION = "0.4.0";
+  var VERSION = "0.4.1";
 
   var DEFAULTS = {
     accent: "arc",

@@ -809,7 +809,14 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **Colour overrides come in two layers**: remap the Bootstrap `--bs-*`
   variables Stash reads, then override the components that still hard-code SCSS
   colours (`.top-nav`, `.grid-card`, `.detail-header`, `.video-js`, `.Lightbox`,
-  `.react-select__*`, …). `!important` is used only against Bootstrap utilities
+  `.react-select__*`, …). Remapping a variable is not enough wherever Stash's
+  SCSS compiles a colour to a literal: the task queue is the worked example —
+  its sticky band (`#tasks-panel .tasks-panel-queue`) is `#202b33` and the card
+  is `.job-table.card` at `#30404d`, both literals at a specificity a plain
+  `.card` rule loses to (fixed in 0.4.1, verified on the live v0.32.0 instance,
+  2026-11-28). When a surface stays in Stash's blue-grey, read the computed
+  value and the matched rule before adding another variable.
+  `!important` is used only against Bootstrap utilities
   (`.bg-dark`, `.text-muted`) and inline styles. The full selector inventory is
   `docs/carbon-arc-theme.html` §08.
 - **Check a selector against the shipped CSS before writing a rule.** v0.32.0

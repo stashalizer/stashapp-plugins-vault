@@ -1231,6 +1231,30 @@ input[type="range"] {
   border-radius: var(--ca-r-card);
 }
 
+/* The task queue is painted in compiled literals that no variable reaches:
+   the sticky band behind its heading is Stash's own body colour (#202b33,
+   inside `(min-width: 576px) and (min-height: 600px)`) and the queue card is
+   `.job-table.card` (#30404d), which outranks the plain `.card` rule in
+   section 5 and sits outside `.setting-section`, so the rule above never
+   reached it. Both selectors repeat Stash's specificity so the later sheet
+   wins. The band takes the canvas colour because it is sticky: the task list
+   scrolls under it and needs an opaque ground. */
+#tasks-panel .tasks-panel-queue {
+  background-color: var(--ca-canvas);
+}
+
+.job-table.card {
+  background: var(--ca-card);
+  border: 1px solid var(--ca-line);
+  border-radius: var(--ca-r-card);
+}
+
+.job-table .empty-queue-message,
+.job-table .cancelled,
+.job-table .finished {
+  color: var(--ca-tx-3);
+}
+
 #settings-menu-container .nav-link {
   color: var(--ca-tx-2);
   border-radius: var(--ca-r-ctl);
