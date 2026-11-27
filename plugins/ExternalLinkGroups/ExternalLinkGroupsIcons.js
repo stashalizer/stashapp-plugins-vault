@@ -15,6 +15,14 @@
  * fires onload or onerror, and because probing three sources in parallel
  * triples the outbound requests on every cold domain.
  *
+ * A 200-or-404 response carrying a *decodable image* is a hit as far as <img>
+ * is concerned, and both icon services use exactly that shape for "no icon":
+ * DuckDuckGo answers 404 with a 48×48 grey chevron. `Shared.isPlaceholderIcon`
+ * recognises it by its intrinsic size, and such a hit is demoted to a last
+ * resort — the chain keeps looking, and only falls back to it when nothing
+ * better loaded. That is what stops a forum behind Cloudflare from showing
+ * DuckDuckGo's chevron instead of its own logo (simpcity.cr, 2026-11-28).
+ *
  * Invalidation, in the order it happens:
  *   1. `img.onerror` on the rendered icon  → `reportBroken(domain, src)`, which
  *      drops the cache entry, blacklists that source for the session and
@@ -42,7 +50,11 @@
     return;
   }
 
-  var CACHE_VERSION = 1;
+  // Bump this when the resolver changes what it accepts. v2: a service
+  // placeholder (a 404 that carries an image) is no longer cached as a hit, so
+  // every v1 entry has to be re-probed — otherwise the wrong icon stays on
+  // screen for the rest of its 30-day TTL.
+  var CACHE_VERSION = 2;
 
   var cache = {};
   var failed = {}; // domain -> { [src]: true }, session-only
@@ -105,32 +117,39 @@
   function probe(src) {
     return new Promise(function (resolve) {
       if (!canProbe()) {
-        resolve(false);
+        resolve({ ok: false, width: 0, height: 0 });
         return;
       }
 
       var settled = false;
       var img = new window.Image();
       var timer = window.setTimeout(function () {
-        finish(false);
+        finish(false, 0, 0);
       }, S.ICON_PROBE_TIMEOUT_MS);
 
-      function finish(ok) {
+      function finish(ok, width, height) {
         if (settled) return;
         settled = true;
         window.clearTimeout(timer);
         img.onload = null;
         img.onerror = null;
-        resolve(ok);
+        resolve({ ok: ok, width: width || 0, height: height || 0 });
       }
 
       img.onload = function () {
         // A "successful" response that is not a decodable image (an HTML error
-        // page served with 200) reports zero intrinsic size.
-        finish(img.naturalWidth > 0 || img.width > 0);
+        // page served with 200) reports zero intrinsic size. The size is also
+        // what `isPlaceholderIcon` needs: neither icon service sends CORS
+        // headers, so the pixels are unreadable and the dimensions are the only
+        // way to tell a real icon from the service's own "no icon" artwork.
+        finish(
+          img.naturalWidth > 0 || img.width > 0,
+          img.naturalWidth || img.width,
+          img.naturalHeight || img.height
+        );
       };
       img.onerror = function () {
-        finish(false);
+        finish(false, 0, 0);
       };
 
       // Do not leak the Stash URL to the icon service or to the site.
@@ -139,13 +158,27 @@
     });
   }
 
-  function chain(candidates, index, host) {
-    if (index >= candidates.length) return Promise.resolve(null);
+  /**
+   * Walk the candidates in order and return the source to trust, or null.
+   *
+   * `state.suspect` carries a candidate that loaded but looked like a service
+   * placeholder. It is kept rather than discarded: if every better source fails
+   * (Google is unreachable in some regions, the site blocks the .ico path), a
+   * generic mark still beats a letter tile for a domain the user configured.
+   * Only one suspect is remembered — the first, which is DuckDuckGo by order.
+   */
+  function chain(candidates, index, host, state) {
+    if (index >= candidates.length) return Promise.resolve(state.suspect);
 
-    return probe(candidates[index]).then(function (ok) {
-      if (ok) return candidates[index];
-      failed[host][candidates[index]] = true;
-      return chain(candidates, index + 1, host);
+    var src = candidates[index];
+    return probe(src).then(function (hit) {
+      if (hit.ok && S.isPlaceholderIcon(src, hit.width, hit.height)) {
+        if (!state.suspect) state.suspect = src;
+        return chain(candidates, index + 1, host, state);
+      }
+      if (hit.ok) return src;
+      failed[host][src] = true;
+      return chain(candidates, index + 1, host, state);
     });
   }
 
@@ -169,7 +202,7 @@
       return Promise.resolve(missed);
     }
 
-    inflight[host] = chain(candidates, 0, host).then(function (src) {
+    inflight[host] = chain(candidates, 0, host, { suspect: null }).then(function (src) {
       delete inflight[host];
       var entry = entryFor(host, src);
       notify();

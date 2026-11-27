@@ -462,6 +462,12 @@
    * services after it cover sites that only publish icons via <link rel=icon>
    * (or block the bare .ico path). DuckDuckGo is ahead of Google because the
    * Google endpoint is unreachable in some regions; neither is required.
+   *
+   * Both services answer "I do not know this domain" with **404 plus a PNG of
+   * their own** — DuckDuckGo a 48×48 grey circle with a chevron, Google a 16×16
+   * globe. An `<img>` never sees the status code, so that placeholder arrives
+   * as a successful load; `isPlaceholderIcon` is what keeps it out of the icon
+   * cache. See that function for why only DuckDuckGo is recognised.
    */
   function iconCandidates(domain) {
     var host = normalizeDomain(domain);
@@ -472,6 +478,29 @@
       "https://icons.duckduckgo.com/ip3/" + host + ".ico",
       "https://www.google.com/s2/favicons?sz=64&domain=" + encodeURIComponent(host),
     ];
+  }
+
+  // DuckDuckGo's "no icon" artwork: a grey circle with a white chevron, always
+  // 48×48 PNG, served with a 404 (verified 2026-11-28 against simpcity.cr and a
+  // domain that does not exist). Google's equivalent is 16×16 and deliberately
+  // NOT listed: real icons that small exist (r18.dev serves one), and Google is
+  // the last source, so rejecting it would replace a correct icon with a letter
+  // tile. DuckDuckGo is not the last source — a false positive only costs one
+  // more probe, and the 48×48 case is also how Linktree's real mark is served.
+  var DDG_PLACEHOLDER_SIZE = 48;
+
+  /**
+   * Is this "successful" icon load actually the service's own placeholder?
+   *
+   * Intrinsic width/height is the only thing a cross-origin image exposes — the
+   * canvas is tainted (neither service sends `Access-Control-Allow-Origin`) and
+   * Stash's CSP keeps `fetch` off them — so the placeholder is recognised by
+   * the size the service always renders it at.
+   */
+  function isPlaceholderIcon(src, width, height) {
+    if (typeof src !== "string" || !src) return false;
+    if (width !== DDG_PLACEHOLDER_SIZE || height !== DDG_PLACEHOLDER_SIZE) return false;
+    return src.indexOf("//icons.duckduckgo.com/ip3/") !== -1;
   }
 
   window.ExternalLinkGroupsShared = {
@@ -502,5 +531,6 @@
     suggestDomains: suggestDomains,
     appendDomains: appendDomains,
     iconCandidates: iconCandidates,
+    isPlaceholderIcon: isPlaceholderIcon,
   };
 })();

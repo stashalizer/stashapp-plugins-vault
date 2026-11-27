@@ -1,6 +1,6 @@
 name: External Link Groups
 description: "Gives the sites you actually use their own icon buttons on performer, studio and group pages. The settings page can scan your library and rank the domains your links point at, so the frequent ones are one click away instead of typed in by hand. A domain on the list is matched exactly (www-insensitive), its favicon is fetched and cached, a single link opens directly and several open a menu. Domains that are unconfigured or switched off are left to Stash's own buttons. Optional: install CommunityScriptsUILibrary to keep the list in the plugin configuration instead of this browser."
-version: 0.2.0
+version: 0.2.1
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:

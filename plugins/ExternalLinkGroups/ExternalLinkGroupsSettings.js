@@ -871,7 +871,7 @@
         h(
           "p",
           { className: "elg-set__note" },
-          "Icons come from the site's own /favicon.ico first, then DuckDuckGo, then Google. Only the source URL is cached (30 days for a hit, 6 hours for a miss) — the browser caches the image itself. A failed image falls through to the next source automatically."
+          "Icons come from the site's own /favicon.ico first, then DuckDuckGo, then Google. Only the source URL is cached (30 days for a hit, 6 hours for a miss) — the browser caches the image itself. A failed image falls through to the next source automatically. Both services answer “no icon for this site” with a 404 that still carries a picture, so DuckDuckGo's placeholder (a grey chevron) is recognised by its size and only used when nothing better loads — a site behind Cloudflare, for example, still gets its real icon from the next source."
         ),
         h(
           "div",

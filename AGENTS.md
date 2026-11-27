@@ -963,6 +963,28 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   party, works wherever the site itself does) → DuckDuckGo → Google S2. Each is
   probed with an `Image` and a 4 s deadline (a black-holed host never fires
   `onload`/`onerror`), one at a time.
+- **A 404 that carries a picture is not an icon.** Both services answer "I do
+  not know this domain" with **HTTP 404 plus a PNG of their own**: DuckDuckGo a
+  grey 48×48 circle with a chevron, Google a 16×16 globe. `<img>` never sees the
+  status code, so the placeholder fires `onload` exactly like a real icon — v0.2.0
+  cached that chevron as simpcity.cr's icon for 30 days while the site's real
+  logo sat unused at the next source. `Shared.isPlaceholderIcon()` now recognises
+  DuckDuckGo's by its intrinsic size, and `Icons.chain()` **demotes** such a hit
+  to a last resort instead of accepting it: it keeps probing and only falls back
+  to the placeholder when nothing better loaded (a region that cannot reach
+  Google must not end up with a letter tile). Three constraints to keep:
+  - **Size is the only signal available.** Neither service sends
+    `Access-Control-Allow-Origin`, so the canvas is tainted, and `connect-src`
+    keeps `fetch` off them. Do not "improve" this by reading pixels or status.
+  - **Google's 16×16 globe is deliberately not detected.** Real icons are served
+    at that size (r18.dev) and Google is the last source, so rejecting it would
+    trade a correct icon for a letter tile.
+  - **DuckDuckGo's 48×48 is also how some real icons are served** (Linktree).
+    That false positive costs one extra probe, not the icon, which is why the
+    rule demotes instead of refuses — same reasoning as the fallback above.
+  Bumping `CACHE_VERSION` in `ExternalLinkGroupsIcons.js` is mandatory when this
+  rule changes, otherwise the wrong icon survives its TTL on every existing
+  install (v2 was that bump).
 - **Invalidation has four paths**: (1) `<img onerror>` →
   `Icons.reportBroken()` blacklists that source for the session, drops the cache
   entry and calls `ensure()` again, which advances to the next candidate — it
@@ -970,8 +992,11 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   domain and will not re-run by itself; (2) TTL — 30 days for a hit, 6 hours for
   a miss, so a site that was down is retried the same day; (3) "Refresh" per row
   and "Clear icon cache" in the settings page; (4) the blob's `v` field, bumped
-  when the shape changes. When every candidate fails the entry is cached as a
-  negative and the button shows a letter tile.
+  when the stored shape changes **or when the resolver starts accepting or
+  rejecting a different kind of answer** — a rule change that leaves old entries
+  alone keeps serving the wrong icon until their TTL expires. When every
+  candidate fails the entry is cached as a negative and the button shows a
+  letter tile.
 - **Click behaviour is per group**: one URL renders an `<a target="_blank">`
   (Stash's own `openIfSingle` rule, applied per site), several render Stash's
   dropdown markup (`external-links-button` + `minimal link`, menu portalled to

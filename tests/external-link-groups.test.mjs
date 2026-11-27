@@ -202,3 +202,34 @@ test("iconCandidates tries the site first, then two services", () => {
   );
   assert.deepEqual(snap(S.iconCandidates("nope")), []);
 });
+
+test("isPlaceholderIcon recognises DuckDuckGo's 404-with-a-picture", () => {
+  const ddg = S.iconCandidates("simpcity.cr")[1];
+
+  // The real thing: a grey 48×48 chevron served with a 404, which an <img>
+  // reports as a successful load of exactly this size.
+  assert.equal(S.isPlaceholderIcon(ddg, 48, 48), true);
+});
+
+test("isPlaceholderIcon leaves every other shape alone", () => {
+  const ddg = S.iconCandidates("simpcity.cr")[1];
+  const google = S.iconCandidates("simpcity.cr")[2];
+  const site = S.iconCandidates("simpcity.cr")[0];
+
+  // A real 48×48 icon from DuckDuckGo (Linktree is served that way) is
+  // indistinguishable from the placeholder, so it is demoted rather than
+  // refused — the resolver falls through, it does not give up. At least the
+  // check must not fire on anything that is not that exact size.
+  assert.equal(S.isPlaceholderIcon(ddg, 32, 32), false);
+  assert.equal(S.isPlaceholderIcon(ddg, 48, 64), false);
+  assert.equal(S.isPlaceholderIcon(ddg, 0, 0), false);
+
+  // Google's 16×16 globe is not recognised on purpose: small real icons exist
+  // and Google is the last source, so rejecting one would leave a letter tile.
+  assert.equal(S.isPlaceholderIcon(google, 16, 16), false);
+  // The site's own /favicon.ico is never judged by this rule.
+  assert.equal(S.isPlaceholderIcon(site, 48, 48), false);
+
+  assert.equal(S.isPlaceholderIcon(null, 48, 48), false);
+  assert.equal(S.isPlaceholderIcon(ddg, undefined, undefined), false);
+});
