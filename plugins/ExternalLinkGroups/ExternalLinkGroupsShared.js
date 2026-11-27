@@ -36,6 +36,13 @@
  * plugin does not claim ends up in `rest` and is rendered by Stash exactly as
  * it was before the plugin was installed.
  *
+ * The settings page does not make the user type every domain by hand.
+ * `summarizeUrls` ranks the domains a library actually links to,
+ * `suggestDomains` subtracts the ones already configured, and the page appends
+ * the rest to the draft — the user reviews them and still presses Save. This
+ * module stays pure: reading the library is ExternalLinkGroupsScan.js,
+ * persisting is ExternalLinkGroupsStore.js.
+ *
  * License: AGPL-3.0
  */
 (function () {
@@ -48,6 +55,26 @@
   var VERSION = 1;
   var MAX_DOMAINS = 32;
   var MAX_DOMAIN_LENGTH = 253;
+  // How many suggestions the settings page offers at once, and how many of them
+  // start checked. Both are UI budgets, not limits of the model: the library
+  // summary itself is never truncated.
+  var SUGGEST_LIMIT = 25;
+  var SUGGEST_PRESELECT = 5;
+
+  // Paging bounds for ExternalLinkGroupsScan. A Stash library is small enough
+  // that these are a guard against a runaway loop (a bad `count`, a server that
+  // keeps answering) rather than a ceiling users should meet.
+  var SCAN_PAGE_SIZE = 200;
+  var SCAN_MAX_PAGES = 25;
+
+  // The three Stash entities that carry a URL list and whose detail pages render
+  // `ExternalLinkButtons`. Kept here so the scan query, the flattening and the
+  // per-entity totals all read the same names.
+  var LIBRARY_SOURCES = [
+    { query: "findPerformers", field: "performers" },
+    { query: "findStudios", field: "studios" },
+    { query: "findGroups", field: "groups" },
+  ];
 
   // How long a resolved icon URL is trusted. A hit is a URL, not image bytes:
   // the browser does the byte caching, we only remember which candidate worked.
@@ -248,6 +275,186 @@
   }
 
   /**
+   * Flatten the URL lists of a Stash library payload into one array.
+   *
+   * `data` is what a GraphQL query built from `LIBRARY_SOURCES` returns
+   * (`{ findPerformers: { performers: [{ urls }] }, … }`); a bare array of
+   * entities is accepted too, which is what a test or a single page looks like.
+   * Missing, non-array and non-string pieces are skipped instead of throwing —
+   * Stash pads its own responses with nulls and an old performer may have no
+   * `urls` field at all.
+   */
+  function urlsFromLibrary(data) {
+    var out = [];
+
+    function take(list) {
+      if (!Array.isArray(list)) return;
+      for (var i = 0; i < list.length; i += 1) {
+        var entity = list[i];
+        if (!entity || typeof entity !== "object" || !Array.isArray(entity.urls)) continue;
+        for (var j = 0; j < entity.urls.length; j += 1) {
+          if (typeof entity.urls[j] === "string") out.push(entity.urls[j]);
+        }
+      }
+    }
+
+    if (Array.isArray(data)) {
+      take(data);
+      return out;
+    }
+    if (!data || typeof data !== "object") return out;
+
+    for (var i = 0; i < LIBRARY_SOURCES.length; i += 1) {
+      var page = data[LIBRARY_SOURCES[i].query];
+      if (page && typeof page === "object") take(page[LIBRARY_SOURCES[i].field]);
+    }
+
+    return out;
+  }
+
+  /**
+   * Count how many distinct links each domain owns.
+   *
+   * Returns `[{ domain, count, sample }]`, sorted by count descending and then
+   * by domain, so the order is identical across scans and the settings page can
+   * pre-select the head of the list.
+   *
+   * `count` is a count of **distinct links**, not of entities: Stash happily
+   * stores the same profile URL on a performer and on the studio that owns the
+   * account, and two rows pointing at one page are one link. Links the plugin
+   * cannot parse (opaque schemes, hostless strings, junk) are dropped rather
+   * than grouped under a placeholder — a suggestion nobody can act on is worse
+   * than a shorter list. `sample` is the first link seen for the domain, for the
+   * tooltip.
+   */
+  function summarizeUrls(urls) {
+    var byDomain = {};
+    var order = [];
+    var seen = {};
+    var list = Array.isArray(urls) ? urls : [];
+
+    for (var i = 0; i < list.length; i += 1) {
+      if (typeof list[i] !== "string") continue;
+
+      var url = list[i].trim();
+      if (!url || seen[url]) continue;
+      seen[url] = true;
+
+      var domain = hostnameOf(url);
+      if (!domain) continue;
+
+      if (!byDomain[domain]) {
+        byDomain[domain] = { domain: domain, count: 0, sample: url };
+        order.push(domain);
+      }
+      byDomain[domain].count += 1;
+    }
+
+    var summary = [];
+    for (var j = 0; j < order.length; j += 1) summary.push(byDomain[order[j]]);
+
+    summary.sort(function (a, b) {
+      if (a.count !== b.count) return b.count - a.count;
+      if (a.domain === b.domain) return 0;
+      return a.domain < b.domain ? -1 : 1;
+    });
+
+    return summary;
+  }
+
+  /**
+   * Domains from a summary that the config does not already own, most used
+   * first, at most `limit` of them and never more than `MAX_DOMAINS` allows.
+   *
+   * The filter is deliberately about **presence, not enablement**: a domain the
+   * user configured and then switched off is a decision, and re-suggesting it
+   * would overwrite that decision with a default. Entries are returned as new
+   * objects — nothing here writes to the config or to the summary, the caller
+   * decides what to do with the result.
+   */
+  function suggestDomains(config, candidates, limit) {
+    var entries = sanitizeConfig(config).domains;
+    var taken = {};
+    for (var i = 0; i < entries.length; i += 1) taken[entries[i].domain] = true;
+
+    var capacity = MAX_DOMAINS - entries.length;
+    if (capacity <= 0) return [];
+
+    var max = typeof limit === "number" && isFinite(limit) && limit > 0 ? Math.floor(limit) : SUGGEST_LIMIT;
+    if (max > capacity) max = capacity;
+
+    var pool = Array.isArray(candidates) ? candidates : [];
+    var fresh = [];
+    var seen = {};
+
+    for (var j = 0; j < pool.length; j += 1) {
+      var raw = pool[j];
+      var domain = normalizeDomain(typeof raw === "string" ? raw : raw && raw.domain);
+      if (!domain || taken[domain] || seen[domain]) continue;
+      seen[domain] = true;
+      fresh.push({
+        domain: domain,
+        count: raw && typeof raw.count === "number" && raw.count > 0 ? Math.floor(raw.count) : 0,
+        sample: raw && typeof raw.sample === "string" ? raw.sample : null,
+      });
+    }
+
+    fresh.sort(function (a, b) {
+      if (a.count !== b.count) return b.count - a.count;
+      if (a.domain === b.domain) return 0;
+      return a.domain < b.domain ? -1 : 1;
+    });
+
+    return fresh.slice(0, max);
+  }
+
+  /**
+   * Append domains to a config without touching what is already there.
+   *
+   * This is the "accept the suggestions" rule, kept pure so it can be tested:
+   * new entries get the same defaults the manual form uses (`enabled`,
+   * `separate`), an existing entry is never rewritten — not its order, not its
+   * flags — and the result is capped at `MAX_DOMAINS`.
+   *
+   * Returns `{ added, rejected, overflow }`:
+   *   added    — the new entries, in input order
+   *   rejected — domains that were invalid, duplicated or already configured
+   *   overflow — valid domains that did not fit under the cap
+   *
+   * The caller writes `added`; nothing here mutates `config`.
+   */
+  function appendDomains(config, domains) {
+    var entries = sanitizeConfig(config).domains;
+    var taken = {};
+    for (var i = 0; i < entries.length; i += 1) taken[entries[i].domain] = true;
+
+    var room = MAX_DOMAINS - entries.length;
+    var added = [];
+    var rejected = 0;
+    var overflow = 0;
+    var seen = {};
+
+    var list = Array.isArray(domains) ? domains : [];
+    for (var j = 0; j < list.length; j += 1) {
+      var raw = list[j];
+      var domain = normalizeDomain(typeof raw === "string" ? raw : raw && raw.domain);
+      if (!domain || taken[domain] || seen[domain]) {
+        rejected += 1;
+        continue;
+      }
+      seen[domain] = true;
+
+      if (added.length >= room) {
+        overflow += 1;
+        continue;
+      }
+      added.push({ domain: domain, enabled: true, separate: true });
+    }
+
+    return { added: added, rejected: rejected, overflow: overflow };
+  }
+
+  /**
    * Icon sources tried in order, first hit wins.
    *
    * The site's own /favicon.ico comes first: it is the most accurate, needs no
@@ -273,6 +480,11 @@
     ICON_CACHE_KEY: ICON_CACHE_KEY,
     VERSION: VERSION,
     MAX_DOMAINS: MAX_DOMAINS,
+    SUGGEST_LIMIT: SUGGEST_LIMIT,
+    SUGGEST_PRESELECT: SUGGEST_PRESELECT,
+    SCAN_PAGE_SIZE: SCAN_PAGE_SIZE,
+    SCAN_MAX_PAGES: SCAN_MAX_PAGES,
+    LIBRARY_SOURCES: LIBRARY_SOURCES,
     ICON_TTL_MS: ICON_TTL_MS,
     ICON_FAIL_TTL_MS: ICON_FAIL_TTL_MS,
     ICON_PROBE_TIMEOUT_MS: ICON_PROBE_TIMEOUT_MS,
@@ -285,6 +497,10 @@
     sanitizeConfig: sanitizeConfig,
     findEntry: findEntry,
     partition: partition,
+    urlsFromLibrary: urlsFromLibrary,
+    summarizeUrls: summarizeUrls,
+    suggestDomains: suggestDomains,
+    appendDomains: appendDomains,
     iconCandidates: iconCandidates,
   };
 })();

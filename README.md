@@ -12,7 +12,7 @@ A collection of Stash plugins — player overlays, page additions, and one theme
 - **[Scene Rotation](#scene-rotation)** — rotate a sideways scene 90/180/270 degrees and have it stay that way: the angle is saved on the scene and applied to the player, the card preview and the cover, without re-encoding the file or writing anything to disk.
 - **[Audio Support](#audio-support)** — plays audio files (mp3, flac, m4a, ogg, opus, wav) as scenes with a dedicated audio overlay, synced LRC lyrics, a play queue with auto-advance, and a browse page (by work / all / by tag).
 - **[Carbon Arc](#carbon-arc)** — a desktop-first dark theme: graphite surfaces, bone text, one low-chroma signal and monospaced numbers, with three signal colours and two card densities to choose from.
-- **[External Link Groups](#external-link-groups)** — puts the sites you actually use on their own icon buttons on performer, studio and group pages, with each site's favicon fetched and cached, one link opening directly and several opening a menu.
+- **[External Link Groups](#external-link-groups)** — puts the sites you actually use on their own icon buttons on performer, studio and group pages, with each site's favicon fetched and cached, one link opening directly and several opening a menu. A library scan suggests the domains you link to most, so you do not type them in one by one.
 
 ## Requirements (all plugins)
 
@@ -383,28 +383,32 @@ Stash already collects every profile URL a performer or studio has. What it does
 
 ### Features
 
+- **Suggestions instead of typing.** One click on **Scan library** reads the URLs already stored on your performers, studios and groups, drops the ones it cannot parse, ranks what is left by how many links use each domain and pre-selects the most common ones. Accept a batch in one click instead of typing twelve hostnames — and a domain you already configured (even one you switched off) is never re-offered or overwritten. The scan is a button, not something the page does on open: it walks the whole library, so it runs when you ask and the result stays until you ask again.
 - **Exact-domain control.** A domain on your list claims only URLs on that host (a leading `www.` is ignored, subdomains are not). Everything else — plus every entry you switch off — is handed back to Stash, which renders it exactly as it did before the plugin existed.
 - **Two behaviours per site.** *Separate* gives the site its own icon button. *Not separate* groups it into one "Configured links" button, for sites you want convenient but not prominent.
 - **Real favicons, cached.** The button shows the site's own icon, found by trying the site's `/favicon.ico` first, then DuckDuckGo, then Google. Only the source URL is cached locally (30 days for a hit, 6 hours for a miss); a broken image falls through to the next source by itself and ends on a letter tile rather than a hole.
 - **One click or a menu.** A site with a single URL opens it in a new tab directly. A site with several opens a list — the same rule Stash applies to its own link button, applied per site.
 - **Config order is button order.** Reorder with the arrows in the settings page; the icons follow.
-- **No dependencies.** No csLib requirement, no GraphQL, no backend hook. With csLib installed the domain list is stored in Stash's plugin configuration; without it, in this browser.
+- **No dependencies.** No csLib requirement, no backend hook, and no write to Stash beyond the plugin config. The scan is a single read-only GraphQL query against the Stash you are already looking at. With csLib installed the domain list is stored in Stash's plugin configuration; without it, in this browser.
 
 ### How to use it
 
 1. Install **External Link Groups** from the source list and enable it.
 2. Open **Settings → Tools → External Link Groups** (or `/plugins/externalurlgroups`).
-3. Add a domain — `onlyfans.com` or a pasted profile URL both work, it is reduced to the host. Choose **Enabled** and, if you want it promoted, **Separate button**.
-4. Save, then open any performer, studio or group page. The configured sites appear as their own icons next to the favourite star, before Stash's own buttons.
-5. Icons that look wrong or blank: use **↻** on that row, or **Clear icon cache**, and reload.
+3. Press **Scan library** under **Suggested from your library**: it lists the domains your links point at, most used first. The top five start ticked — untick anything you do not want, tick others, then **Add selected**. The domains land in the list above with the same defaults as a hand-typed one, and you can still edit, disable or reorder each of them. The list stays until you press **Rescan library**.
+4. Or add a domain by hand — `onlyfans.com` or a pasted profile URL both work, it is reduced to the host. Choose **Enabled** and, if you want it promoted, **Separate button**.
+5. **Save changes**, then open any performer, studio or group page. The configured sites appear as their own icons next to the favourite star, before Stash's own buttons.
+6. Icons that look wrong or blank: use **↻** on that row, or **Clear icon cache**, and reload.
 
 ### Known limitations
 
 - **Exact host only.** `onlyfans.com` does not claim `fan.onlyfans.com`; add the subdomain as its own entry if a site puts profiles there.
+- **The scan counts links, not entities.** The same profile URL stored on a performer and on the studio that owns it is one link, and only performers, studios and groups are read — scene URLs are not. It also stops after 25 pages per entity type; the panel says so when that happens instead of presenting a partial count as the whole library.
+- **Suggestions never overwrite.** Only domains that are not in the list at all are offered, so a domain you disabled stays disabled. Accepting a suggestion changes the draft, not the saved config — nothing is persisted until **Save changes**.
 - **Icons come from the network.** First load of a new domain makes one request per candidate (up to three, 4 s each) before falling back to the letter tile. Offline, or behind a block on the icon services, only the site's own `/favicon.ico` can succeed.
 - **Not a StashDB feature.** The plugin reads the URLs already on the entity; it does not fetch new ones, and it does not touch the URLs shown in the edit form.
 - **Conflicts with External Links Enhanced.** Both replace the same component and that plugin does not chain, so enable one of the two, not both.
-- **Not yet through a live functional pass.** The model and the patch are covered by `node:test` (including a stub render), but CSS placement and icon loading have not been exercised against a running Stash in the November 2026 pass (see [Tested environment](#tested-environment)).
+- **Partly verified live.** The scan, the suggestion list and the accept-a-batch flow were exercised against a running Stash v0.32.0 on 2026-11-28; the model and the patch are covered by `node:test` (including a stub render). Icon loading and button placement on the detail pages have not been through the November 2026 live pass (see [Tested environment](#tested-environment)).
 
 ---
 

@@ -89,6 +89,7 @@ plugins/<PluginId>/
   <PluginId>Settings.js     # optional settings UI: a route/page, or a patch of Stash's own rows (CarbonArc)
   <PluginId>Store.js        # optional config helper, no player surface (CarbonArc, ExternalLinkGroups)
   <PluginId>Icons.js        # optional icon resolver + cache (ExternalLinkGroups only)
+  <PluginId>Scan.js         # optional read-only GraphQL sweep (ExternalLinkGroups only)
   <PluginId>Hook.js         # optional backend Goja hook (AudioSupport only)
   *.css
 build_site.sh               # zips each plugin + writes index.yml
@@ -136,7 +137,10 @@ AGENTS.md                   # architecture + conventions (this file)
   probably belongs in the shared module instead.
 - **ExternalLinkGroups has the same split.** `external-link-groups.test.mjs`
   asserts the config schema, domain matching and URL partition against the real
-  module. `external-link-groups-render.test.mjs` supplies a ~120-line React
+  module. `external-link-groups-scan.test.mjs` covers the library scan the same
+  way, with a stubbed `fetch` that answers page by page: ranking, the
+  already-configured rule, pagination, truncation and the endpoint base path.
+  `external-link-groups-render.test.mjs` supplies a ~120-line React
   stub (function components, `useState` returning its initial value, `useMemo`
   computed, `useEffect` run immediately) and executes one render of the
   `ExternalLinkButtons` patch — enough to prove the original renderer still
@@ -903,8 +907,9 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
 - **What it does.** Promotes the domains a user configures out of Stash's
   generic link menu and onto their own icon buttons. Everything the plugin
   claims is pulled out of the list handed to Stash; everything else is rendered
-  by Stash exactly as before. No GraphQL, no hooks, no tasks — one page patch,
-  one settings page.
+  by Stash exactly as before. One page patch, one settings page, and one
+  read-only GraphQL sweep behind the settings page (no hooks, no tasks, no
+  writes).
 - **Injection point: `ExternalLinkButtons`** (`ui/v2.5/src/components/Shared/
   ExternalLinksButton.tsx`, `PatchComponent("ExternalLinkButtons")`). It is
   rendered inside `<span class="name-icons">` of the detail title by
@@ -981,6 +986,51 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   load **unless** it has no domains and the browser copy has some — that is the
   "installed csLib after configuring" case, and it is pushed up rather than
   discarded. No `ui.requires`, no `# requires:`.
+- **The settings page suggests domains instead of making the user type them.**
+  `ExternalLinkGroupsScan.js` sends **one read-only GraphQL query**
+  (`findPerformers` / `findStudios` / `findGroups`, `urls` only) and the ranking
+  is pure: `Shared.urlsFromLibrary` → `summarizeUrls` → `suggestDomains` →
+  `appendDomains`. Five rules the feature depends on:
+  - **Click-triggered, never on mount.** The sweep walks every performer,
+    studio and group — the most expensive thing this plugin does — and the
+    settings page is opened for many reasons that have nothing to do with
+    suggestions (fix an icon, reorder a button). Scanning on mount would charge
+    every visit for a feature most visits do not use, and would throw away a
+    list the user was working through. The result also survives re-renders and
+    draft edits; only "Scan library" / "Rescan library" replaces it. Do not
+    reintroduce an effect that calls `runScan` on mount.
+  - **Count distinct links, not entities.** Stash stores the same profile URL on
+    a performer and on the studio that owns the account; two rows are one link.
+    `summarizeUrls` dedupes on the trimmed URL string (the same key `partition`
+    uses) and drops anything `hostnameOf` cannot parse, so an unparseable link
+    never becomes a suggestion nobody can act on.
+  - **Presence, not enablement.** A domain the user configured and then switched
+    off is a decision: `suggestDomains` filters on the domain being in the
+    config at all, and `appendDomains` appends only. Neither rewrites an
+    existing entry's order or its `enabled` / `separate` flags, and the settings
+    page only ever touches its **draft** — Save is still the only write. That is
+    also why "Add selected" is safe to press twice: the second press finds
+    nothing left to add.
+  - **Bounded, and honest about it.** Pages of 200, at most 25 pages, sequential
+    (never a burst of parallel requests against the Stash that may be streaming
+    a video). If the cap stops a sweep, `truncated` is reported and the panel
+    says the numbers are partial — a silent half-count would look like a full
+    one.
+  - **Same-origin `fetch`, not csLib's GQL.** csLib is optional here, so routing
+    the scan through it would remove the suggestions for exactly the users who
+    did not install it. Stash's CSP is `connect-src … 'self'`, which covers a
+    POST to `/graphql`; nothing else in the plugin is allowed to make a network
+    request. The endpoint is derived from **this plugin's own stylesheet
+    `<link>`** (it always carries the served base, reverse-proxy prefix
+    included, whereas the page can be mounted at `/settings` or
+    `/plugins/<id>` and a relative `graphql` would resolve into the wrong
+    directory), falling back to the root `/graphql`. Any failure is reported
+    inline and the manual add form keeps working.
+- **The scan defaults are frozen with the result, not recomputed.** The top
+  `SUGGEST_PRESELECT` (5) unconfigured domains arrive checked; after one batch is
+  accepted the next batch is *not* pre-checked, so a second click is a decision
+  rather than a reflex. Recomputed defaults would silently check the next five
+  every time a row was added.
 - **Coexistence with Carbon Arc is verified, not assumed.**
   `tests/plugin-coexistence.test.mjs` loads both plugins' real files into one
   sandbox in plugin-id order and asserts: both `PluginRoutes` and
@@ -1007,14 +1057,25 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   paper over.
 - **Verification**: `tests/external-link-groups.test.mjs` covers the schema,
   matching and partition against the real module under `node:test`;
-  `tests/external-link-groups-render.test.mjs` runs one stub render pass to
-  prove the original still receives the leftover URLs and that one URL vs
-  several produce a link vs a dropdown. Neither proves CSS or icon loading —
-  those need a live Stash.
+  `tests/external-link-groups-scan.test.mjs` covers the scan — aggregation and
+  ranking, the "already configured" and `MAX_DOMAINS` rules, pagination,
+  truncation, the error messages and the base-path resolution, all against a
+  stubbed `fetch`; `tests/external-link-groups-render.test.mjs` runs one stub
+  render pass to prove the original still receives the leftover URLs and that
+  one URL vs several produce a link vs a dropdown. None of them proves CSS, icon
+  loading or the real endpoint — those need a live Stash. Live check used for
+  the scan (v0.32.0, 2026-11-28): open `/plugins/externalurlgroups` and confirm
+  the panel is **idle** — no `/graphql` request until "Scan library" is pressed
+  — then that pressing it reports a domain/link count, that a configured domain
+  is listed as "left untouched", that accepting a batch appends rows **after**
+  the existing one without changing its flags, and that the notice asks for
+  Save. Driving the page over the DevTools protocol is the cheap way to click
+  the buttons and read the draft back without devtools-in-the-loop screenshots.
 - **Files**: `ExternalLinkGroups.yml` · `ExternalLinkGroupsShared.js` (schema,
-  domain normalization, partition, icon candidate list) ·
-  `ExternalLinkGroupsStore.js` (csLib + localStorage) ·
+  domain normalization, partition, library aggregation and suggestions, icon
+  candidate list) · `ExternalLinkGroupsStore.js` (csLib + localStorage) ·
   `ExternalLinkGroupsIcons.js` (probe, cache, invalidation) ·
+  `ExternalLinkGroupsScan.js` (the one read-only GraphQL sweep) ·
   `ExternalLinkGroups.js` (the component patch) ·
   `ExternalLinkGroupsSettings.js` + two stylesheets.
 

@@ -145,6 +145,7 @@ function loadBoth() {
     ["ExternalLinkGroups", "ExternalLinkGroupsShared.js"],
     ["ExternalLinkGroups", "ExternalLinkGroupsStore.js"],
     ["ExternalLinkGroups", "ExternalLinkGroupsIcons.js"],
+    ["ExternalLinkGroups", "ExternalLinkGroupsScan.js"],
     ["ExternalLinkGroups", "ExternalLinkGroups.js"],
     ["ExternalLinkGroups", "ExternalLinkGroupsSettings.js"],
   ];

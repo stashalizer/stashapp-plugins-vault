@@ -174,6 +174,7 @@ function loadPlugin(urls, config) {
     "ExternalLinkGroupsShared.js",
     "ExternalLinkGroupsStore.js",
     "ExternalLinkGroupsIcons.js",
+    "ExternalLinkGroupsScan.js",
     "ExternalLinkGroups.js",
     "ExternalLinkGroupsSettings.js",
   ]) {

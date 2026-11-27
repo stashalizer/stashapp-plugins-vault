@@ -192,6 +192,61 @@
   color: var(--bs-secondary-color, #6c757d);
 }
 
+/* Library scan: one status line (a live region, so it stays mounted across
+   states) plus one row per suggested domain. */
+.elg-set__scan {
+  margin: 0 0 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__scan:empty {
+  display: none;
+}
+
+.elg-set__scan--error {
+  color: var(--bs-danger, #dc3545);
+}
+
+.elg-set__suggest {
+  margin: 0 0 0.85rem;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+}
+
+.elg-set__suggest-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
+}
+
+.elg-set__suggest-label {
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.elg-set__suggest-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.elg-set__suggest-count {
+  font-size: 0.76rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--bs-secondary-color, #6c757d);
+}
+
+.elg-set__suggest-actions {
+  margin-top: 0.2rem;
+}
+
 .elg-set__actions {
   display: flex;
   flex-wrap: wrap;

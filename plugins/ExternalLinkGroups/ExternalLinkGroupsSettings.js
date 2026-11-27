@@ -16,6 +16,17 @@
  *   - no csLib                  → saves go to localStorage; the page says so.
  *   - server write failed       → inline alert, changes stay in the browser copy.
  *   - invalid or duplicate domain → row error, Save disabled.
+ *   - library scan failed       → the suggestion panel says why and the manual
+ *                                 add form keeps working.
+ *
+ * The suggestion panel is the "I do not want to type twelve domains" path: a
+ * click on Scan library ranks domains by how many links use them, and the ones
+ * the user accepts are appended to the same draft the manual form edits. It is
+ * click-triggered rather than automatic because the scan walks every performer,
+ * studio and group, and most visits to this page are about something else
+ * (an icon, an order). It never writes: no existing row is touched, no default
+ * is applied to a configured domain, and nothing reaches the server until Save
+ * changes.
  *
  * License: AGPL-3.0
  */
@@ -38,9 +49,10 @@
   var S = window.ExternalLinkGroupsShared;
   var Store = window.ExternalLinkGroupsStore;
   var Icons = window.ExternalLinkGroupsIcons;
+  var Scan = window.ExternalLinkGroupsScan;
 
-  if (!S || !Store || !Icons) {
-    console.error("ExternalLinkGroups settings: shared/store modules missing; settings page not registered.");
+  if (!S || !Store || !Icons || !Scan) {
+    console.error("ExternalLinkGroups settings: shared/store/icon/scan modules missing; settings page not registered.");
     return;
   }
 
@@ -61,6 +73,11 @@
         error: null,
       };
     });
+  }
+
+  /** Draft row → config entry, for the pure helpers that take a config. */
+  function toEntry(row) {
+    return { domain: row.domain, enabled: !!row.enabled, separate: !!row.separate };
   }
 
   function serialize(rows) {
@@ -158,12 +175,43 @@
     var saving = savingPair[0];
     var setSaving = savingPair[1];
 
+    var scanPair = useState({
+      status: "idle", // "idle" | "scanning" | "done" | "error"
+      error: null,
+      summary: [],
+      totals: null,
+      links: 0,
+      pages: 0,
+      truncated: false,
+      progress: null,
+      // Domains the scan checked by default: the most used ones that were not
+      // configured at scan time. Frozen with the result so that adding a batch
+      // does not silently check the next batch — a second click should be a
+      // decision, not a follow-through.
+      defaults: {},
+    });
+    var scan = scanPair[0];
+    var setScan = scanPair[1];
+
+    // Explicit checkbox toggles, keyed by domain. An absent key means "whatever
+    // the scan default said".
+    var pickedPair = useState({});
+    var picked = pickedPair[0];
+    var setPicked = pickedPair[1];
+
     var revisionPair = useState(0);
     var revision = revisionPair[0];
     var bumpRevision = revisionPair[1];
 
     var savedRef = useRef(serialize(toDraft(initialConfig)));
     var mountedRef = useRef(true);
+
+    // Latest draft, for the scan callbacks: they outlive the render that started
+    // them and must not answer "already configured" from a stale closure.
+    var draftRef = useRef(draft);
+    draftRef.current = draft;
+
+    var scanTokenRef = useRef(0);
 
     useEffect(function () {
       mountedRef.current = true;
@@ -186,6 +234,91 @@
           console.error("ExternalLinkGroups settings: load failed", err);
         });
       // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    /**
+     * Sweep the library once and rank its domains.
+     *
+     * Only ever called from a click: opening the settings page must not cost a
+     * library read. The page can be opened for a dozen reasons that have nothing
+     * to do with suggestions (fixing an icon, reordering a button), and a sweep
+     * of every performer/studio/group is the most expensive thing this plugin
+     * does. The result also stays put until the user asks for a new one, so
+     * revisiting the page does not throw away a list they were working through.
+     *
+     * The token guard is the only cancellation the page needs: a rescan, or an
+     * unmount, makes the older promise's results irrelevant, and a late
+     * `setState` on an unmounted tree is what React warns about.
+     */
+    var runScan = useCallback(function () {
+      scanTokenRef.current += 1;
+      var token = scanTokenRef.current;
+
+      setScan(function (previous) {
+        return Object.assign({}, previous, {
+          status: "scanning",
+          error: null,
+          summary: [],
+          links: 0,
+          pages: 0,
+          truncated: false,
+          progress: null,
+          defaults: {},
+        });
+      });
+      setPicked({});
+
+      Scan.scan({
+        onProgress: function (progress) {
+          if (token !== scanTokenRef.current || !mountedRef.current) return;
+          setScan(function (previous) {
+            return Object.assign({}, previous, { progress: progress });
+          });
+        },
+      })
+        .then(function (result) {
+          if (token !== scanTokenRef.current || !mountedRef.current) return;
+
+          var configured = {};
+          draftRef.current.forEach(function (row) {
+            var domain = S.normalizeDomain(row.domain);
+            if (domain) configured[domain] = true;
+          });
+
+          var defaults = {};
+          var checked = 0;
+          for (var i = 0; i < result.summary.length && checked < S.SUGGEST_PRESELECT; i += 1) {
+            var domain = result.summary[i].domain;
+            if (configured[domain]) continue;
+            defaults[domain] = true;
+            checked += 1;
+          }
+
+          setScan({
+            status: "done",
+            error: null,
+            summary: result.summary,
+            totals: result.totals,
+            links: result.links,
+            pages: result.pages,
+            truncated: result.truncated,
+            progress: null,
+            defaults: defaults,
+          });
+        })
+        .catch(function (err) {
+          if (token !== scanTokenRef.current || !mountedRef.current) return;
+          console.error("ExternalLinkGroups settings: library scan failed", err);
+          setScan(function (previous) {
+            return Object.assign({}, previous, {
+              status: "error",
+              error: err && err.message ? err.message : String(err),
+              summary: [],
+              progress: null,
+              defaults: {},
+            });
+          });
+        });
     }, []);
 
     var dirty = serialize(draft) !== savedRef.current;
@@ -275,6 +408,55 @@
       });
     }, []);
 
+    var togglePick = useCallback(function (domain, value) {
+      setPicked(function (previous) {
+        var next = Object.assign({}, previous);
+        next[domain] = !!value;
+        return next;
+      });
+    }, []);
+
+    /**
+     * Append domains to the draft. Additive only: an existing row is never
+     * rewritten, reordered or re-flagged, and a domain that is already there is
+     * skipped — that is what makes "Add selected" safe to press twice. The rule
+     * itself is `Shared.appendDomains`, so it is the same one the tests check.
+     */
+    var addSuggested = useCallback(
+      function (domains) {
+        var result = S.appendDomains({ domains: draft.map(toEntry) }, domains);
+
+        if (!result.added.length) {
+          setMessage({
+            kind: result.overflow ? "error" : "info",
+            text: result.overflow
+              ? "At most " + S.MAX_DOMAINS + " domains — remove one before adding another."
+              : "Those domains are already on the list.",
+          });
+          return;
+        }
+
+        var rows = result.added.map(function (item) {
+          return { domain: item.domain, enabled: item.enabled, separate: item.separate, error: null };
+        });
+
+        setDraft(function (current) {
+          return current.concat(rows);
+        });
+        setPicked({});
+        setMessage({
+          kind: "info",
+          text:
+            "Added " + rows.length + " domain" + (rows.length === 1 ? "" : "s") +
+            " to the draft — review them, then Save changes." +
+            (result.overflow
+              ? " " + result.overflow + " did not fit under the " + S.MAX_DOMAINS + "-domain limit."
+              : ""),
+        });
+      },
+      [draft]
+    );
+
     var onSave = useCallback(
       function () {
         var invalid = draft.filter(function (row) {
@@ -344,6 +526,111 @@
         });
       });
     }, [bumpRevision]);
+
+    // --- suggestions ------------------------------------------------------
+    // Recomputed from the current draft, not cached: adding a domain, renaming
+    // one or clearing the list must all move the suggestion list with it.
+    var configuredDomains = {};
+    draft.forEach(function (row) {
+      var domain = S.normalizeDomain(row.domain);
+      if (domain) configuredDomains[domain] = true;
+    });
+
+    var scanDone = scan.status === "done";
+    var suggestions = scanDone
+      ? S.suggestDomains({ domains: draft.map(toEntry) }, scan.summary, S.SUGGEST_LIMIT)
+      : [];
+
+    var configuredHits = 0;
+    if (scanDone) {
+      scan.summary.forEach(function (item) {
+        if (configuredDomains[item.domain]) configuredHits += 1;
+      });
+    }
+
+    var isPicked = function (domain) {
+      if (typeof picked[domain] === "boolean") return picked[domain];
+      return !!scan.defaults[domain];
+    };
+
+    var selectedDomains = suggestions
+      .filter(function (item) {
+        return isPicked(item.domain);
+      })
+      .map(function (item) {
+        return item.domain;
+      });
+
+    var scanText = "";
+    if (scan.status === "scanning") {
+      scanText = scan.progress
+        ? "Scanning… " + scan.progress.links + " link" + (scan.progress.links === 1 ? "" : "s") +
+          " from page " + scan.progress.pages + "."
+        : "Scanning performer, studio and group links…";
+    } else if (scan.status === "error") {
+      scanText = "Scan failed: " + scan.error + ". Adding domains by hand below still works.";
+    } else if (scanDone) {
+      var totals = scan.totals || {};
+      scanText =
+        scan.summary.length + " domain" + (scan.summary.length === 1 ? "" : "s") +
+        " across " + scan.links + " link" + (scan.links === 1 ? "" : "s") +
+        " (performers " + (totals.performers || 0) +
+        ", studios " + (totals.studios || 0) +
+        ", groups " + (totals.groups || 0) + ").";
+      if (configuredHits) {
+        scanText += " " + configuredHits + " already configured — left untouched.";
+      }
+      if (scan.truncated) {
+        scanText += " The sweep stopped after " + scan.pages + " pages, so treat this as a partial count.";
+      }
+      if (!suggestions.length && draft.length >= S.MAX_DOMAINS) {
+        scanText += " The list is full — remove a domain to make room for another.";
+      } else if (!suggestions.length && scan.summary.length && !configuredHits) {
+        scanText += " Nothing left to suggest.";
+      } else if (!suggestions.length && !scan.summary.length) {
+        scanText += " No link in this library resolves to a hostname yet.";
+      }
+    } else {
+      scanText =
+        "Not scanned yet. A scan reads the URL list of every performer, studio and group — press Scan library when you want suggestions. Nothing is written: results only fill the draft above.";
+    }
+
+    var suggestionRows = suggestions.map(function (item) {
+      var selected = isPicked(item.domain);
+      return h(
+        "li",
+        { key: item.domain, className: "elg-set__suggest-row" },
+        h(
+          "label",
+          { className: "elg-set__check elg-set__suggest-label", title: item.sample || item.domain },
+          h("input", {
+            type: "checkbox",
+            checked: selected,
+            onChange: function (event) {
+              togglePick(item.domain, event.target.checked);
+            },
+          }),
+          h("span", null, item.domain)
+        ),
+        h(
+          "span",
+          { className: "elg-set__suggest-count" },
+          item.count === 1 ? "1 link" : item.count + " links"
+        ),
+        h(
+          "button",
+          {
+            type: "button",
+            className: "btn btn-sm btn-secondary",
+            "aria-label": "Add " + item.domain + " to the list",
+            onClick: function () {
+              addSuggested([item.domain]);
+            },
+          },
+          "Add"
+        )
+      );
+    });
 
     var rows = draft.map(function (row, index) {
       return h(
@@ -486,7 +773,7 @@
         ),
 
         draft.length === 0
-          ? h("p", { className: "elg-set__empty" }, "No domains yet. Add one below — for example onlyfans.com.")
+          ? h("p", { className: "elg-set__empty" }, "No domains yet. Add one below — for example onlyfans.com — or pick one from the suggestions further down.")
           : h(
               "div",
               { className: "elg-set__table" },
@@ -520,6 +807,59 @@
             "button",
             { type: "submit", className: "btn btn-sm btn-primary", disabled: !newDomain.trim() },
             "Add domain"
+          )
+        )
+      ),
+
+      h(
+        "section",
+        { className: "elg-set__panel" },
+        h("h2", { className: "elg-set__heading" }, "Suggested from your library"),
+        h(
+          "p",
+          { className: "elg-set__note" },
+          "Stash stores a URL list on every performer, studio and group. Scan library reads those lists on demand, drops the links that cannot be parsed and ranks what is left by how many links use each domain — so the sites your library actually links to can be added without typing them. Scanning is a click, not something this page does on open: it walks the whole library, and the result stays until you scan again. Adding a suggestion only fills in the draft above; nothing is saved until you press Save changes, and a domain you already configured keeps the flags you gave it."
+        ),
+        h(
+          "p",
+          { className: "elg-set__scan" + (scan.status === "error" ? " elg-set__scan--error" : ""), role: "status" },
+          scanText
+        ),
+        suggestions.length
+          ? h("ul", { className: "elg-set__suggest" }, suggestionRows)
+          : null,
+        h(
+          "div",
+          { className: "elg-set__actions elg-set__suggest-actions" },
+          suggestions.length
+            ? h(
+                "button",
+                {
+                  type: "button",
+                  className: "btn btn-sm btn-primary",
+                  disabled: scan.status === "scanning" || selectedDomains.length === 0,
+                  onClick: function () {
+                    addSuggested(selectedDomains);
+                  },
+                },
+                "Add selected" + (selectedDomains.length ? " (" + selectedDomains.length + ")" : "")
+              )
+            : null,
+          h(
+            "button",
+            {
+              type: "button",
+              // Primary only while there is nothing to add — otherwise it
+              // competes with "Add selected" for the eye.
+              className: "btn btn-sm " + (suggestions.length ? "btn-secondary" : "btn-primary"),
+              disabled: scan.status === "scanning",
+              onClick: runScan,
+            },
+            scan.status === "scanning"
+              ? "Scanning…"
+              : scan.status === "idle"
+                ? "Scan library"
+                : "Rescan library"
           )
         )
       ),
