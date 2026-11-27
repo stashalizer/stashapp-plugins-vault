@@ -1,6 +1,6 @@
 name: Carbon Arc
 description: "A desktop-first dark theme for 24-inch screens: graphite surfaces, bone text, one low-chroma signal and monospaced numbers in bundled IBM Plex. Restyles the shell, filters, cards, detail pages, player, dialogs, forms, settings and scrollbars, and changes no layout maths, so every Stash feature keeps working. Set the signal colour, card density and preview brightness under Settings > Plugins > Carbon Arc."
-version: 0.3.0
+version: 0.3.1
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:
@@ -12,10 +12,13 @@ ui:
     - CarbonArc.css
     - CarbonArcSettings.css
   # Publishes {pluginDir}/fonts at /plugin/CarbonArc/assets/fonts, which is
-  # what the url() in CarbonArcFonts.css resolves to. Without this map the
-  # route answers 404: only the /assets subtree is served from disk.
+  # what the url() in CarbonArcFonts.css resolves to. Only the /assets
+  # subtree is served from disk, and a key is matched by prefix against the
+  # path left after /plugin/<id>/assets is removed — "/fonts/…woff2" — so the
+  # key carries its leading slash. Without the slash it never matches and the
+  # route answers 404.
   assets:
-    fonts: fonts
+    /fonts: fonts
 settings:
   accent:
     displayName: Signal colour

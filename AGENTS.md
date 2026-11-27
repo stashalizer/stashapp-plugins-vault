@@ -191,7 +191,12 @@ AGENTS.md                   # architecture + conventions (this file)
   to a directory relative to the yml and **only that subtree is served**, at
   `/plugin/<id>/assets/…` (`internal/api/routes_plugin.go`); the rest of the
   plugin directory has no route, which is why Carbon Arc's fonts need
-  `assets: fonts: fonts` as well as their `url()`.
+  `assets: /fonts: fonts` as well as their `url()`. **Every key carries its
+  leading slash.** The handler strips `/plugin/<id>/assets` and matches what is
+  left (`/fonts/x.woff2`) with `strings.HasPrefix(path, key)`
+  (`pkg/utils/urlmap.go`; upstream's own test uses `urlMap["/foo"] = "bar"`),
+  so a bare `fonts:` never matches and answers 404. That cost a whole release
+  of Carbon Arc whose fonts silently fell back to the system stack.
 - **Runtime globals are not bundled.** Plugins that use `window.csLib` expect
   CommunityScriptsUILibrary to provide it, and users must install it first
   (declared in `ui.requires`). Carbon Arc, ExternalLinkGroups and
@@ -701,7 +706,7 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   arc rather than painting an invisible ring. `--ca-arc-ink` is whichever of
   `#17140f` / `#e6e4de` reads better on a signal-filled surface.
 - **Fonts are served as files through the manifest's `assets:` map.** `assets:
-  fonts: fonts` publishes `{pluginDir}/fonts` at `/plugin/<id>/assets/fonts`,
+  /fonts: fonts` publishes `{pluginDir}/fonts` at `/plugin/<id>/assets/fonts`,
   and `CarbonArcFonts.css` links them relatively (`url("assets/fonts/…")`),
   which resolves against the sheet's own address at `/plugin/<id>/css` and
   survives a reverse-proxy prefix. Read from the v0.32.0 tag —
@@ -711,8 +716,15 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   URI are allowed; the file wins because the three faces are 75 KB together
   and load on demand. **Only the `/assets` subtree maps to disk**: a
   `url("fonts/x.woff2")` (no `assets` map entry, or a path outside it) 404s,
-  which is what the 0.2.1 note saw. This was not exercised on a live instance
-  yet; if the woff2 404s there, the data-URI sheet is in commit `0a1e8b1`.
+  which is what the 0.2.1 note saw. **The key needs its leading slash.**
+  0.3.0 shipped `fonts: fonts`, which matched nothing, so the theme painted in
+  the system font and looked like it had no type at all; fixed in 0.3.1.
+  Verified on the live v0.32.0 instance (2026-11-27): with `/fonts: fonts` all
+  three faces answer `200 font/woff2` at their source sizes (45,712 / 14,648 /
+  14,904 bytes) after `reloadPlugins`. A `404 page not found` here is a map
+  miss; an unknown plugin id answers `Not Found` before the handler runs, so
+  the two bodies tell you which half broke. If a later release stops serving
+  the route, the data-URI sheet is in commit `0a1e8b1`.
   Do not reach for a Google Fonts `@import` either (a local instance should
   not phone a CDN every page load). A missing face stays non-fatal: `--ca-font`
   ends in the system UI stack.
@@ -826,7 +838,9 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   still required before calling a release verified. The `assets:` font route is
   the one thing only a live instance can confirm: an authenticated request for
   `/plugin/CarbonArc/assets/fonts/ibm-plex-sans-latin.woff2` answering
-  `200 font/woff2` rather than 404.
+  `200 font/woff2` rather than 404. The manifest test only checks the key's
+  shape, and 0.3.0 passed it while serving 404s, so run that request on every
+  change to the map or to `CarbonArcFonts.css`.
 
 ## ExternalLinkGroups
 

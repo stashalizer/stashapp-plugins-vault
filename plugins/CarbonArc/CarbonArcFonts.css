@@ -5,12 +5,17 @@
  * plugin's own directory through the manifest's `assets:` map:
  *
  *   assets:
- *     fonts: fonts
+ *     /fonts: fonts
  *
  * That map publishes {pluginDir}/fonts at /plugin/<id>/assets/fonts, so the
  * url() below resolves against this stylesheet's own address
  * (/plugin/<id>/css) to /plugin/<id>/assets/fonts/… — relative on purpose,
  * which is what keeps it working behind a reverse-proxy prefix.
+ *
+ * The key keeps its leading slash. Stash matches a key by prefix against the
+ * path left once /plugin/<id>/assets is removed, which is "/fonts/…woff2";
+ * "fonts: fonts" never matches and the route answers 404, so every face
+ * silently falls back to the system stack.
  *
  * Not a data URI: inlining the three faces put ~100 KB of base64 at the front
  * of the one concatenated stylesheet Stash serves at /plugin/<id>/css, so any

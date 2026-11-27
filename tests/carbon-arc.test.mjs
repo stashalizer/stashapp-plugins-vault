@@ -140,14 +140,14 @@ function boot(options = {}) {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 test("the first paint uses the browser's copy, before the query resolves", () => {
-  const { documentElement, style } = boot({
+  const { window, documentElement, style } = boot({
     cache: { accent: "patina", density: "compact", dimPreviews: true },
   });
 
   assert.equal(documentElement.attrs["data-ca-accent"], "patina", "the saved signal is painted at once");
   assert.equal(documentElement.attrs["data-ca-density"], "compact");
   assert.equal(documentElement.attrs["data-ca-dim"], "on");
-  assert.equal(documentElement.attrs["data-ca-version"], "0.3.0");
+  assert.equal(documentElement.attrs["data-ca-version"], window.CarbonArcStore.VERSION);
   assert.deepEqual(style, {}, "a shipped signal needs no inline properties");
 });
 
@@ -294,7 +294,18 @@ test("the manifest, the tokens and the fonts agree", () => {
   assert.deepEqual(order, ["CarbonArcTokens.css", "CarbonArcFonts.css", "CarbonArc.css", "CarbonArcSettings.css"]);
 
   // The fonts are files behind the assets map, not base64 in the stylesheet.
-  assert.match(yml, /^ {2}assets:\r?\n {4}fonts:[ \t]*fonts[ \t]*$/m, "the assets map publishes fonts/");
+  const assetsBlock = yml.match(/^ {2}assets:\r?\n((?: {4}[^\r\n]*\r?\n)+)/m);
+  assert.ok(assetsBlock, "the manifest maps a URL prefix to a directory");
+  const assetKeys = [...assetsBlock[1].matchAll(/^ {4}(")?([^\s:"]+)\1:[ \t]*(\S+)[ \t]*\r?$/gm)];
+  assert.ok(assetKeys.length > 0, "the assets map has entries");
+  for (const [, , key] of assetKeys) {
+    assert.ok(key.startsWith("/"), 'assets key "' + key + '" must start with "/": Stash matches it by prefix against "/<key>/…"');
+  }
+  assert.deepEqual(
+    assetKeys.map(([, , key, dir]) => [key, dir]),
+    [["/fonts", "fonts"]],
+    "the assets map publishes fonts/"
+  );
 
   const fonts = strip(read(PLUGIN, "CarbonArcFonts.css"));
   const theme = strip(read(PLUGIN, "CarbonArc.css"));
