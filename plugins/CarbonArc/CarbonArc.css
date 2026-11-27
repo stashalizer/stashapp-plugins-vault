@@ -574,10 +574,78 @@ button.minimal {
   accent-color: var(--ca-arc);
 }
 
-.rating-banner {
+/* Rating, as a corner tab rather than a ribbon.
+   Stash paints this as a 36 degree band pinned at left:-48px / top:14px with
+   45px of side padding and lets the card's overflow clip it. On the live
+   264.8px card that box measures 152x122 — 47% of the still — and both ends of
+   the label fall outside the clip, so it reads "ATING: 9", and a narrow card
+   loses the value entirely. The rating is one line of data, so it gets one
+   line of room: the 0.6875rem mono step, the same one the duration chip beside
+   it uses. That is an 80x15.5 tab — 3.1% of the still, 9.8% on a 150px card.
+
+   Position: top-left stays. That corner is the one the eye already checks, and
+   nothing else claims it by default. The select checkbox does live there, but
+   it only appears under the pointer, and Stash fades this element on hover
+   (`.grid-card:hover .rating-banner { opacity: 0 }`) at exactly the moment the
+   checkbox shows. That fade is also why the tab can stay permanently visible.
+
+   Colour: Stash's rating ramp is kept but demoted from a field to a 2px
+   leading edge. The element's own `background` is still the ramp class, and
+   `::before` lays an almost opaque scrim over all but that edge, so the plate
+   reads as graphite with the faintest warm or grey cast. A scrim and not a
+   tint, because the low end of the ramp (#939393) is too dark to carry bone
+   text over a bright still.
+
+   `isolation` gives `::before`'s negative z-index a stacking context without
+   setting one on the tab itself: a `z-index` here would lift the tab above
+   `.card-controls` (z-index 1) and hide the checkbox. `pointer-events: none`
+   keeps it out of the scrubber's way — the tab sits inside the card link and
+   would otherwise swallow the pointer in that corner.
+
+   No viewport breakpoints: card width does not track window width here (1024
+   gives 309px cards, 1440 gives 264px, because the column count moves too).
+   `max-width` keeps the tab inside any card instead, and a longer label wraps
+   to a second line rather than being clipped. One selector is enough: every
+   card type that renders this banner — scene, image, gallery, group,
+   performer — is a `.grid-card` (verified in the v0.32.0 DOM). */
+.grid-card .rating-banner {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  isolation: isolate;
+  max-width: calc(100% - 12px);
+  padding: 1px 6px 1px 8px;
+  overflow: hidden;
+  border-radius: 2px;
   font-family: var(--ca-mono);
   font-size: 0.6875rem;
-  border-radius: 2px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--ca-tx-1);
+  transform: none;
+  pointer-events: none;
+}
+
+.grid-card .rating-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 2px;
+  z-index: -1;
+  border-radius: 0 2px 2px 0;
+  background: rgba(11, 13, 14, 0.92);
+}
+
+/* A checked card keeps its checkbox on screen at 75% opacity while the pointer
+   is elsewhere, and the box paints above the tab (.card-controls is z-index 1).
+   Make room instead of letting it eat the "R": the tab steps aside by the box's
+   width, still inside the same corner, and the label stays whole. Only the
+   checked state moves — an unchecked card keeps the 6px inset. */
+.grid-card:has(.card-check:checked) .rating-banner {
+  left: 26px;
 }
 
 /* list view rows */
