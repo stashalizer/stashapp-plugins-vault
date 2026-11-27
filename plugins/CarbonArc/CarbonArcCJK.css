@@ -1,0 +1,53 @@
+/*
+ * Carbon Arc — Chinese, Japanese kana and full-width forms.
+ *
+ * IBM Plex Sans has no CJK glyphs, so a Chinese or Japanese title used to fall
+ * back to whatever CJK font the OS picked — a second typeface spliced into
+ * every mixed line. These faces come from IBM Plex Sans SC 1.1.0, the same
+ * family extended to Chinese, so the UI stays one voice. Three weights: 400
+ * body, 500 the h2/h3 and button weight, 600 headings.
+ *
+ * Coverage is GB2312 (6,763 hanzi plus kana, Greek, Cyrillic and pinyin) with
+ * CJK punctuation and full-width forms added — 7,496 characters, which is
+ * every character of ordinary Simplified Chinese and the kana a Japanese title
+ * needs. Characters outside it (Traditional Chinese, rarer hanzi) fall through
+ * to the system CJK font, which is what the theme did before.
+ *
+ * The licence keeps the licence, not the name: IBM's OFL carries the Reserved
+ * Font Name "Plex", and a subset is a modification, so the faces are renamed
+ * to "Carbon Arc Sans CJK". The OFL text ships in fonts/OFL.txt.
+ *
+ * `unicode-range` is the reason a Latin-only page pays nothing. A face is only
+ * fetched when a character on the page falls inside these blocks, so most of
+ * the UI downloads none of them, and a Chinese page downloads only the weights
+ * it uses. Metrics are rewritten to IBM Plex Sans's 1025/-275/0 line with
+ * USE_TYPO_METRICS on (the source sits at 880/-120 plus a 1000 gap), so mixed
+ * Chinese/Latin paragraphs keep one leading instead of two.
+ */
+
+@font-face {
+  font-family: "Carbon Arc Sans CJK";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+3000-30FF, U+3105-312F, U+4E00-9FFF, U+FF01-FF60, U+FFE0-FFE6;
+  src: url("assets/fonts/carbon-arc-sans-cjk-regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Carbon Arc Sans CJK";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  unicode-range: U+3000-30FF, U+3105-312F, U+4E00-9FFF, U+FF01-FF60, U+FFE0-FFE6;
+  src: url("assets/fonts/carbon-arc-sans-cjk-medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Carbon Arc Sans CJK";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  unicode-range: U+3000-30FF, U+3105-312F, U+4E00-9FFF, U+FF01-FF60, U+FFE0-FFE6;
+  src: url("assets/fonts/carbon-arc-sans-cjk-semibold.woff2") format("woff2");
+}

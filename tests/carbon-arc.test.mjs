@@ -29,7 +29,7 @@
  *   7. The kill switch — `?carbonarc=off` paints nothing and parks the sheet.
  *   8. Hover-only rules stay behind a hover-capable pointer.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
@@ -291,7 +291,7 @@ test("the manifest, the tokens and the fonts agree", () => {
     .split(/\r?\n/)
     .map((line) => line.replace(/^[ \t]*- /, "").trim());
 
-  assert.deepEqual(order, ["CarbonArcTokens.css", "CarbonArcFonts.css", "CarbonArc.css", "CarbonArcSettings.css"]);
+  assert.deepEqual(order, ["CarbonArcTokens.css", "CarbonArcFonts.css", "CarbonArcCJK.css", "CarbonArc.css", "CarbonArcSettings.css"]);
 
   // The fonts are files behind the assets map, not base64 in the stylesheet.
   const assetsBlock = yml.match(/^ {2}assets:\r?\n((?: {4}[^\r\n]*\r?\n)+)/m);
@@ -319,6 +319,47 @@ test("the manifest, the tokens and the fonts agree", () => {
   assert.ok(!/data:font/.test(fonts), "no base64 faces: they cannot be cached or loaded on demand");
   assert.ok(!/@font-face/.test(theme), "the faces live in CarbonArcFonts.css");
   assert.ok(!/url\(\s*["']?fonts\//.test(theme + fonts), "a url() into fonts/ is not on any served route");
+});
+
+test("the CJK faces cover Chinese and kana, and stay off Latin-only pages", () => {
+  const cjk = strip(read(PLUGIN, "CarbonArcCJK.css"));
+  const tokens = strip(read(PLUGIN, "CarbonArcTokens.css"));
+  const faces = [...cjk.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((m) => m[1]);
+
+  assert.equal(faces.length, 3, "one face per weight the theme actually asks for: 400, 500, 600");
+
+  const weights = faces.map((body) => body.match(/font-weight:\s*(\d+)/)[1]).sort();
+  assert.deepEqual(weights, ["400", "500", "600"]);
+
+  for (const body of faces) {
+    const family = body.match(/font-family:\s*"([^"]+)"/)[1];
+    assert.equal(family, "Carbon Arc Sans CJK", "the subset must not carry the reserved name Plex");
+
+    // Without unicode-range every page downloads ~850 KB per weight.
+    const range = body.match(/unicode-range:\s*([^;]+);/)[1];
+    for (const block of ["U+3000-30FF", "U+4E00-9FFF", "U+FF01-FF60"]) {
+      assert.ok(range.includes(block), "unicode-range must cover " + block);
+    }
+
+    const src = body.match(/url\("assets\/fonts\/([a-z0-9-]+\.woff2)"\)/);
+    assert.ok(src, "each face points at the assets route, relative to /plugin/<id>/css");
+    const file = path.join(plugins, PLUGIN, "fonts", src[1]);
+    const size = statSync(file).size;
+    assert.ok(size > 200 * 1024, src[1] + " looks truncated: " + size + " bytes");
+    assert.ok(size < 2 * 1024 * 1024, src[1] + " is larger than a GB2312 subset should be: " + size + " bytes");
+  }
+
+  assert.ok(!/data:font/.test(cjk), "no base64 faces");
+
+  // The faces only matter if the stack names them.
+  for (const token of ["--ca-font", "--ca-mono"]) {
+    const stack = tokens.match(new RegExp(token + ":\\s*([^;]+);"))[1];
+    assert.ok(stack.includes('"Carbon Arc Sans CJK"'), token + " must fall back to the CJK family");
+  }
+  assert.ok(
+    tokens.match(/--ca-font:\s*([^;]+);/)[1].indexOf('"IBM Plex Sans"') < tokens.match(/--ca-font:\s*([^;]+);/)[1].indexOf('"Carbon Arc Sans CJK"'),
+    "the Latin face comes first, so Latin text never renders in the CJK subset"
+  );
 });
 
 test("?carbonarc=off paints nothing and parks the stylesheet", () => {

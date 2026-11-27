@@ -338,7 +338,8 @@ A dark theme built for one setup: a 24-inch desktop screen, used at night, with 
 - **Five surfaces, not one.** Sunken wells, page ground, panels, cards and floating menus sit between L\* 3.9 and 15.4. Structure comes from the luminance step; hairline borders only confirm it, which is why nothing reads as a drawn box.
 - **Bone instead of white.** Text is `#E6E4DE` (13.2:1 on a card), not `#FFF` — white on a dark ground grows a halo and makes 13 px labels shimmer. Three text steps only, so hierarchy is unambiguous.
 - **One signal, used sparingly.** The accent marks state and nothing else: the active nav underline, the keyboard focus ring, filled rating stars, the player's playhead and the knob of a switch that is on. Primary buttons are filled bone, not coloured, so the highest-contrast thing on screen is always the next action — with zero saturation.
-- **Every number is monospaced.** Durations, counts, resolutions, dates and file paths use IBM Plex Mono, so a row of cards aligns on its data instead of its prose. IBM Plex Sans and Mono (latin subset, SIL OFL) ship with the plugin and are served from its own directory, so the type never depends on a font being installed or on a font CDN being reachable. Each face is fetched only when a rule uses it, and the stylesheet Stash serves stays at 42 KB.
+- **Every number is monospaced.** Durations, counts, resolutions, dates and file paths use IBM Plex Mono, so a row of cards aligns on its data instead of its prose. IBM Plex Sans and Mono (latin subset, SIL OFL) ship with the plugin and are served from its own directory, so the type never depends on a font being installed or on a font CDN being reachable. Each face is fetched only when a rule uses it, and the stylesheet Stash serves stays at 45 KB.
+- **Chinese and Japanese read as the same family.** IBM Plex Sans has no CJK glyphs, so a Chinese title used to fall back to whatever the OS picked. A 7,496-character subset of IBM Plex Sans SC (the same family extended to Chinese — GB2312's hanzi plus kana, CJK punctuation and full-width forms) ships in three weights instead, fetched by `unicode-range` only on pages that actually contain those characters: a Latin-only page downloads none of it, a Chinese page ~0.85 MB per weight.
 - **Three signals, or your own.** Arc (brass, default), Patina (oxidised green), Dusk (muted violet) — or a hex of your own, once it reaches 4.5:1 contrast against the page. Two card densities; thumbnails at full or 90% brightness.
 - **It only paints.** Nav height, sidebar width, root font size, grid column maths and every control stay exactly where Stash put them — the theme rewrites colour, type, radii, shadows and spacing inside cards, and hides nothing. Every Stash feature keeps working, including plugins layered on top.
 - **Details that keep a dark UI usable.** A 2 px focus ring on every interactive element, `prefers-reduced-motion` respected, `scrollbar-gutter: stable` so filtering does not reflow the grid, and a thin dark scrollbar.
@@ -362,13 +363,14 @@ The full token set, the measured contrast pairs and the selector inventory are i
 
 - **The login page needs the custom CSS step.** It is the one screen a plugin cannot touch.
 - **The pasted login CSS does not load IBM Plex.** The block declares the font stack but cannot reach the plugin's bundled font files from a logged-out page, so the login screen uses the system UI font.
+- **CJK coverage stops at GB2312.** Simplified Chinese and the kana are complete for ordinary text, but Traditional Chinese and rarer hanzi fall through to the system CJK font — a mixed-line case the theme cannot design away without shipping a 3+ MB font per weight.
 - **Third-party plugins that hard-code colours** (overlays with their own palettes) will keep those colours. The theme covers Stash's own markup, not other plugins' inline styles.
 - **No mobile pass.** The design targets 1920×1080 on a 24-inch display; phone layouts are left to Stash and are not tuned.
 - **One signal, not a palette.** A custom colour under 4.5:1 against the page is refused and the theme keeps Arc; there is no "I know what I'm doing" override, because an invisible focus ring is a bug, not a preference.
 
 ### Verified against
 
-Stash **v0.32.0**, 2026-11-27: Chrome 130 on Windows 11 at 1920×1080, plus the automated suites in `tests/` (`node --test "tests/**/*.test.mjs"`). The bundled faces are served through the plugin's `assets:` map; if a Stash release ever stops serving that route they fall back to the system stack rather than erroring. Coexistence is tested with **External Link Groups**; two themes on one page fight, so run Carbon Arc on its own.
+Stash **v0.32.0**, 2026-11-27: Chrome 130 on Windows 11 at 1920×1080, plus the automated suites in `tests/` (`node --test "tests/**/*.test.mjs"`). The bundled faces are served through the plugin's `assets:` map; if a Stash release ever stops serving that route they fall back to the system stack rather than erroring. The CJK faces were checked in headless Edge: a Chinese paragraph loads the 400/500/600 faces on demand, an ASCII-only paragraph loads none of them, and Latin-only, CJK-only and mixed 16 px lines all measure a 20 px line box. Coexistence is tested with **External Link Groups**; two themes on one page fight, so run Carbon Arc on its own.
 - **Compact density changes card padding and margin, not column count** — Stash owns the grid maths, and a theme that overrode it would break card sizing on other screens.
 - **Long values wrap rather than truncating in the middle.** A middle ellipsis needs the string, which CSS cannot read; detail values and file paths break instead of clipping.
 - **Not yet through a live functional pass.** The CSS is reviewed against the current Stash markup and the settings page is exercised in a browser harness, but the November 2026 pass has not re-run the full live matrix (see [Tested environment](#tested-environment)). Report anything that stays Stash-blue.
@@ -415,7 +417,7 @@ plugins/                    # one subdirectory per plugin
   SceneVersions/            # manifest + JS/CSS assets
   SceneRotation/            # manifest + JS/CSS assets
   AudioSupport/             # manifest + JS/CSS assets + backend hook
-  CarbonArc/                # theme: stylesheet + bundled fonts + config helper + settings page
+  CarbonArc/                # theme: stylesheet + bundled latin/CJK fonts + config helper + settings page
   ExternalLinkGroups/       # detail-title button patch + settings page
 build_site.sh               # zips each plugin and generates index.yml
 scripts/sync_labels.py      # creates/updates issue labels from .github/labels.json

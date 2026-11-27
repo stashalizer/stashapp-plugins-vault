@@ -155,10 +155,11 @@ AGENTS.md                   # architecture + conventions (this file)
   covers `normalize` (including the 4.5:1 rule for a custom signal and the 0.2
   `true`/`false` shape), the login block's `body.login` scoping against the
   classes the page really has, the two halves of the palette, the manifest
-  (settings = `DEFAULTS`, stylesheet order, the `assets:` font map, no base64
-  faces) and the kill switch. CSS is asserted as text: proving a rule paints
-  would need a stylesheet engine, and that is what the README's live checks are
-  for.
+  (settings = `DEFAULTS`, stylesheet order, the `assets:` font map and its
+  leading-slash keys, no base64 faces, the CJK faces' weights, coverage and
+  file sizes) and the kill switch. CSS is asserted as text: proving a rule
+  paints would need a stylesheet engine, and that is what the README's live
+  checks are for.
 - **The stub DOM is deliberately dumb.** `querySelector` only answers the
   lookups the overlay actually makes, `requestAnimationFrame` runs
   synchronously, and every node reports a 640x360 player. When the overlay
@@ -674,10 +675,12 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   helper and a tile patch: no player overlay, no hooks, no tasks, no custom
   route, no Settings > Tools card. Files are `CarbonArcTokens.css` (palette,
   the three signal blocks, the `--bs-*` remap), `CarbonArc.css` (everything
-  painted), `CarbonArcFonts.css` (three `@font-face` rules),
+  painted), `CarbonArcFonts.css` (three `@font-face` rules for the Latin faces),
+  `CarbonArcCJK.css` (three for the CJK faces),
   `CarbonArcSettings.css` (the tiles and the login block inside Stash's own
   settings page), `CarbonArcStore.js` (read + apply) and `CarbonArcSettings.js`
-  (the `StringSetting` patch), plus `fonts/` (three woff2 subsets + `OFL.txt`).
+  (the `StringSetting` patch), plus `fonts/` (three Latin woff2 subsets, three
+  CJK subsets and `OFL.txt`).
   No changelog file: see *Version bumping in this project*.
 - **The options are manifest settings, not a plugin config key.** `settings:`
   in the yml declares `accent`, `customSignal`, `density` and `dimPreviews`, so
@@ -728,6 +731,35 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   Do not reach for a Google Fonts `@import` either (a local instance should
   not phone a CDN every page load). A missing face stays non-fatal: `--ca-font`
   ends in the system UI stack.
+- **Chinese and Japanese kana ship as a GB2312 subset of IBM Plex Sans SC
+  1.1.0**, three faces in `CarbonArcCJK.css` (400 body, 500 the h2/h3 and
+  button weight, 600 headings) served from `fonts/` like the Latin ones. 7,496
+  characters: GB2312's 6,763 hanzi plus its kana, Greek, Cyrillic and pinyin
+  rows, plus CJK punctuation and full-width forms. The kana are why a Japanese
+  title also stops falling back to the system font; Traditional Chinese and
+  rarer hanzi are outside the set and still do.
+  - **The family is renamed on purpose.** IBM's OFL carries the Reserved Font
+    Name "Plex" and a subset is a modification, so the files are stripped to
+    "Carbon Arc Sans CJK" and the CSS names that. Do not "restore" the Plex
+    name in the name table — the licence allows the subset, not the name. The
+    OFL text is in `fonts/OFL.txt`, which has to travel with the files.
+  - **`unicode-range` is what keeps them free for Latin-only pages.** Each face
+    declares `U+3000-30FF, U+3105-312F, U+4E00-9FFF, U+FF01-FF60, U+FFE0-FFE6`,
+    so the browser fetches a face only when a character on the page falls in
+    those blocks. Measured in headless Edge against the live instance:
+    `document.fonts.load('16px "Carbon Arc Sans CJK"', "开关灯")` returns the
+    400 face loaded, the same call with `"Aa"` returns none, and a page with an
+    h1, an h2 and a button loads exactly 400/500/600. Drop the range and every
+    page pays 2.5 MB.
+  - **Vertical metrics are rewritten to 1025/-275/0 with USE_TYPO_METRICS.**
+    The source sits at 880/-120 plus a 1000 line gap. Measured in headless
+    Edge: Latin-only, CJK-only and mixed 16 px paragraphs all report a 20.00 px
+    line box. Two metric sets give one paragraph two leadings — check this
+    again whenever a face is replaced.
+  - Each face is ~0.85 MB (2.5 MB for the three), the one place the theme is
+    not 42 KB. Rebuild with `scripts/build_cjk_fonts.py` (fonttools + brotli,
+    documented there); the woff2 output is committed so the site build stays
+    toolchain-free.
 - **Type sizes are rem, calibrated on a 16 px root.** The design's 14/13/11 px
   steps are written as 0.875/0.8125/0.6875rem, and `0.6875rem` is the floor —
   compact density used to go to 0.625rem (10 px), which broke the design's
@@ -840,7 +872,11 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `/plugin/CarbonArc/assets/fonts/ibm-plex-sans-latin.woff2` answering
   `200 font/woff2` rather than 404. The manifest test only checks the key's
   shape, and 0.3.0 passed it while serving 404s, so run that request on every
-  change to the map or to `CarbonArcFonts.css`.
+  change to the map or to `CarbonArcFonts.css`. Same for one CJK face
+  (`…/carbon-arc-sans-cjk-regular.woff2`, ~856 KB), and check in a browser that
+  a Chinese title renders in Plex rather than the system CJK font — the suite
+  can prove the file exists and the range is declared, not that the glyphs
+  look right.
 
 ## ExternalLinkGroups
 

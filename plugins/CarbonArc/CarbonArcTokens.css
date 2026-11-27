@@ -67,8 +67,8 @@
   --ca-shadow: 0 18px 48px -14px rgba(0, 0, 0, 0.62), 0 2px 6px rgba(0, 0, 0, 0.35);
 
   /* type */
-  --ca-font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --ca-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --ca-font: "IBM Plex Sans", "Carbon Arc Sans CJK", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --ca-mono: "IBM Plex Mono", "Carbon Arc Sans CJK", ui-monospace, "Cascadia Mono", "Consolas", monospace;
 
   /* preview dimming strength, overridden by the option below */
   --ca-dim: 1;
