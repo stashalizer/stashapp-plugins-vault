@@ -511,6 +511,40 @@ test("the CJK faces cover Chinese and kana, and stay off Latin-only pages", () =
   );
 });
 
+test("the type scale is px tokens, never rem", () => {
+  const theme = strip(read(PLUGIN, "CarbonArc.css"));
+  const tokens = strip(read(PLUGIN, "CarbonArcTokens.css"));
+
+  // Stash ships `html { font-size: 14px }` (assets/index-*.css), so a rem in
+  // this theme renders at 87.5 % of its number: that is how 0.875rem became
+  // 12.25 px and the whole UI read a step small.
+  assert.ok(!/font-size:\s*[0-9.]+rem/.test(theme), "no rem font sizes: Stash's root is 14px, not 16");
+
+  const declared = [...tokens.matchAll(/(--ca-fs-[a-z-]+):\s*([0-9]+)px;/g)].map((m) => m[1] + "=" + m[2]);
+  assert.deepEqual(declared, [
+    "--ca-fs-title=16",
+    "--ca-fs-title-compact=15",
+    "--ca-fs-body=15",
+    "--ca-fs-ctl=14",
+    "--ca-fs-meta=13",
+    "--ca-fs-micro=12",
+  ]);
+
+  const sizes = [...theme.matchAll(/font-size:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(sizes.length >= 20, "the theme sets its sizes");
+  for (const value of sizes) {
+    assert.match(value, /^var\(--ca-fs-[a-z-]+\)$/, "every size names a scale step, got " + value);
+  }
+
+  const title = theme.match(/\.grid-card \.card-section-title,[\s\S]{0,160}?\{([^}]*)\}/);
+  assert.ok(title, "the card title rule exists");
+  assert.match(title[1], /font-size:\s*var\(--ca-fs-title\)/, "a card title takes the title step");
+
+  // The span under the title inherits <body> unless it is named here, which
+  // made a file path as tall as the title above it.
+  assert.match(theme, /\.grid-card \.card-section \.scene-card__details/, "the path/date line is named");
+});
+
 test("?carbonarc=off paints nothing and parks the stylesheet", () => {
   const link = makeLink("/plugin/CarbonArc/css");
   const { window, documentElement, classes } = boot({ search: "?carbonarc=off", links: [link] });

@@ -63,6 +63,9 @@ body {
   background-color: var(--ca-canvas);
   color: var(--ca-tx-1);
   font-family: var(--ca-font);
+  /* Stash's own body is 14 px (1rem of a 14 px root); one step up is where
+     prose, nav links and anything inheriting actually reads. */
+  font-size: var(--ca-fs-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -116,7 +119,7 @@ hr {
 
 pre, code, kbd, samp {
   font-family: var(--ca-mono);
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-ctl);
   color: var(--ca-tx-2);
 }
 
@@ -163,7 +166,7 @@ nav.bg-dark,
   border-radius: 0;
   /* inset rule instead of a real border: nav items keep their exact height */
   box-shadow: inset 0 -2px 0 transparent;
-  font-size: 0.875rem;
+  font-size: var(--ca-fs-body);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -218,7 +221,7 @@ nav.bg-dark,
 .sidebar-pane .sidebar .collapse-header .btn {
   color: var(--ca-tx-3);
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   letter-spacing: 0.02em;
   background: transparent;
   border: none;
@@ -261,7 +264,7 @@ nav.bg-dark,
 /* generic buttons */
 .btn {
   border-radius: var(--ca-r-ctl);
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-ctl);
   font-weight: 500;
 }
 
@@ -384,7 +387,7 @@ button.minimal {
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-ctl);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -475,7 +478,7 @@ button.minimal {
 .grid-card .card-section-title,
 .grid-card .card-section .TruncatedText,
 .grid-card h5 {
-  font-size: 0.875rem;
+  font-size: var(--ca-fs-title);
   font-weight: 400;
   line-height: 1.4;
   color: var(--ca-tx-1);
@@ -492,11 +495,17 @@ button.minimal {
   min-height: 2.8em;
 }
 
+/* Secondary line under a card title: the file path and date. They inherit the
+   body size unless they are named here, which made a path as tall as the title
+   it sits under, so the card read as two headlines. */
 .grid-card .card-section p,
 .grid-card .card-section .text-muted,
-.grid-card .card-section small {
+.grid-card .card-section small,
+.grid-card .card-section .scene-card__details,
+.grid-card .card-section .file-path,
+.grid-card .card-section .scene-card__date {
   font-family: var(--ca-mono);
-  font-size: 0.75rem;
+  font-size: var(--ca-fs-meta);
   line-height: 1.5;
   color: var(--ca-tx-3) !important;
 }
@@ -540,7 +549,7 @@ button.minimal {
 .scene-specs-overlay,
 .overlay-codec {
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   color: var(--ca-tx-2);
   background: rgba(12, 14, 15, 0.72);
   border: 1px solid rgba(58, 63, 67, 0.7);
@@ -552,7 +561,7 @@ button.minimal {
    second chip would only add a box to a card that already has three. */
 .overlay-resolution {
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   font-weight: 500;
   color: var(--ca-tx-3);
   background: transparent;
@@ -624,7 +633,7 @@ button.minimal {
   overflow: hidden;
   border-radius: 2px;
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
@@ -664,7 +673,7 @@ button.minimal {
 .table thead th {
   color: var(--ca-tx-3);
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   font-weight: 400;
   border-bottom: 1px solid var(--ca-line);
   border-top: none;
@@ -726,13 +735,13 @@ button.minimal {
 .detail-group .detail-item-title {
   color: var(--ca-tx-3);
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
 }
 
 .detail-header .detail-item-value,
 .detail-group .detail-item-value {
   color: var(--ca-tx-1);
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-ctl);
   /* Durations, sizes and counts are read down the column, so their digits
      take one width. The face stays the sans one: the same class also carries
      text values (titles, names), and forcing mono on those reads as a leak
@@ -752,7 +761,7 @@ button.minimal {
 
 .organized-button {
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
   border-radius: var(--ca-r-chip);
 }
 
@@ -793,7 +802,7 @@ button.minimal {
 .scene-tabs p.pre,
 p.pre {
   color: var(--ca-tx-2);
-  font-size: 0.875rem;
+  font-size: var(--ca-fs-body);
   line-height: 1.7;
   max-width: 68ch;
 }
@@ -836,7 +845,7 @@ p.pre {
 .video-js .vjs-time-divider {
   color: var(--ca-tx-2);
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
 }
 
 .video-js .vjs-slider {
@@ -899,7 +908,7 @@ p.pre {
   border: 1px solid var(--ca-line-2);
   color: var(--ca-tx-1);
   font-family: var(--ca-mono);
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
 }
 
 /* lightbox */
@@ -1018,7 +1027,7 @@ p.pre {
   float: right;
   margin-left: 12px;
   color: var(--ca-arc);
-  font-size: 0.75rem;
+  font-size: var(--ca-fs-meta);
 }
 
 .dropdown-divider {
@@ -1058,7 +1067,7 @@ p.pre {
   background: var(--ca-raised);
   border: 1px solid var(--ca-line-2);
   color: var(--ca-tx-1);
-  font-size: 0.75rem;
+  font-size: var(--ca-fs-meta);
 }
 
 .toast {
@@ -1136,7 +1145,7 @@ div.react-select__control,
   border-radius: var(--ca-r-ctl);
   color: var(--ca-tx-1);
   font-family: var(--ca-font);
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-ctl);
 }
 
 .form-control::placeholder,
@@ -1200,7 +1209,7 @@ select.form-select {
 
 .react-select__multi-value__label {
   color: var(--ca-tx-1);
-  font-size: 0.75rem;
+  font-size: var(--ca-fs-meta);
 }
 
 .react-select__multi-value__remove:hover {
@@ -1260,7 +1269,7 @@ input[type="range"] {
   border: 1px solid var(--ca-line);
   border-radius: var(--ca-r-chip);
   color: var(--ca-tx-2);
-  font-size: 0.75rem;
+  font-size: var(--ca-fs-meta);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1461,14 +1470,14 @@ html[data-ca-density="compact"] {
 
 html[data-ca-density="compact"] .grid-card .card-section-title,
 html[data-ca-density="compact"] .grid-card h5 {
-  font-size: 0.8125rem;
+  font-size: var(--ca-fs-title-compact);
 }
 
-/* 0.6875rem is the floor: at a 16 px root it is the 11 px micro step, and
-   nothing in the design goes below that. */
+/* 12 px is the floor, which is also the micro step: nothing in the design goes
+   below it, and compact density only takes the card meta down by one step. */
 html[data-ca-density="compact"] .grid-card .card-section p,
 html[data-ca-density="compact"] .grid-card small {
-  font-size: 0.6875rem;
+  font-size: var(--ca-fs-micro);
 }
 
 /* Preview brightness has no rule here: its value is a percentage, not a

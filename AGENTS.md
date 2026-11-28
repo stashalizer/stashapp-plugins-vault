@@ -827,10 +827,27 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
     not 42 KB. Rebuild with `scripts/build_cjk_fonts.py` (fonttools + brotli,
     documented there); the woff2 output is committed so the site build stays
     toolchain-free.
-- **Type sizes are rem, calibrated on a 16 px root.** The design's 14/13/11 px
-  steps are written as 0.875/0.8125/0.6875rem, and `0.6875rem` is the floor —
-  compact density used to go to 0.625rem (10 px), which broke the design's
-  "nothing below 11 px" rule. No new size may sit under 0.6875rem.
+- **The type scale is px, and it is deliberate.** Stash ships
+  `html { font-size: 14px }` (`assets/index-*.css`), so every rem in the theme
+  rendered at 87.5 % of its number: `0.875rem` was 12.25 px, not the 14 px the
+  design asked for, and the whole UI read a step small — the note that used to
+  sit here ("rem, calibrated on a 16 px root") was simply wrong about the root.
+  The steps are now tokens in `CarbonArcTokens.css` — `--ca-fs-title` 16,
+  `--ca-fs-body` 15, `--ca-fs-ctl` 14, `--ca-fs-meta` 13, `--ca-fs-micro` 12,
+  plus `--ca-fs-title-compact` 15 — and each rule names one. Do not put a raw
+  size back in a rule: a scale change is one block, and a new rule that needs a
+  size it cannot find is a missing step, not a reason for `13px` in place.
+  12 px is the floor; compact density takes the card meta to it and the card
+  title down to 15. `body` carries the 15 px base, so anything inheriting
+  (descriptions, nav links, Stash's own plain text) sits one step above Stash's
+  14 rather than being left behind.
+- **Card titles are the content, not a caption.** `.card-section-title` /
+  `.grid-card .TruncatedText` / `.grid-card h5` take `--ca-fs-title`, and the
+  secondary line under them (`.scene-card__details`, `.file-path`,
+  `.scene-card__date`) takes `--ca-fs-meta` — those spans inherit `body` unless
+  they are named, which made a file path as tall as the title above it. Measured
+  on the live v0.32.0 instance with the theme on: title 16 px, path 13 px,
+  badge 12 px, nav 15 px, `.btn` 14 px.
 - **No `ui.requires`, and no csLib at all.** `ui.requires` is mandatory load
   order, so a missing entry would stop the theme's CSS from loading. The theme
   never needed csLib for the values (see above), and since 0.3.0 it does not

@@ -86,13 +86,13 @@
 }
 
 .ca-tile__label {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ca-tx-1, #e6e4de);
 }
 
 .ca-tile__note {
   font-family: var(--ca-mono, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--ca-tx-3, #8c8f90);
 }
@@ -216,7 +216,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
   display: flex;
   justify-content: space-between;
   font-family: var(--ca-mono, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--ca-tx-3, #8c8f90);
 }
@@ -236,7 +236,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
   border-radius: var(--ca-r-ctl, 4px);
   color: var(--ca-tx-1, #e6e4de);
   font-family: var(--ca-mono, monospace);
-  font-size: 12px;
+  font-size: 13px;
   text-align: right;
 }
 
@@ -248,14 +248,14 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
 
 .ca-bright__unit {
   font-family: var(--ca-mono, monospace);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ca-tx-3, #8c8f90);
 }
 
 .ca-bright__hint {
   margin: 8px 0 0;
   max-width: 62ch;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--ca-tx-3, #8c8f90);
 }
@@ -271,7 +271,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
 
 .ca-login summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ca-tx-2, #a9aba8);
 }
 
@@ -283,7 +283,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
 .ca-login__note {
   margin: 8px 0 10px;
   max-width: 70ch;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--ca-tx-3, #8c8f90);
 }
@@ -292,7 +292,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
 
 .ca-login__note code {
   font-family: var(--ca-mono, monospace);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ca-tx-2, #a9aba8);
 }
 
@@ -305,7 +305,7 @@ input[type="range"].ca-bright__range::-moz-range-thumb {
   border: 1px solid var(--ca-line, #2a2e31);
   border-radius: 4px;
   font-family: var(--ca-mono, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--ca-tx-3, #8c8f90);
   white-space: pre;

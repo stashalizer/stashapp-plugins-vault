@@ -70,6 +70,19 @@
   --ca-font: "IBM Plex Sans", "Carbon Arc Sans CJK", "Segoe UI", system-ui, -apple-system, sans-serif;
   --ca-mono: "IBM Plex Mono", "Carbon Arc Sans CJK", ui-monospace, "Cascadia Mono", "Consolas", monospace;
 
+  /* The type scale is px on purpose. Stash ships `html { font-size: 14px }`
+     (assets/index-*.css), so a rem here renders at 87.5 % of its number:
+     0.875rem was 12.25 px, not the 14 px the design asked for, and the whole
+     theme read a step small. px makes each value mean what it says and keeps
+     a root-size change upstream from shrinking the UI again.
+       title 16 / body 15 / control 14 / meta 13 / micro 12 */
+  --ca-fs-title: 16px;
+  --ca-fs-title-compact: 15px;
+  --ca-fs-body: 15px;
+  --ca-fs-ctl: 14px;
+  --ca-fs-meta: 13px;
+  --ca-fs-micro: 12px;
+
   /* Preview brightness: 1 is "no filter", and it is what an inline
      `--ca-dim` from CarbonArcStore overrides (20–100 % of full). The default
      lives here rather than in a `html[data-ca-bright="100"]` block so a page
