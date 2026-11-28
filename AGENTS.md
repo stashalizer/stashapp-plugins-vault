@@ -877,6 +877,27 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   they are named, which made a file path as tall as the title above it. Measured
   on the live v0.32.0 instance with the theme on: title 16 px, path 13 px,
   badge 12 px, nav 15 px, `.btn` 14 px.
+- **A select has to read as a select, and the theme draws that caret itself.**
+  Stash paints the glyph for the whole app with
+  `select { appearance: none; background: url(<white pair of chevrons>)
+  no-repeat right 2px center }` (v0.32.0) and this theme's own `.form-control`
+  block is a `background:` shorthand, so **any** select carrying a class lost
+  the glyph and read as a text box — the duplicate checker's "Search Accuracy"
+  and "Maximum Duration" shipped arrowless until 2026-11-29. The rule is
+  `select:not([multiple]), .custom-select` with
+  `background: var(--ca-sunken) var(--ca-caret) no-repeat right 8px center /
+  12px 12px` and `padding-right: 26px`. `:not()` adopts the specificity of its
+  argument, so the selector is (0,1,1) and outranks both `.form-control`
+  (0,1,0) and bare `select` (0,0,1) whatever classes the markup carries; this
+  is the only reason the caret survives, so do not "simplify" it to `select`.
+  **A state rule must restate the whole background, not just the image**:
+  `.form-control:disabled` and `.form-control.is-valid` are shorthands too, and
+  a longhand override left the glyph with `background-size: auto` and position
+  `0% 0%` (measured — the caret went back to the top-left corner). The two
+  `data:` images hold literal copies of `--ca-tx-3` (rest) and `--ca-tx-1`
+  (hover/focus), because a `currentColor` stroke cannot live in a `data:` URL;
+  `tests/carbon-arc.test.mjs` fails on drift. List boxes (`[multiple]`, `size`)
+  keep no caret — Stash's global rule paints one there too.
 - **The nav drops its labels between 1200 and 1490 CSS px.** Ten labelled items
   need ~1442 px at the theme's size (~1400 px even at Stash's 14 px), and Stash
   only collapses to a hamburger below 1200 — so at 125 % zoom on a 1600 px

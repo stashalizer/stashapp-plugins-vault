@@ -1245,12 +1245,82 @@ div.react-select__control--is-focused {
   border-color: transparent;
 }
 
-.custom-select,
-select.form-control,
-select.form-select {
-  background-color: var(--ca-sunken);
+/* ---- selects -------------------------------------------------------------
+   A dropdown has to read as a dropdown. Stash paints the glyph for the whole
+   app — `select { appearance: none; background: url(<white pair of chevrons>)
+   no-repeat right 2px center }` — and the `.form-control` shorthand above
+   resets `background-image`, so **any** select carrying a class loses its
+   glyph and reads as a text box: the duplicate checker's "Search Accuracy" and
+   "Maximum Duration" both did (2026-11-29). The caret is drawn here instead,
+   and every rule below restates the whole `background` rather than one
+   longhand, so nothing of Stash's shorthand survives.
+   `:not([multiple])` is load-bearing, not decoration: `:not()` adopts the
+   specificity of its argument, so this selector is (0,1,1) and outranks both
+   Stash's `.form-control` (0,1,0) and its bare `select` (0,0,1) whichever
+   classes the markup happens to carry. The two data URIs hold literal hex
+   copies of --ca-tx-3 / --ca-tx-1, because a `currentColor` stroke cannot live
+   inside a `data:` image — change them with the palette.
+   Every rule that restates the caret uses the `background` shorthand: the
+   competing rules it has to undo (`.form-control:disabled`,
+   `.form-control.is-valid`) are shorthands too, and a longhand here would keep
+   the image while losing its place — measured: `background-size: auto`,
+   position `0% 0%`, i.e. the glyph back in the top-left corner. */
+:root {
+  --ca-caret: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%238c8f90' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M2.7 4.6 6 7.9 9.3 4.6'/></svg>");
+  --ca-caret-hot: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23e6e4de' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M2.7 4.6 6 7.9 9.3 4.6'/></svg>");
+}
+
+select:not([multiple]),
+.custom-select {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--ca-sunken) var(--ca-caret) no-repeat right 8px center / 12px 12px;
   border-color: var(--ca-line);
+  cursor: pointer;
+  /* room for the caret; small enough for the 56 px page-size select */
+  padding-right: 26px;
+}
+
+/* Bootstrap 4's `.custom-select` ink, left over from a light control. Nothing in
+   Stash renders one, but a plugin can, and #495057 on the sunken ground is
+   unreadable. */
+.custom-select {
   color: var(--ca-tx-1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  select:not([multiple]):hover,
+  .custom-select:hover {
+    background-image: var(--ca-caret-hot);
+    border-color: var(--ca-line-2);
+  }
+}
+
+select:not([multiple]):focus,
+.custom-select:focus {
+  background-image: var(--ca-caret-hot);
+}
+
+/* Both of these are repainted by a competing shorthand — `.form-control:disabled`
+   and `.form-control.is-valid` / `.is-invalid` — so the whole background is
+   restated, not just the image. */
+select:not([multiple]):disabled,
+.custom-select:disabled {
+  background: #101314 var(--ca-caret) no-repeat right 8px center / 12px 12px;
+  cursor: default;
+  opacity: 1;
+}
+
+select:not([multiple]).is-valid,
+select:not([multiple]).is-invalid {
+  background: var(--ca-sunken) var(--ca-caret) no-repeat right 8px center / 12px 12px;
+}
+
+/* A list box is not a dropdown: Stash's global rule still paints a caret on
+   `[multiple]`, and one over a scrollable list reads as broken. */
+select[multiple],
+select[size]:not([size="1"]) {
+  background-image: none;
 }
 
 .input-group-text {

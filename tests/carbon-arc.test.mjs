@@ -30,6 +30,9 @@
  *   8. Hover-only rules stay behind a hover-capable pointer.
  *   9. The Settings > Tools launcher row — one shape per entry, and the two
  *      guards that keep a stretched link off a row's own controls.
+ *  10. The select caret — Stash and this theme both paint it with a
+ *      `background` shorthand, so it disappears on any select with a class
+ *      unless the rule that draws it outranks both.
  */
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -550,6 +553,51 @@ test("the type scale is px tokens, never rem", () => {
   assert.match(theme, /\.grid-card \.card-section \.scene-card__details/, "the path/date line is named");
 });
 
+test("a select keeps its caret whatever classes it carries", () => {
+  const theme = strip(read(PLUGIN, "CarbonArc.css"));
+  const tokens = strip(read(PLUGIN, "CarbonArcTokens.css"));
+
+  // Stash paints the dropdown glyph for the whole app with `select { background:
+  // url(…) no-repeat right 2px center }`, and this theme's `.form-control` block
+  // is a `background:` shorthand too — so a select that carries any class loses
+  // the glyph and reads as a text box. That is how the duplicate checker's
+  // "Search Accuracy" and "Maximum Duration" shipped arrowless on 2026-11-29.
+  const base = theme.match(/\nselect:not\(\[multiple\]\),\n\.custom-select \{([^}]*)\}/);
+  assert.ok(base, "the caret rule exists");
+  assert.match(base[1], /background: var\(--ca-sunken\) var\(--ca-caret\) no-repeat right 8px center \/ 12px 12px/, "the theme draws, sizes and places the glyph rather than inheriting Stash's right 2px");
+  assert.match(base[1], /padding-right: 26px/, "the value stops short of the glyph");
+
+  // `:not()` adopts the specificity of its argument, so this selector is
+  // (0,1,1): it outranks `.form-control` (0,1,0) and `select` (0,0,1), which is
+  // the whole reason the caret survives.
+  assert.match(theme, /select:not\(\[multiple\]\)/, "the selector outranks both shorthands");
+
+  // A state rule that only restates the image keeps the glyph but loses its
+  // place: the competing `.form-control:disabled` / `.is-valid` rules are
+  // `background:` shorthands, so they reset position and size to the initial
+  // values and the caret lands in the top-left corner (measured).
+  for (const selector of ["select:not([multiple]):disabled", "select:not([multiple]).is-valid"]) {
+    const at = theme.indexOf(selector);
+    assert.ok(at !== -1, selector + " still exists");
+    const block = theme.slice(at, theme.indexOf("}", at));
+    assert.match(block, /background: [^;]*right 8px center \/ 12px 12px/, selector + " restates the whole background");
+  }
+
+  // A `data:` image cannot use currentColor, so the two carets carry literal hex
+  // copies of the palette; a drift here is invisible until a page renders.
+  const hex = (token) => tokens.match(new RegExp(token + ":\\s*(#[0-9a-f]{6});"))[1];
+  for (const [name, token] of [["rest", "--ca-tx-3"], ["hot", "--ca-tx-1"]]) {
+    const rule = theme.match(new RegExp("--ca-caret" + (name === "hot" ? "-hot" : "") + ":\\s*url\\(\"([^\"]+)\"\\)"));
+    assert.ok(rule, "the " + name + " caret is declared");
+    assert.ok(rule[1].startsWith("data:image/svg+xml"), "the " + name + " caret needs no route of its own");
+    assert.ok(rule[1].includes("%23" + hex(token).slice(1)), "the " + name + " caret tracks " + token);
+  }
+
+  // A list box is not a dropdown: Stash's global rule paints a caret on
+  // `[multiple]` too, and one over a scrollable list reads as broken.
+  assert.match(theme, /select\[multiple\],\nselect\[size\]:not\(\[size="1"\]\) \{\s*background-image: none;/, "a list box gets no caret");
+});
+
 test("the nav keeps its labels reachable when they cannot fit", () => {
   const theme = strip(read(PLUGIN, "CarbonArc.css"));
   const block = theme.match(/@media \(min-width: 1200px\) and \(max-width: 1489\.98px\) \{([\s\S]*?)\n\}/);
@@ -592,7 +640,7 @@ test("hover-only rules stay behind a hover-capable pointer", () => {
 
   assert.ok((css.match(new RegExp(gate.replace(/[()]/g, "\\$&"), "g")) || []).length >= 15, "the gate is applied");
 
-  for (const selector of [".grid-card.card:hover", ".filter-item:hover", ".tag-item:hover", ".nav-link:hover"]) {
+  for (const selector of [".grid-card.card:hover", ".filter-item:hover", ".tag-item:hover", ".nav-link:hover", "select:not([multiple]):hover"]) {
     const at = css.indexOf(selector);
     assert.ok(at !== -1, selector + " still exists");
     const opened = css.lastIndexOf(gate, at);
