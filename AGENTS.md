@@ -726,15 +726,26 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
     `queue()` holds the newest value and one `requestAnimationFrame` callback
     paints it; `settle()` flushes the held value first so a release inside the
     same frame still ends on the value under the thumb.
+    Ten moves inside one frame now cost **1 commit, 5 DOM writes and 1
+    notification**; the same ten issued straight through cost 3 commits, 15
+    writes and 3 notifications (the snapshot values collapse to 45/50/55).
+    The per-frame restyle is *not* what this saves — the browser pays that once
+    per frame either way. What it removes is the duplicate commit/render work
+    inside a frame.
   - *Save:* Stash answers `onChange` by re-rendering the whole plugin settings
     panel and, 500 ms later, writing **every configured plugin's config**
     (`savePluginSettings` seeds `pendingPlugins` with the full map —
-    `useSettings` in `context.tsx`). On a 22-plugin install that is 22
+    `useSettings` in `context.tsx`). On a 23-plugin install that is 23
     `configurePlugin` mutations plus ~12 `configuration` queries per save
     cycle, sequential. `commitAt()` therefore remembers the last string it
     handed to Stash and stays silent when the value repeats — without it a
     single adjustment wrote twice, because `pointerup` and the `focusout` that
     follows are two settles.
+    Measured after the change (2026-11-28, 23 configured plugins, CDP request
+    counting): release **23**, the focusout that follows **0**, a preset click
+    on a new value **23**, a repeat of that click **0** — i.e. 46 → 23
+    mutations per adjustment, and 23 → 0 for a repeat. A drag alone writes
+    nothing until it is released.
   - `commit()` in the store skips `apply()` and `notify()` when the normalized
     config equals the one in force, so clicking the selected tile (or a settle
     that repeats itself) costs nothing at all. The localStorage mirror is still
