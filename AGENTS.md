@@ -859,6 +859,13 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   above 1490 the labels are back. Plugin nav entries that render their label as
   a bare text node (Audio Support) are handled by `font-size: 0` plus a size on
   the icon, which is why `.nav-menu-icon` gets a step of its own in that block.
+  **Each cell is a fixed 44 x 29 flex box with the glyph centred in it.** The
+  ten icons are not one kind of object — nine are Font Awesome `<svg>`
+  (1.25 x 1 em, baseline aligned) and Audio Support's is a text ♫ in a
+  `<span>` (1 x 1.27 em). Left to inline layout the note sat 1 px low and its
+  cell was 7 px narrower, which read as a row that had drifted; centring in a
+  fixed box makes the glyph's own metrics irrelevant. Measured at 1270 px:
+  all ten icon centres 23.88 px, every cell 44 px, pitch 58 px.
 - **No `ui.requires`, and no csLib at all.** `ui.requires` is mandatory load
   order, so a missing entry would stop the theme's CSS from loading. The theme
   never needed csLib for the values (see above), and since 0.3.0 it does not

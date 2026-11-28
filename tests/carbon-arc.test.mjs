@@ -562,6 +562,15 @@ test("the nav keeps its labels reachable when they cannot fit", () => {
   assert.match(css, /font-size: var\(--ca-fs-micro\)/, "the chip takes the micro step");
   assert.match(css, /:focus-visible > span/, "keyboard focus reveals the chip too");
   assert.match(css, /\.nav-menu-icon[^{]*\{[^}]*font-size: var\(--ca-fs-body\)/, "the icon keeps its size when the label is hidden");
+
+  // Icons are not one kind of object: eight are Font Awesome <svg> (1.25 x 1 em)
+  // and Audio Support's is a text glyph in a <span> (1 x 1.27 em). Inline layout
+  // put the note 1 px low and made its cell 7 px narrow, so the row looked like
+  // it drifted. The cell is a fixed flex box with the glyph centred in it.
+  assert.match(css, /\.btn \{[^}]*display: inline-flex/, "an icon cell is a flex box");
+  assert.match(css, /\.btn \{[^}]*align-items: center/, "the glyph is centred, not baseline aligned");
+  assert.match(css, /\.btn \{[^}]*min-width: 44px/, "every cell is at least as wide as the widest glyph, so the pitch is uniform");
+  assert.match(css, /\.nav-menu-icon[^{]*\{[^}]*display: block/, "the glyph is a block inside the cell, so its own metrics cannot stretch the line");
 });
 
 test("?carbonarc=off paints nothing and parks the stylesheet", () => {

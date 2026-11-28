@@ -183,24 +183,39 @@ nav.bg-dark,
    so a 125 % browser zoom on a 1600 px screen pushed the utility cluster — New,
    Donate, the stats and settings icons — off the right edge, where it was
    simply lost. Stash collapses to a hamburger below 1200, so this is the band
-   that had no answer. Labels become a hover/focus chip; the icons keep the
-   height and the rhythm, and the label stays in the accessibility tree because
-   it is only moved, never removed. */
+   that had no answer. Labels become a hover/focus chip; the label stays in the
+   accessibility tree because it is only moved, never removed.
+
+   Every cell is a 44 x 29 flex box with the glyph centred in it. The icons are
+   not one kind of object: nine are Font Awesome <svg> (1.25 x 1 em, baseline
+   aligned) and Audio Support's is a text ♫ in a <span> (1 x 1.27 em). Left to
+   inline layout the note sat 1 px low and made its cell 7 px narrower than its
+   neighbours, which is what made the row look like it drifted. Centring the
+   glyph in a fixed box takes the glyph's own metrics out of the equation, so
+   all ten share one baseline and one pitch whatever the icon is. */
 @media (min-width: 1200px) and (max-width: 1489.98px) {
   .top-nav .navbar-nav .nav-link a.btn,
   .top-nav .navbar-nav .nav-link > a .btn {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 29px;
+    padding: 0 10px;
+    line-height: 1;
     /* hides the label of items whose text is a bare text node (Audio Support's
        nav entry), which has no span to move out of the flow */
     font-size: 0;
-    padding-left: 10px;
-    padding-right: 10px;
   }
 
-  /* the glyph inside those items still needs a size */
+  /* the glyph inside those items still needs a size, and a box its own metrics
+     cannot stretch */
   .top-nav .navbar-nav .nav-link .nav-menu-icon,
   .top-nav .navbar-nav .nav-link .btn > span[class] {
+    display: block;
     font-size: var(--ca-fs-body);
+    line-height: 1;
   }
 
   .top-nav .navbar-nav .nav-link .btn > span:not([class]) {
