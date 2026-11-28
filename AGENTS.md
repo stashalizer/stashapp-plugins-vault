@@ -848,6 +848,17 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   they are named, which made a file path as tall as the title above it. Measured
   on the live v0.32.0 instance with the theme on: title 16 px, path 13 px,
   badge 12 px, nav 15 px, `.btn` 14 px.
+- **The nav drops its labels between 1200 and 1490 CSS px.** Ten labelled items
+  need ~1442 px at the theme's size (~1400 px even at Stash's 14 px), and Stash
+  only collapses to a hamburger below 1200 — so at 125 % zoom on a 1600 px
+  screen the row ran ~170 px past the viewport and the utility cluster (New,
+  Donate, stats, settings) was simply cut off, with no scrollbar to find it.
+  In that band each item is an icon and its label becomes a hover/focus chip:
+  the span is moved out of the flow (`position: absolute`), never removed, so
+  the accessibility tree keeps it. Below 1200 Stash's own hamburger takes over;
+  above 1490 the labels are back. Plugin nav entries that render their label as
+  a bare text node (Audio Support) are handled by `font-size: 0` plus a size on
+  the icon, which is why `.nav-menu-icon` gets a step of its own in that block.
 - **No `ui.requires`, and no csLib at all.** `ui.requires` is mandatory load
   order, so a missing entry would stop the theme's CSS from loading. The theme
   never needed csLib for the values (see above), and since 0.3.0 it does not

@@ -533,6 +533,9 @@ test("the type scale is px tokens, never rem", () => {
   const sizes = [...theme.matchAll(/font-size:\s*([^;]+);/g)].map((m) => m[1].trim());
   assert.ok(sizes.length >= 20, "the theme sets its sizes");
   for (const value of sizes) {
+    // `font-size: 0` hides a bare text node (the icon-band nav label); it is a
+    // hiding trick, not a text size, and it is the only zero allowed.
+    if (value === "0") continue;
     assert.match(value, /^var\(--ca-fs-[a-z-]+\)$/, "every size names a scale step, got " + value);
   }
 
@@ -543,6 +546,22 @@ test("the type scale is px tokens, never rem", () => {
   // The span under the title inherits <body> unless it is named here, which
   // made a file path as tall as the title above it.
   assert.match(theme, /\.grid-card \.card-section \.scene-card__details/, "the path/date line is named");
+});
+
+test("the nav keeps its labels reachable when they cannot fit", () => {
+  const theme = strip(read(PLUGIN, "CarbonArc.css"));
+  const block = theme.match(/@media \(min-width: 1200px\) and \(max-width: 1489\.98px\) \{([\s\S]*?)\n\}/);
+  assert.ok(block, "the nav has an icon band between Stash's hamburger and the labelled row");
+  const css = block[1];
+
+  // Ten labelled items need ~1442 px at 15 px; below that the label moves out
+  // of the flow and becomes a chip. It must not be display:none: that would
+  // drop the only text an icon-only item has out of the accessibility tree.
+  assert.match(css, /\.btn > span:not\(\[class\]\) \{[^}]*position: absolute/, "the label is moved, not deleted");
+  assert.ok(!/display:\s*none/.test(css), "no display:none in the icon band");
+  assert.match(css, /font-size: var\(--ca-fs-micro\)/, "the chip takes the micro step");
+  assert.match(css, /:focus-visible > span/, "keyboard focus reveals the chip too");
+  assert.match(css, /\.nav-menu-icon[^{]*\{[^}]*font-size: var\(--ca-fs-body\)/, "the icon keeps its size when the label is hidden");
 });
 
 test("?carbonarc=off paints nothing and parks the stylesheet", () => {
