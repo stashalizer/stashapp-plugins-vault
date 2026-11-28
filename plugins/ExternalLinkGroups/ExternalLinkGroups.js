@@ -166,16 +166,17 @@
    * One button for one group of URLs.
    *
    * `single` opens the target directly (Stash's own rule for a one-link group);
-   * anything else opens the list. `domain` drives the icon: configured sites get
-   * their favicon, the shared bucket gets the generic link glyph because it has
-   * no single domain to represent.
+   * anything else opens the list. `name` is the label — a domain, or the group
+   * name shared by several domains — and `domain` is the member whose icon
+   * represents the group (null for the shared bucket, which has no single
+   * domain to represent).
    */
   function LinkButton(props) {
     var urls = props.urls;
     var label =
       urls.length === 1
-        ? "Open " + (props.domain || props.name) + " profile"
-        : (props.domain || props.name) + ": " + urls.length + " links";
+        ? "Open " + props.name + " profile"
+        : props.name + ": " + urls.length + " links";
 
     var face = props.domain
       ? h(LinkIcon, { domain: props.domain })
@@ -253,8 +254,11 @@
 
     var nodes = parts.separate.map(function (group) {
       return h(LinkButton, {
-        key: "elg-" + group.domain,
-        domain: group.domain,
+        key: "elg-" + group.key,
+        // The group name is the label; the first member supplies the icon, so
+        // x.com + twitter.com behind "X / Twitter" look like one site.
+        name: group.name,
+        domain: group.iconDomain,
         urls: group.urls,
       });
     });

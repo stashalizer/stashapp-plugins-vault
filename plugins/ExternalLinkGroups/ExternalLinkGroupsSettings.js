@@ -67,7 +67,7 @@
   function toDraft(config) {
     return config.domains.map(function (entry) {
       return {
-        domain: entry.domain,
+        domain: S.formatDomainList(entry.domains),
         enabled: entry.enabled,
         separate: entry.separate,
         error: null,
@@ -77,13 +77,27 @@
 
   /** Draft row → config entry, for the pure helpers that take a config. */
   function toEntry(row) {
-    return { domain: row.domain, enabled: !!row.enabled, separate: !!row.separate };
+    return {
+      domains: S.parseDomainList(row.domain).domains,
+      enabled: !!row.enabled,
+      separate: !!row.separate,
+    };
+  }
+
+  /** The domain whose icon represents a row: the first one it lists. */
+  function primaryDomain(row) {
+    var parsed = S.parseDomainList(row && row.domain);
+    return parsed.domains.length ? parsed.domains[0] : "";
   }
 
   function serialize(rows) {
     return JSON.stringify(
       rows.map(function (row) {
-        return { domain: row.domain.trim().toLowerCase(), enabled: !!row.enabled, separate: !!row.separate };
+        return {
+          domains: S.parseDomainList(row.domain).domains,
+          enabled: !!row.enabled,
+          separate: !!row.separate,
+        };
       })
     );
   }
@@ -281,8 +295,9 @@
 
           var configured = {};
           draftRef.current.forEach(function (row) {
-            var domain = S.normalizeDomain(row.domain);
-            if (domain) configured[domain] = true;
+            S.parseDomainList(row.domain).domains.forEach(function (domain) {
+              configured[domain] = true;
+            });
           });
 
           var defaults = {};
@@ -334,17 +349,42 @@
       });
     }, []);
 
+    /**
+     * Validate one row's domain text.
+     *
+     * The field holds one or more domains ("x.com; twitter.com"): the row is one
+     * button, so several domains mean "same account". Returns canonical text so
+     * the input settles to `a.com; b.com` after a blur, and names the offending
+     * token when something is not a host — "Not a domain" on a row with four
+     * entries is otherwise a guessing game.
+     */
     var validateDomain = useCallback(
       function (value, index) {
-        var domain = S.normalizeDomain(value);
-        if (!domain) return { domain: null, error: "Not a domain — try example.com" };
+        var parsed = S.parseDomainList(value);
+        if (!parsed.domains.length) {
+          return { text: value, error: "Not a domain — try example.com" };
+        }
+        if (parsed.invalid.length) {
+          return { text: value, error: "Not a domain: “" + parsed.invalid[0] + "”" };
+        }
 
-        var duplicate = draft.some(function (row, i) {
-          return i !== index && row.domain === domain;
+        // First claim wins: a domain that another row already owns would give
+        // two buttons the same URL, so this row has to give it up.
+        var claimed = {};
+        draft.forEach(function (row, i) {
+          if (i === index) return;
+          S.parseDomainList(row.domain).domains.forEach(function (domain) {
+            claimed[domain] = true;
+          });
         });
-        if (duplicate) return { domain: domain, error: "Already configured" };
 
-        return { domain: domain, error: null };
+        for (var i = 0; i < parsed.domains.length; i += 1) {
+          if (claimed[parsed.domains[i]]) {
+            return { text: value, error: parsed.domains[i] + " is already in another row" };
+          }
+        }
+
+        return { text: S.formatDomainList(parsed.domains), error: null };
       },
       [draft]
     );
@@ -361,7 +401,7 @@
         var row = draft[index];
         if (!row) return;
         var result = validateDomain(row.domain, index);
-        updateRow(index, { domain: result.domain || row.domain, error: result.error });
+        updateRow(index, { domain: result.text, error: result.error });
       },
       [draft, updateRow, validateDomain]
     );
@@ -375,18 +415,27 @@
           setMessage({ kind: "error", text: result.error });
           return;
         }
-        if (draft.length >= S.MAX_DOMAINS) {
-          setMessage({ kind: "error", text: "At most " + S.MAX_DOMAINS + " domains." });
+
+        var used = 0;
+        draft.forEach(function (row) {
+          used += S.parseDomainList(row.domain).domains.length;
+        });
+        var incoming = S.parseDomainList(result.text).domains.length;
+        if (used + incoming > S.MAX_DOMAINS) {
+          setMessage({
+            kind: "error",
+            text: "At most " + S.MAX_DOMAINS + " domains — remove one before adding another.",
+          });
           return;
         }
 
         setDraft(function (rows) {
-          return rows.concat([{ domain: result.domain, enabled: true, separate: true, error: null }]);
+          return rows.concat([{ domain: result.text, enabled: true, separate: true, error: null }]);
         });
         setNewDomain("");
         setMessage(null);
       },
-      [draft.length, newDomain, validateDomain]
+      [draft, newDomain, validateDomain]
     );
 
     var onMove = useCallback(function (index, delta) {
@@ -437,7 +486,12 @@
         }
 
         var rows = result.added.map(function (item) {
-          return { domain: item.domain, enabled: item.enabled, separate: item.separate, error: null };
+          return {
+            domain: S.formatDomainList(item.domains),
+            enabled: item.enabled,
+            separate: item.separate,
+            error: null,
+          };
         });
 
         setDraft(function (current) {
@@ -460,7 +514,7 @@
     var onSave = useCallback(
       function () {
         var invalid = draft.filter(function (row) {
-          return row.error || !S.normalizeDomain(row.domain);
+          return row.error || !S.parseDomainList(row.domain).domains.length;
         });
         if (invalid.length) {
           setMessage({ kind: "error", text: "Fix the highlighted domains before saving." });
@@ -469,7 +523,11 @@
 
         var config = S.sanitizeConfig({
           domains: draft.map(function (row) {
-            return { domain: row.domain, enabled: row.enabled, separate: row.separate };
+            return {
+              domains: S.parseDomainList(row.domain).domains,
+              enabled: row.enabled,
+              separate: row.separate,
+            };
           }),
         });
 
@@ -532,8 +590,9 @@
     // one or clearing the list must all move the suggestion list with it.
     var configuredDomains = {};
     draft.forEach(function (row) {
-      var domain = S.normalizeDomain(row.domain);
-      if (domain) configuredDomains[domain] = true;
+      S.parseDomainList(row.domain).domains.forEach(function (domain) {
+        configuredDomains[domain] = true;
+      });
     });
 
     var scanDone = scan.status === "done";
@@ -633,6 +692,7 @@
     });
 
     var rows = draft.map(function (row, index) {
+      var primary = primaryDomain(row);
       return h(
         "li",
         {
@@ -648,8 +708,12 @@
             value: row.domain,
             spellCheck: false,
             autoComplete: "off",
-            "aria-label": "Domain",
+            "aria-label": "Domains",
             "aria-invalid": row.error ? "true" : "false",
+            // The one hint that this field takes a list. It sits in the tooltip
+            // rather than in the row so the table keeps one line per site.
+            title: "One row can list several domains separated by “;” — they share one button, and the first domain's icon is used",
+            placeholder: "example.com; second.com",
             onChange: function (event) {
               onDomainChange(index, event.target.value);
             },
@@ -683,16 +747,16 @@
         h(
           "div",
           { className: "elg-set__cell elg-set__cell--icon" },
-          h(IconPreview, { domain: row.domain, revision: revision }),
+          h(IconPreview, { domain: primary, revision: revision }),
           h(
             "button",
             {
               type: "button",
               className: "btn btn-sm btn-secondary elg-set__icon-button",
               title: "Fetch this icon again",
-              "aria-label": "Refresh icon for " + (row.domain || "this domain"),
+              "aria-label": "Refresh icon for " + (primary || "this row"),
               onClick: function () {
-                onRefreshIcon(row.domain);
+                onRefreshIcon(primary);
               },
             },
             "\u21bb"
@@ -708,7 +772,7 @@
               className: "btn btn-sm btn-secondary",
               disabled: index === 0,
               title: "Move up",
-              "aria-label": "Move " + (row.domain || "row") + " up",
+              "aria-label": "Move " + (primary || "row") + " up",
               onClick: function () {
                 onMove(index, -1);
               },
@@ -722,7 +786,7 @@
               className: "btn btn-sm btn-secondary",
               disabled: index === draft.length - 1,
               title: "Move down",
-              "aria-label": "Move " + (row.domain || "row") + " down",
+              "aria-label": "Move " + (primary || "row") + " down",
               onClick: function () {
                 onMove(index, 1);
               },
@@ -735,7 +799,7 @@
               type: "button",
               className: "btn btn-sm btn-danger",
               title: "Remove",
-              "aria-label": "Remove " + (row.domain || "row"),
+              "aria-label": "Remove " + (primary || "row"),
               onClick: function () {
                 onRemove(index);
               },
@@ -756,7 +820,7 @@
         h(
           "p",
           { className: "elg-set__lede" },
-          "Promote the sites you actually use out of Stash's generic link menu. Each configured domain gets its own button with that site's icon; clicking one link opens it directly, clicking several shows the list."
+          "Promote the sites you actually use out of Stash's generic link menu. Each row gets its own button with that site's icon; put several domains in one row (x.com; twitter.com) when they are the same account and they share a single button. Clicking one link opens it directly, clicking several shows the list."
         )
       ),
 
@@ -769,7 +833,13 @@
           { className: "elg-set__rules" },
           h("li", null, h("strong", null, "Disabled"), " — the link is left to Stash, which shows it exactly as it did before this plugin."),
           h("li", null, h("strong", null, "Enabled + separate"), " — own icon button, icon fetched and cached from the site."),
-          h("li", null, h("strong", null, "Enabled, not separate"), " — grouped into one “Configured links” button (no icon fetch).")
+          h("li", null, h("strong", null, "Enabled, not separate"), " — grouped into one “Configured links” button (no icon fetch)."),
+          h(
+            "li",
+            null,
+            h("strong", null, "Several domains in one row"),
+            " — separate them with “;” (x.com; twitter.com) when they are the same account: one button, the first domain's icon and label, and every link from both sites in one list."
+          )
         ),
 
         draft.length === 0

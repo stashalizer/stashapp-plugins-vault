@@ -333,6 +333,37 @@ test("an enabled-but-not-separate domain shares one button", () => {
   assert.deepEqual(records.originalCalls[0], ["https://example.com/z"]);
 });
 
+test("a row listing two domains renders a single button carrying both", () => {
+  const mergedRow = {
+    version: 1,
+    domains: [{ domains: ["x.com", "twitter.com"], enabled: true, separate: true }],
+  };
+  const { out, records } = loadPlugin(["https://x.com/a", "https://twitter.com/b"], mergedRow);
+
+  const buttons = out.filter(
+    (node) => node.props && node.props.className && String(node.props.className).includes("elg-button")
+  );
+  assert.equal(buttons.length, 1, "one button per row, not one per domain");
+
+  const label = out.find(
+    (node) => node.props && typeof node.props["aria-label"] === "string" && node.props["aria-label"].includes("x.com")
+  );
+  assert.ok(label, "the first domain labels the button");
+  assert.match(label.props["aria-label"], /x\.com: 2 links/);
+
+  const hrefs = out
+    .filter((node) => node.props && node.props.title && /x\.com|twitter\.com/.test(String(node.props.href || "")))
+    .map((node) => node.props.href);
+  assert.deepEqual(hrefs, ["https://x.com/a", "https://twitter.com/b"]);
+
+  // The icon is the first domain's, so the letter tile the stub falls back to
+  // is that domain's initial.
+  const tile = out.find((node) => node.props && node.props.className === "elg-letter");
+  assert.equal(tile.props.children, "X");
+
+  assert.deepEqual(records.originalCalls[0], [], "both domains claim their URLs");
+});
+
 test("a bucket holding several URLs renders a menu", () => {
   const { out } = loadPlugin(["https://twitter.com/y", "https://twitter.com/z"], config);
   const items = out.filter((node) => node.props && node.props["data-menu"]);
@@ -373,7 +404,7 @@ test("the settings page renders the configured rows", () => {
   assert.equal(rowClasses.length, 3, "one row per configured domain");
 
   const domainInputs = settingsOut
-    .filter((node) => node.type === "input" && node.props["aria-label"] === "Domain")
+    .filter((node) => node.type === "input" && node.props["aria-label"] === "Domains")
     .map((node) => node.props.value);
   assert.deepEqual(domainInputs, ["onlyfans.com", "tiktok.com", "twitter.com"]);
 });

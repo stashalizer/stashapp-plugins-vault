@@ -386,6 +386,7 @@ Stash already collects every profile URL a performer or studio has. What it does
 ### Features
 
 - **Suggestions instead of typing.** One click on **Scan library** reads the URLs already stored on your performers, studios and groups, drops the ones it cannot parse, ranks what is left by how many links use each domain and pre-selects the most common ones. Accept a batch in one click instead of typing twelve hostnames — and a domain you already configured (even one you switched off) is never re-offered or overwritten. The scan is a button, not something the page does on open: it walks the whole library, so it runs when you ask and the result stays until you ask again.
+- **Several domains, one button.** Put both names in one row — `x.com; twitter.com` — when they are the same account: one button instead of two competing for the same corner, the first domain's icon and label, and every link from both sites in one menu.
 - **Exact-domain control.** A domain on your list claims only URLs on that host (a leading `www.` is ignored, subdomains are not). Everything else — plus every entry you switch off — is handed back to Stash, which renders it exactly as it did before the plugin existed.
 - **Two behaviours per site.** *Separate* gives the site its own icon button. *Not separate* groups it into one "Configured links" button, for sites you want convenient but not prominent.
 - **Real favicons, cached.** The button shows the site's own icon, found by trying the site's `/favicon.ico` first, then DuckDuckGo, then Google. Only the source URL is cached locally (30 days for a hit, 6 hours for a miss); a broken image falls through to the next source by itself and ends on a letter tile rather than a hole.
@@ -398,13 +399,14 @@ Stash already collects every profile URL a performer or studio has. What it does
 1. Install **External Link Groups** from the source list and enable it.
 2. Open **Settings → Tools → External Link Groups** (or `/plugins/externalurlgroups`).
 3. Press **Scan library** under **Suggested from your library**: it lists the domains your links point at, most used first. The top five start ticked — untick anything you do not want, tick others, then **Add selected**. The domains land in the list above with the same defaults as a hand-typed one, and you can still edit, disable or reorder each of them. The list stays until you press **Rescan library**.
-4. Or add a domain by hand — `onlyfans.com` or a pasted profile URL both work, it is reduced to the host. Choose **Enabled** and, if you want it promoted, **Separate button**.
+4. Or add a domain by hand — `onlyfans.com` or a pasted profile URL both work, it is reduced to the host. Choose **Enabled** and, if you want it promoted, **Separate button**. To merge sites that are the same account, put both in one field separated by a semicolon (`x.com; twitter.com`) — the first one supplies the icon.
 5. **Save changes**, then open any performer, studio or group page. The configured sites appear as their own icons next to the favourite star, before Stash's own buttons.
 6. Icons that look wrong or blank: use **↻** on that row, or **Clear icon cache**, and reload.
 
 ### Known limitations
 
 - **Exact host only.** `onlyfans.com` does not claim `fan.onlyfans.com`; add the subdomain as its own entry if a site puts profiles there.
+- **One row, one icon.** A row that lists several domains shows the **first** domain's icon; put the site you want to see first in the field. A domain can only live in one row — if you add it to a second row, saving reports the clash instead of silently taking it away from the first.
 - **The scan counts links, not entities.** The same profile URL stored on a performer and on the studio that owns it is one link, and only performers, studios and groups are read — scene URLs are not. It also stops after 25 pages per entity type; the panel says so when that happens instead of presenting a partial count as the whole library.
 - **Suggestions never overwrite.** Only domains that are not in the list at all are offered, so a domain you disabled stays disabled. Accepting a suggestion changes the draft, not the saved config — nothing is persisted until **Save changes**.
 - **Icons come from the network.** First load of a new domain makes one request per candidate (up to three, 4 s each) before falling back to the letter tile. Offline, or behind a block on the icon services, only the site's own `/favicon.ico` can succeed. Both icon services answer "I do not know this site" with a 404 that still contains a picture, so DuckDuckGo's placeholder is recognised by its size and skipped — the real logo usually comes from the next source. If every source fails, the button shows the site's initial instead of a made-up icon.

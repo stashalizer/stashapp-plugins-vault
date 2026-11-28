@@ -1101,22 +1101,47 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   keep Stash's groups, its classes and its behaviour. Do not "simplify" this by
   re-rendering the three default groups here — that is how the two drift.
 - **Config key `ExternalLinkGroups`**, shape
-  `{ version: 1, domains: [{ domain, enabled, separate }] }`. `domain` is a bare
-  hostname, normalized on read and write (`ExternalLinkGroupsShared.
+  `{ version: 1, domains: [{ domains: [hostname], enabled, separate }] }`. Each
+  entry owns a **list** of domains; one is the common case, several mean "the
+  same account" (x.com and twitter.com) and render as a single button. Every
+  hostname is normalized on read and write (`ExternalLinkGroupsShared.
   normalizeDomain`): lowercase, a pasted URL is reduced to its host, a leading
   `www.` and trailing dot are removed, ports/userinfo/paths are dropped, and
-  non-http schemes and single-label hosts are rejected. Duplicates keep the
-  first entry, the list is capped at `MAX_DOMAINS` (32), and config order is
-  button order.
+  non-http schemes and single-label hosts are rejected. The total number of
+  domains is capped at `MAX_DOMAINS` (32) — domains, not rows — and config order
+  is button order.
 - **Matching is exact hostname equality after that normalization.**
   `onlyfans.com` does not claim `fan.onlyfans.com` — a deliberate difference
   from Stash's own `https?://(?:www\.)?instagram.com/` regex. A URL the plugin
   cannot parse stays with Stash.
 - **The two flags are not synonyms.** `enabled: false` → the entry is ignored
   and its URLs go back to Stash, with no icon request. `enabled && separate` →
-  own icon button. `enabled && !separate` → the URLs are still owned by the
-  plugin but share one "Configured links" button, because a button cannot show
-  one favicon for several domains.
+  own icon button, one per entry. `enabled && !separate` → the URLs are still
+  owned by the plugin but share one "Configured links" button, because a button
+  cannot show one favicon for several domains.
+- **Several domains in one entry is the whole "grouping" story** (0.3.0). A row
+  that lists x.com and twitter.com is one button: `name` and `iconDomain` are the
+  **first** domain in the list, `domains` is the list, and `urls` interleave both
+  hosts in page order. There is no separate group name or group field — the
+  earlier design had one and it was two fields to fill in for one idea.
+  Load-bearing details:
+  - **A domain belongs to exactly one entry.** `sanitizeConfig` keeps the first
+    claim and drops that domain from later rows, dropping a row that ends up
+    empty; two buttons can never claim the same URL. The settings page reports
+    the clash per row instead of letting save silently reorder ownership.
+  - **`parseDomainList` is the only reader of the input field.** It splits on
+    `;`, `,` and newlines (a paste is a list), normalizes each token, collapses
+    repeats and returns `invalid` verbatim so the page can name the bad token
+    instead of saying "not a domain" at a row with four of them.
+  - **Old configs need no migration.** `sanitizeEntry` accepts the pre-0.3
+    `{ domain }`, a `{ domains: [...] }` array and a delimited string, and the
+    first domain of a list is the primary one, so a single-domain config renders
+    exactly as it did.
+  - **The icon follows the first domain**, so putting twitter.com first shows
+    Twitter's icon with x.com's URLs behind it. That is the documented way to
+    choose which site represents the row.
+  - **Suggestions never merge.** `appendDomains` writes one domain per new row;
+    the user decides a merge by editing that row.
 - **Icon cache: the source URL, not the bytes.** `fetch()` cannot read a
   cross-origin icon (CORS), and Stash's CSP is `img-src data: *` with
   `connect-src` limited to `'self'` plus whatever plugins declare — so images
@@ -1245,13 +1270,16 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   twitter/instagram groups. This is a known incompatibility, not a bug to
   paper over.
 - **Verification**: `tests/external-link-groups.test.mjs` covers the schema,
-  matching and partition against the real module under `node:test`;
+  matching, partition and multi-domain rows (one button per row, the first
+  domain as label and icon, first-claim ownership, parsing and formatting)
+  against the real module under `node:test`;
   `tests/external-link-groups-scan.test.mjs` covers the scan — aggregation and
   ranking, the "already configured" and `MAX_DOMAINS` rules, pagination,
   truncation, the error messages and the base-path resolution, all against a
   stubbed `fetch`; `tests/external-link-groups-render.test.mjs` runs one stub
-  render pass to prove the original still receives the leftover URLs and that
-  one URL vs several produce a link vs a dropdown. None of them proves CSS, icon
+  render pass to prove the original still receives the leftover URLs, that one
+  URL vs several produce a link vs a dropdown, and that a row listing two
+  domains produces **one** button carrying both links. None of them proves CSS, icon
   loading or the real endpoint — those need a live Stash. Live check used for
   the scan (v0.32.0, 2026-11-28): open `/plugins/externalurlgroups` and confirm
   the panel is **idle** — no `/graphql` request until "Scan library" is pressed

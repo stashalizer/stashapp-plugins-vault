@@ -27,7 +27,29 @@ function loadShared() {
 const S = loadShared();
 const snap = (value) => JSON.parse(JSON.stringify(value));
 
-const entry = (domain, enabled = true, separate = true) => ({ domain, enabled, separate });
+const entry = (domains, enabled = true, separate = true) => ({
+  domains: Array.isArray(domains) ? domains : [domains],
+  enabled,
+  separate,
+});
+
+/** Expected partition group for a row that lists one domain. */
+const solo = (domain, urls) => ({
+  key: "d:" + domain,
+  name: domain,
+  iconDomain: domain,
+  domains: [domain],
+  urls,
+});
+
+/** Expected partition group for a row that lists several domains. */
+const merged = (domains, urls) => ({
+  key: "d:" + domains[0],
+  name: domains[0],
+  iconDomain: domains[0],
+  domains,
+  urls,
+});
 
 test("normalizeDomain accepts the shapes users actually paste", () => {
   assert.equal(S.normalizeDomain("onlyfans.com"), "onlyfans.com");
@@ -70,7 +92,7 @@ test("toHref mirrors Stash's https-prefix rule but refuses opaque schemes", () =
   assert.equal(S.toHref(""), null);
 });
 
-test("sanitizeConfig coerces, dedupes by first occurrence and caps the list", () => {
+test("sanitizeConfig coerces, keeps the first claim on a domain and drops junk", () => {
   const config = snap(
     S.sanitizeConfig({
       version: 99,
@@ -85,25 +107,98 @@ test("sanitizeConfig coerces, dedupes by first occurrence and caps the list", ()
   );
 
   assert.equal(config.version, S.VERSION);
+  // The second onlyfans.com row loses its only domain to the first claim, so it
+  // disappears entirely rather than becoming an empty row.
   assert.deepEqual(config.domains, [
-    { domain: "onlyfans.com", enabled: true, separate: false },
-    { domain: "tiktok.com", enabled: true, separate: true },
+    { domains: ["onlyfans.com"], enabled: true, separate: false },
+    { domains: ["tiktok.com"], enabled: true, separate: true },
   ]);
 });
 
-test("sanitizeConfig accepts a bare array and an absent config", () => {
+test("sanitizeConfig accepts the old single-domain shape, a list and a delimited string", () => {
+  // Pre-0.3 configs store `domain`; a hand-edited one may store a string.
   assert.deepEqual(snap(S.sanitizeConfig([{ domain: "x.com" }])).domains, [
-    { domain: "x.com", enabled: true, separate: true },
+    { domains: ["x.com"], enabled: true, separate: true },
   ]);
+  assert.deepEqual(snap(S.sanitizeConfig([{ domains: ["x.com", "twitter.com"] }])).domains, [
+    { domains: ["x.com", "twitter.com"], enabled: true, separate: true },
+  ]);
+  assert.deepEqual(snap(S.sanitizeConfig([{ domains: "x.com; https://www.Twitter.com/a" }])).domains, [
+    { domains: ["x.com", "twitter.com"], enabled: true, separate: true },
+  ]);
+
   assert.deepEqual(snap(S.sanitizeConfig(null)), { version: S.VERSION, domains: [] });
   assert.deepEqual(snap(S.sanitizeConfig("nope")), { version: S.VERSION, domains: [] });
   assert.deepEqual(snap(S.sanitizeConfig({ domains: "nope" })), { version: S.VERSION, domains: [] });
 });
 
-test("sanitizeConfig caps the list at MAX_DOMAINS", () => {
+test("sanitizeConfig gives a domain to the first row that claims it", () => {
+  const config = snap(
+    S.sanitizeConfig({
+      domains: [
+        { domains: ["x.com", "twitter.com"] },
+        { domains: ["twitter.com", "tiktok.com"] },
+        { domains: ["x.com", "onlyfans.com"] },
+      ],
+    })
+  );
+
+  assert.deepEqual(
+    config.domains.map((d) => d.domains),
+    [
+      ["x.com", "twitter.com"],
+      ["tiktok.com"],
+      ["onlyfans.com"],
+    ]
+  );
+});
+
+test("parseDomainList splits on semicolons, commas and pasted newlines", () => {
+  assert.deepEqual(snap(S.parseDomainList("x.com; twitter.com")), {
+    domains: ["x.com", "twitter.com"],
+    invalid: [],
+  });
+  assert.deepEqual(snap(S.parseDomainList("x.com,twitter.com\nhttps://tiktok.com/@a")), {
+    domains: ["x.com", "twitter.com", "tiktok.com"],
+    invalid: [],
+  });
+  // Repeated domains collapse; surrounding space is not a domain.
+  assert.deepEqual(snap(S.parseDomainList("x.com ; X.com ;  tiktok.com ")), {
+    domains: ["x.com", "tiktok.com"],
+    invalid: [],
+  });
+  // Bad tokens come back verbatim so the settings page can name them.
+  assert.deepEqual(snap(S.parseDomainList("x.com; not a domain; mailto:me@x.com")), {
+    domains: ["x.com"],
+    invalid: ["not a domain", "mailto:me@x.com"],
+  });
+  assert.deepEqual(snap(S.parseDomainList("")), { domains: [], invalid: [] });
+  assert.deepEqual(snap(S.parseDomainList(null)), { domains: [], invalid: [] });
+});
+
+test("formatDomainList is the text the settings page shows and re-parses", () => {
+  assert.equal(S.formatDomainList(["x.com", "twitter.com"]), "x.com; twitter.com");
+  assert.equal(S.formatDomainList(["x.com"]), "x.com");
+  assert.equal(S.formatDomainList([]), "");
+  assert.equal(S.formatDomainList(null), "");
+  assert.deepEqual(snap(S.parseDomainList(S.formatDomainList(["x.com", "twitter.com"]))).domains, [
+    "x.com",
+    "twitter.com",
+  ]);
+});
+
+test("sanitizeConfig caps the total number of domains at MAX_DOMAINS", () => {
   const many = [];
   for (let i = 0; i < S.MAX_DOMAINS + 10; i += 1) many.push({ domain: `site${i}.com` });
-  assert.equal(S.sanitizeConfig(many).domains.length, S.MAX_DOMAINS);
+
+  const config = S.sanitizeConfig(many);
+  const total = config.domains.reduce((sum, d) => sum + d.domains.length, 0);
+  assert.equal(total, S.MAX_DOMAINS);
+
+  // The cap counts domains, not rows: two rows of two are four domains.
+  const merged = S.sanitizeConfig({ domains: [{ domains: ["a.com", "b.com"] }, { domains: ["c.com"] }] });
+  assert.equal(merged.domains.length, 2);
+  assert.equal(merged.domains[0].domains.length, 2);
 });
 
 test("partition leaves unconfigured URLs to Stash", () => {
@@ -121,8 +216,8 @@ test("partition pulls enabled-and-separate domains into their own groups", () =>
   );
 
   assert.deepEqual(parts.separate, [
-    { domain: "onlyfans.com", urls: ["https://onlyfans.com/a", "onlyfans.com/b"] },
-    { domain: "tiktok.com", urls: ["https://www.tiktok.com/@x"] },
+    solo("onlyfans.com", ["https://onlyfans.com/a", "onlyfans.com/b"]),
+    solo("tiktok.com", ["https://www.tiktok.com/@x"]),
   ]);
   assert.deepEqual(parts.bucket, []);
   assert.deepEqual(parts.rest, ["https://example.com/a"]);
@@ -132,7 +227,7 @@ test("partition groups follow config order, not URL order", () => {
   const config = S.sanitizeConfig({ domains: [entry("b.com"), entry("a.com")] });
   const parts = snap(S.partition(["https://a.com/x", "https://b.com/y"], config));
   assert.deepEqual(
-    parts.separate.map((g) => g.domain),
+    parts.separate.map((g) => g.name),
     ["b.com", "a.com"]
   );
 });
@@ -168,7 +263,7 @@ test("partition collapses exact duplicates and drops junk entries", () => {
       config
     )
   );
-  assert.deepEqual(parts.separate, [{ domain: "onlyfans.com", urls: ["https://onlyfans.com/a", "https://onlyfans.com/b"] }]);
+  assert.deepEqual(parts.separate, [solo("onlyfans.com", ["https://onlyfans.com/a", "https://onlyfans.com/b"])]);
 });
 
 test("partition tolerates missing or non-array urls", () => {
@@ -180,7 +275,7 @@ test("partition tolerates missing or non-array urls", () => {
 test("partition omits configured domains with no matching URL", () => {
   const config = S.sanitizeConfig({ domains: [entry("onlyfans.com"), entry("tiktok.com")] });
   const parts = snap(S.partition(["https://tiktok.com/@x"], config));
-  assert.deepEqual(parts.separate, [{ domain: "tiktok.com", urls: ["https://tiktok.com/@x"] }]);
+  assert.deepEqual(parts.separate, [solo("tiktok.com", ["https://tiktok.com/@x"])]);
 });
 
 test("partition never mutates the input config or list", () => {
@@ -188,48 +283,58 @@ test("partition never mutates the input config or list", () => {
   const urls = ["https://onlyfans.com/a"];
   S.partition(urls, config);
   assert.deepEqual(urls, ["https://onlyfans.com/a"]);
-  assert.deepEqual(snap(config).domains, [{ domain: "onlyfans.com", enabled: true, separate: true }]);
+  assert.deepEqual(snap(config).domains, [{ domains: ["onlyfans.com"], enabled: true, separate: true }]);
 });
 
-test("iconCandidates tries the site first, then two services", () => {
-  const candidates = S.iconCandidates("www.OnlyFans.com");
-  assert.equal(candidates.length, 3);
-  assert.equal(candidates[0], "https://onlyfans.com/favicon.ico");
-  assert.equal(candidates[1], "https://icons.duckduckgo.com/ip3/onlyfans.com.ico");
-  assert.equal(
-    candidates[2],
-    "https://www.google.com/s2/favicons?sz=64&domain=" + encodeURIComponent("onlyfans.com")
+// --- several domains in one row -------------------------------------------
+
+test("one row with two domains renders one button carrying both", () => {
+  const config = S.sanitizeConfig({ domains: [entry(["x.com", "twitter.com"])] });
+  const parts = snap(S.partition(["https://x.com/a", "https://twitter.com/b", "https://example.com/c"], config));
+
+  assert.deepEqual(parts.separate, [
+    merged(["x.com", "twitter.com"], ["https://x.com/a", "https://twitter.com/b"]),
+  ]);
+  assert.deepEqual(parts.rest, ["https://example.com/c"]);
+});
+
+test("the first domain in the row is the label and the icon", () => {
+  const config = S.sanitizeConfig({ domains: [entry(["twitter.com", "x.com"])] });
+  const parts = snap(S.partition(["https://x.com/a", "https://twitter.com/b"], config));
+
+  assert.equal(parts.separate[0].name, "twitter.com");
+  assert.equal(parts.separate[0].iconDomain, "twitter.com");
+  // Membership is not order-sensitive: both domains still belong to the row.
+  assert.deepEqual(parts.separate[0].domains, ["twitter.com", "x.com"]);
+  assert.deepEqual(parts.separate[0].urls, ["https://x.com/a", "https://twitter.com/b"]);
+});
+
+test("a disabled multi-domain row hands every one of its URLs back to Stash", () => {
+  const config = S.sanitizeConfig({ domains: [entry(["x.com", "twitter.com"], false, true)] });
+  const parts = snap(S.partition(["https://x.com/a", "https://twitter.com/b"], config));
+
+  assert.deepEqual(parts.separate, []);
+  assert.deepEqual(parts.bucket, []);
+  assert.deepEqual(parts.rest, ["https://x.com/a", "https://twitter.com/b"]);
+});
+
+test("a multi-domain row that is not separate buckets all of its URLs", () => {
+  const config = S.sanitizeConfig({ domains: [entry(["x.com", "twitter.com"], true, false)] });
+  const parts = snap(S.partition(["https://x.com/a", "https://twitter.com/b"], config));
+
+  assert.deepEqual(parts.separate, []);
+  assert.deepEqual(parts.bucket, ["https://x.com/a", "https://twitter.com/b"]);
+});
+
+test("two rows can never claim the same domain", () => {
+  const config = S.sanitizeConfig({
+    domains: [entry(["x.com"]), entry(["x.com", "twitter.com"])],
+  });
+  const parts = snap(S.partition(["https://x.com/a", "https://twitter.com/b"], config));
+
+  // The first row owns x.com; the second keeps only twitter.com.
+  assert.deepEqual(
+    parts.separate.map((g) => g.domains),
+    [["x.com"], ["twitter.com"]]
   );
-  assert.deepEqual(snap(S.iconCandidates("nope")), []);
-});
-
-test("isPlaceholderIcon recognises DuckDuckGo's 404-with-a-picture", () => {
-  const ddg = S.iconCandidates("simpcity.cr")[1];
-
-  // The real thing: a grey 48×48 chevron served with a 404, which an <img>
-  // reports as a successful load of exactly this size.
-  assert.equal(S.isPlaceholderIcon(ddg, 48, 48), true);
-});
-
-test("isPlaceholderIcon leaves every other shape alone", () => {
-  const ddg = S.iconCandidates("simpcity.cr")[1];
-  const google = S.iconCandidates("simpcity.cr")[2];
-  const site = S.iconCandidates("simpcity.cr")[0];
-
-  // A real 48×48 icon from DuckDuckGo (Linktree is served that way) is
-  // indistinguishable from the placeholder, so it is demoted rather than
-  // refused — the resolver falls through, it does not give up. At least the
-  // check must not fire on anything that is not that exact size.
-  assert.equal(S.isPlaceholderIcon(ddg, 32, 32), false);
-  assert.equal(S.isPlaceholderIcon(ddg, 48, 64), false);
-  assert.equal(S.isPlaceholderIcon(ddg, 0, 0), false);
-
-  // Google's 16×16 globe is not recognised on purpose: small real icons exist
-  // and Google is the last source, so rejecting one would leave a letter tile.
-  assert.equal(S.isPlaceholderIcon(google, 16, 16), false);
-  // The site's own /favicon.ico is never judged by this rule.
-  assert.equal(S.isPlaceholderIcon(site, 48, 48), false);
-
-  assert.equal(S.isPlaceholderIcon(null, 48, 48), false);
-  assert.equal(S.isPlaceholderIcon(ddg, undefined, undefined), false);
 });

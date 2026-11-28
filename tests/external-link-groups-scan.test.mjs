@@ -125,7 +125,7 @@ test("urlsFromLibrary accepts a bare array and tolerates missing sections", () =
 
 // --- suggestions -----------------------------------------------------------
 
-const entry = (domain, enabled = true, separate = true) => ({ domain, enabled, separate });
+const entry = (domain, enabled = true, separate = true) => ({ domains: [domain], enabled, separate });
 
 test("suggestDomains keeps the most used domains that are not configured", () => {
   const config = S.sanitizeConfig({ domains: [entry("x.com", true, false)] });
@@ -139,6 +139,20 @@ test("suggestDomains keeps the most used domains that are not configured", () =>
     { domain: "onlyfans.com", count: 9, sample: "https://onlyfans.com/a" },
     { domain: "tiktok.com", count: 4, sample: "https://tiktok.com/a" },
   ]);
+});
+
+test("suggestDomains skips every domain of a multi-domain row", () => {
+  const config = S.sanitizeConfig({ domains: [{ domains: ["x.com", "twitter.com"] }] });
+  const summary = [
+    { domain: "x.com", count: 9 },
+    { domain: "twitter.com", count: 4 },
+    { domain: "onlyfans.com", count: 3 },
+  ];
+
+  assert.deepEqual(
+    snap(S.suggestDomains(config, summary, 10)).map((item) => item.domain),
+    ["onlyfans.com"]
+  );
 });
 
 test("suggestDomains never re-offers a domain the user switched off", () => {
@@ -188,7 +202,7 @@ test("suggestDomains does not mutate the config or the summary", () => {
   const summary = [{ domain: "onlyfans.com", count: 2, sample: "https://onlyfans.com/a" }];
   S.suggestDomains(config, summary, 5);
 
-  assert.deepEqual(snap(config.domains), [{ domain: "x.com", enabled: true, separate: true }]);
+  assert.deepEqual(snap(config.domains), [{ domains: ["x.com"], enabled: true, separate: true }]);
   assert.deepEqual(snap(summary), [{ domain: "onlyfans.com", count: 2, sample: "https://onlyfans.com/a" }]);
 });
 
@@ -199,14 +213,16 @@ test("appendDomains adds new entries with the manual form's defaults", () => {
   const result = snap(S.appendDomains(config, ["onlyfans.com", "https://www.x.com/a"]));
 
   assert.deepEqual(result.added, [
-    { domain: "onlyfans.com", enabled: true, separate: true },
-    { domain: "x.com", enabled: true, separate: true },
+    { domains: ["onlyfans.com"], enabled: true, separate: true },
+    { domains: ["x.com"], enabled: true, separate: true },
   ]);
   assert.equal(result.rejected, 0);
   assert.equal(result.overflow, 0);
   // The existing entry keeps its order and its flags: accepting a suggestion
   // must never re-enable something the user switched off.
-  assert.deepEqual(snap(config.domains), [{ domain: "tiktok.com", enabled: false, separate: false }]);
+  assert.deepEqual(snap(config.domains), [
+    { domains: ["tiktok.com"], enabled: false, separate: false },
+  ]);
 });
 
 test("appendDomains skips a domain that is already configured, however it is spelled", () => {
@@ -223,7 +239,7 @@ test("appendDomains rejects junk and stops at MAX_DOMAINS", () => {
   const config = S.sanitizeConfig({ domains: full });
 
   const result = snap(S.appendDomains(config, ["not a domain", "https://a.com", "b.com"]));
-  assert.deepEqual(result.added, [{ domain: "a.com", enabled: true, separate: true }]);
+  assert.deepEqual(result.added, [{ domains: ["a.com"], enabled: true, separate: true }]);
   assert.equal(result.rejected, 1);
   assert.equal(result.overflow, 1, "the domain that did not fit must be reported, not silently dropped");
 });

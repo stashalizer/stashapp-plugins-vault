@@ -45,7 +45,11 @@
     return {
       version: config.version,
       domains: config.domains.map(function (entry) {
-        return { domain: entry.domain, enabled: entry.enabled, separate: entry.separate };
+        return {
+          domains: entry.domains.slice(),
+          enabled: entry.enabled,
+          separate: entry.separate,
+        };
       }),
     };
   }

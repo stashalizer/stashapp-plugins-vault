@@ -10,25 +10,32 @@
  *   {
  *     version: 1,
  *     domains: [
- *       { domain: "onlyfans.com", enabled: true,  separate: true  },
- *       { domain: "twitter.com",  enabled: true,  separate: false },
- *       { domain: "tiktok.com",   enabled: false, separate: true  }
+ *       { domains: ["x.com", "twitter.com"], enabled: true,  separate: true  },
+ *       { domains: ["onlyfans.com"],         enabled: true,  separate: true  },
+ *       { domains: ["tiktok.com"],           enabled: false, separate: true  }
  *     ]
  *   }
  *
- * `domain` is a bare hostname — never a URL, never a port, never a path. It is
- * normalized on write and on read, so a pasted profile URL also works.
+ * Each entry owns a **list** of domains. One domain is the common case; several
+ * mean "these are the same account" — x.com and twitter.com — and produce a
+ * single button whose icon and label come from the first domain in the list.
+ * Every domain in an entry is a bare hostname, normalized on write and on read,
+ * so a pasted profile URL also works.
  *
  * The two flags are not synonyms:
  *   - `enabled: false`   → the entry is ignored. Its URLs are handed back to
  *                          Stash untouched and no icon is requested.
  *   - `enabled: true` and `separate: true`
- *                        → that domain's URLs are pulled out of Stash's groups
- *                          and rendered as their own icon button.
+ *                        → the entry's URLs are pulled out of Stash's groups and
+ *                          rendered as their own icon button (one per entry, so
+ *                          a several-domain entry gets one button, not several).
  *   - `enabled: true` and `separate: false`
  *                        → the URLs are still owned by the plugin, but share one
  *                          "configured sites" button instead of getting a
  *                          button (and an icon fetch) of their own.
+ *
+ * A domain belongs to at most one entry: `sanitizeConfig` keeps the first claim
+ * and drops it from later rows, so two buttons can never fight over one URL.
  *
  * Matching is an exact hostname comparison after normalization (lowercase,
  * trailing dot and a leading `www.` removed). Subdomains are deliberately NOT
@@ -55,6 +62,10 @@
   var VERSION = 1;
   var MAX_DOMAINS = 32;
   var MAX_DOMAIN_LENGTH = 253;
+  // One row may list several domains — x.com and twitter.com are the same
+  // account, and two buttons for one account is noise. They are separated the
+  // way people actually type a list: semicolon, comma or a newline from a paste.
+  var DOMAIN_SEPARATOR_RE = /[;,\n\r]+/;
   // How many suggestions the settings page offers at once, and how many of them
   // start checked. Both are UI budgets, not limits of the model: the library
   // summary itself is never truncated.
@@ -170,14 +181,74 @@
     return fallback;
   }
 
+  /**
+   * Parse what the user typed into a row's domain field.
+   *
+   * One row can carry several domains ("x.com; twitter.com"): they are one
+   * account, so they share one button, the first domain's icon and the first
+   * domain's label. Splitting happens before normalization, so a pasted list
+   * with newlines or commas works as well as the semicolon the placeholder
+   * shows, and repeated domains collapse instead of producing two buttons.
+   *
+   * Returns `{ domains, invalid }`: `invalid` carries the tokens exactly as
+   * typed so the settings page can name the one that was rejected.
+   */
+  function parseDomainList(value) {
+    var domains = [];
+    var invalid = [];
+    var seen = {};
+
+    if (typeof value !== "string") return { domains: domains, invalid: invalid };
+
+    var tokens = value.split(DOMAIN_SEPARATOR_RE);
+    for (var i = 0; i < tokens.length; i += 1) {
+      var token = tokens[i].trim();
+      if (!token) continue;
+
+      var domain = normalizeDomain(token);
+      if (!domain) {
+        invalid.push(token);
+        continue;
+      }
+      if (seen[domain]) continue;
+      seen[domain] = true;
+      domains.push(domain);
+    }
+
+    return { domains: domains, invalid: invalid };
+  }
+
+  /** Canonical text for a domain list, the form the settings page edits. */
+  function formatDomainList(domains) {
+    if (!Array.isArray(domains)) return "";
+    var out = [];
+    for (var i = 0; i < domains.length; i += 1) {
+      if (typeof domains[i] === "string" && domains[i]) out.push(domains[i]);
+    }
+    return out.join("; ");
+  }
+
+  /**
+   * One config entry from anything that has been stored.
+   *
+   * `domains` is the current shape; `domain` (a single bare hostname) is what
+   * every config written before 0.3 has, and a delimited string is accepted so a
+   * hand-edited config still loads. The first domain in the list is the primary
+   * one: its icon represents the row.
+   */
   function sanitizeEntry(raw) {
     if (!raw || typeof raw !== "object") return null;
 
-    var domain = normalizeDomain(raw.domain);
-    if (!domain) return null;
+    var source;
+    if (Array.isArray(raw.domains)) source = raw.domains.join(";");
+    else if (raw.domains !== undefined && raw.domains !== null) source = raw.domains;
+    else source = raw.domain;
+
+    var parsed = parseDomainList(typeof source === "string" ? source : "");
+    if (!parsed.domains.length) return null;
 
     return {
-      domain: domain,
+      domains: parsed.domains,
       enabled: toBool(raw.enabled, true),
       separate: toBool(raw.separate, true),
     };
@@ -186,34 +257,45 @@
   /**
    * Coerce anything stored (including hand-edited or pre-0.1 configs) into the
    * current schema. Accepts a bare array of entries as a convenience, drops
-   * unparseable entries instead of throwing, keeps the first of two entries for
-   * the same domain (config order is display order) and caps the list.
+   * unparseable entries instead of throwing, keeps the first claim on a domain
+   * when two rows list it (config order is display order) and caps the total
+   * number of domains at `MAX_DOMAINS`.
    */
   function sanitizeConfig(raw) {
     var source = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? raw.domains : null;
 
-    var domains = [];
-    var seen = {};
+    var entries = [];
+    var claimed = {};
+    var total = 0;
 
     if (Array.isArray(source)) {
-      for (var i = 0; i < source.length; i += 1) {
+      for (var i = 0; i < source.length && total < MAX_DOMAINS; i += 1) {
         var entry = sanitizeEntry(source[i]);
         if (!entry) continue;
-        if (seen[entry.domain]) continue;
-        seen[entry.domain] = true;
-        domains.push(entry);
-        if (domains.length >= MAX_DOMAINS) break;
+
+        var keep = [];
+        for (var j = 0; j < entry.domains.length && total < MAX_DOMAINS; j += 1) {
+          var domain = entry.domains[j];
+          if (claimed[domain]) continue;
+          claimed[domain] = true;
+          keep.push(domain);
+          total += 1;
+        }
+
+        // A row whose every domain was already claimed elsewhere disappears.
+        if (!keep.length) continue;
+        entries.push({ domains: keep, enabled: entry.enabled, separate: entry.separate });
       }
     }
 
-    return { version: VERSION, domains: domains };
+    return { version: VERSION, domains: entries };
   }
 
   function findEntry(config, domain) {
     if (!domain) return null;
-    var domains = sanitizeConfig(config).domains;
-    for (var i = 0; i < domains.length; i += 1) {
-      if (domains[i].domain === domain) return domains[i];
+    var entries = sanitizeConfig(config).domains;
+    for (var i = 0; i < entries.length; i += 1) {
+      if (entries[i].domains.indexOf(domain) !== -1) return entries[i];
     }
     return null;
   }
@@ -222,9 +304,16 @@
    * Split a detail page's URL list into the three render buckets.
    *
    * Returns `{ separate, bucket, rest }`:
-   *   separate → [{ domain, urls }] in config order, empty groups omitted
-   *   bucket   → urls of enabled-but-not-separate domains, page order
+   *   separate → [{ key, name, iconDomain, domains, urls }] in config order
+   *   bucket   → urls of enabled-but-not-separate entries, page order
    *   rest     → everything Stash keeps rendering, page order
+   *
+   * One entry may own several domains — x.com and twitter.com are the same
+   * account — and they produce **one** group here: `domains` is the entry's list,
+   * `name` and `iconDomain` are its first domain (the label and the icon the user
+   * chose by putting it first), and `urls` interleaves both domains in page
+   * order. Entries with no matching URL are omitted, so a row whose domains do
+   * not appear on this page renders nothing.
    *
    * Exact duplicate URLs are collapsed (Stash keys its menu by URL), blank and
    * non-string entries are dropped rather than passed through.
@@ -233,17 +322,28 @@
     var entries = sanitizeConfig(config).domains;
 
     var groups = [];
-    var groupByDomain = {};
+    var groupByOwner = {};
     var entryByDomain = {};
     var bucket = [];
     var rest = [];
     var seenUrl = {};
 
     for (var i = 0; i < entries.length; i += 1) {
-      entryByDomain[entries[i].domain] = entries[i];
-      if (!entries[i].enabled || !entries[i].separate) continue;
-      groupByDomain[entries[i].domain] = { domain: entries[i].domain, urls: [] };
-      groups.push(groupByDomain[entries[i].domain]);
+      var entry = entries[i];
+      for (var d = 0; d < entry.domains.length; d += 1) {
+        entryByDomain[entry.domains[d]] = entry;
+      }
+      if (!entry.enabled || !entry.separate) continue;
+
+      var group = {
+        key: "d:" + entry.domains[0],
+        name: entry.domains[0],
+        iconDomain: entry.domains[0],
+        domains: entry.domains.slice(),
+        urls: [],
+      };
+      groupByOwner[entry.domains[0]] = group;
+      groups.push(group);
     }
 
     var list = Array.isArray(urls) ? urls : [];
@@ -255,11 +355,11 @@
       if (!trimmed || seenUrl[trimmed]) continue;
       seenUrl[trimmed] = true;
 
-      var entry = entryByDomain[hostnameOf(trimmed)] || null;
-      if (!entry || !entry.enabled) {
+      var owner = entryByDomain[hostnameOf(trimmed)] || null;
+      if (!owner || !owner.enabled) {
         rest.push(trimmed);
-      } else if (entry.separate && groupByDomain[entry.domain]) {
-        groupByDomain[entry.domain].urls.push(trimmed);
+      } else if (owner.separate && groupByOwner[owner.domains[0]]) {
+        groupByOwner[owner.domains[0]].urls.push(trimmed);
       } else {
         bucket.push(trimmed);
       }
@@ -375,9 +475,15 @@
   function suggestDomains(config, candidates, limit) {
     var entries = sanitizeConfig(config).domains;
     var taken = {};
-    for (var i = 0; i < entries.length; i += 1) taken[entries[i].domain] = true;
+    var used = 0;
+    for (var i = 0; i < entries.length; i += 1) {
+      for (var d = 0; d < entries[i].domains.length; d += 1) {
+        taken[entries[i].domains[d]] = true;
+        used += 1;
+      }
+    }
 
-    var capacity = MAX_DOMAINS - entries.length;
+    var capacity = MAX_DOMAINS - used;
     if (capacity <= 0) return [];
 
     var max = typeof limit === "number" && isFinite(limit) && limit > 0 ? Math.floor(limit) : SUGGEST_LIMIT;
@@ -426,9 +532,15 @@
   function appendDomains(config, domains) {
     var entries = sanitizeConfig(config).domains;
     var taken = {};
-    for (var i = 0; i < entries.length; i += 1) taken[entries[i].domain] = true;
+    var used = 0;
+    for (var i = 0; i < entries.length; i += 1) {
+      for (var d = 0; d < entries[i].domains.length; d += 1) {
+        taken[entries[i].domains[d]] = true;
+        used += 1;
+      }
+    }
 
-    var room = MAX_DOMAINS - entries.length;
+    var room = MAX_DOMAINS - used;
     var added = [];
     var rejected = 0;
     var overflow = 0;
@@ -448,7 +560,9 @@
         overflow += 1;
         continue;
       }
-      added.push({ domain: domain, enabled: true, separate: true });
+      // One domain per new row: the suggestions never invent a merged row, the
+      // user decides that by editing the row afterwards.
+      added.push({ domains: [domain], enabled: true, separate: true });
     }
 
     return { added: added, rejected: rejected, overflow: overflow };
@@ -522,6 +636,8 @@
     hostnameOf: hostnameOf,
     toHref: toHref,
     toBool: toBool,
+    parseDomainList: parseDomainList,
+    formatDomainList: formatDomainList,
     sanitizeEntry: sanitizeEntry,
     sanitizeConfig: sanitizeConfig,
     findEntry: findEntry,

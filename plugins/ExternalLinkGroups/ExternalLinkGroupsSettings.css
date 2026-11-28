@@ -70,7 +70,7 @@
 
 .elg-set__row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(190px, auto) 96px 118px;
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, auto) 96px 118px;
   align-items: center;
   gap: 0.75rem;
   padding: 0.55rem 0;
