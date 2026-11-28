@@ -40,7 +40,7 @@
   var LEGACY_STORAGE_KEYS = ["carbonArc.config.v2", "carbonArc.config.v1"];
   var OFF_KEY = "carbonArc.off";
   var URL_PARAM = "carbonarc";
-  var VERSION = "0.5.0";
+  var VERSION = "0.5.1";
 
   var DEFAULTS = {
     accent: "arc",
@@ -393,11 +393,36 @@
     });
   }
 
+  /** Four primitives, compared field by field: nothing here is nested. */
+  function sameConfig(a, b) {
+    return (
+      a.accent === b.accent &&
+      a.customSignal === b.customSignal &&
+      a.density === b.density &&
+      a.previewBrightness === b.previewBrightness
+    );
+  }
+
+  /**
+   * `commit()` is not free: `apply()` writes attributes and a custom property
+   * on <html>, and every element inherits that property, so the browser
+   * restyles the whole document (≈9 ms on a 3,200-element settings page,
+   * measured). A commit that lands on the value already in force — clicking
+   * the tile that is already selected, a settle that repeats the last one, the
+   * GraphQL read confirming what the cache already painted — therefore skips
+   * the restyle and the notification instead of paying for them.
+   *
+   * The localStorage mirror is still written: it is what makes the *next*
+   * page load paint the right value before the query answers.
+   */
   function commit(next, options) {
-    current = normalize(next);
-    apply(current);
+    var normalized = normalize(next);
+    var changed = !sameConfig(normalized, current);
+    current = normalized;
+
+    if (changed) apply(current);
     if (!options || options.cache !== false) writeCache(current);
-    notify();
+    if (changed) notify();
     return current;
   }
 

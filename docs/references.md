@@ -191,6 +191,32 @@ Key source file (the actual API surface — read this when debugging
   safety net because React re-renders can remove the injected element
   between navigations.
 
+## Plugin settings saves (v0.32.0)
+
+A plugin's `settings:` are saved by Stash's own settings page, one call to
+`savePluginSettings(pluginID, {...pluginSettings, [name]: value})` per change —
+there is no Save button. Two facts about that path cost real time, both
+measured on a 22-plugin install (Carbon Arc 0.5.x, 2026-11-28):
+
+- **Every save writes every configured plugin, not just the one that
+  changed.** `savePluginSettings` seeds `pendingPlugins` with the whole
+  `plugins` map when it finds it empty (`useSettings` in
+  `Settings/context.tsx`, with the comment "use full UI object to ensure
+  nothing is wiped"), and the 500 ms debounced `savePluginConfig` then runs
+  `for (const pluginID in input) await updatePluginConfig(...)`. One slider
+  release produced **22 `configurePlugin` mutations plus about 12
+  `configuration` queries** (Apollo coalesces the concurrent identical reads),
+  sequential, ≈0.7 s on localhost. The cost scales with the number of
+  configured plugins and with RTT, not with what the plugin changed — so a
+  plugin should call `onChange` as rarely as it can: once per gesture, and only
+  when the value actually differs from the last one it passed.
+- **Each `onChange` re-renders the whole plugin settings panel**, because
+  `setPlugins` replaces the context value; the debounce coalesces the *write*,
+  not the render. A per-pointer-move `onChange` is therefore both a render
+  storm and (once per 500 ms window) a full fan-out.
+- The panel shows **no save spinner** for plugin rows, so a slow save is
+  invisible until the next page load reads a stale value.
+
 ## CSS gotchas for Stash overlays
 
 `backdrop-filter` is the standard way to "blur a region of video" — the

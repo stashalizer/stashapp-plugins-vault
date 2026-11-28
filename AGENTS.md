@@ -717,14 +717,31 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   thumbnail per preset plus a large live one, because **the grid is on another
   route** while this page is open: without the samples the option has no
   visible effect at the moment it is set.
-- **A drag must not call `props.onChange` per step.** Stash's
-  `savePluginSettings` re-renders the whole plugin settings panel and sets a
-  500 ms debounce (`useSettings` in `context.tsx` — the write is coalesced, the
-  re-render is not), so `preview({...}, {cache:false})` runs on every `input`
-  and `preview()` + `onChange` run on `pointerup`/`keyup`/`blur` only. The
-  exact-value field commits as soon as what was typed is a legal percentage:
-  typing has no "release" event, and Stash's own text settings save per
-  keystroke. Same rule as MosaicFilter's *never persist per animation frame*.
+- **A drag commits once per frame, and only when the value is new.** Two
+  separate costs, both measured on v0.32.0 (2026-11-28):
+  - *Repaint:* every commit writes a custom property on `<html>`, and every
+    element inherits it, so the browser restyles the whole document — **≈9 ms
+    on a 3,200-element settings page**, against ≈0.02 ms for the writes
+    themselves. A pointer reports faster than the display refreshes, so
+    `queue()` holds the newest value and one `requestAnimationFrame` callback
+    paints it; `settle()` flushes the held value first so a release inside the
+    same frame still ends on the value under the thumb.
+  - *Save:* Stash answers `onChange` by re-rendering the whole plugin settings
+    panel and, 500 ms later, writing **every configured plugin's config**
+    (`savePluginSettings` seeds `pendingPlugins` with the full map —
+    `useSettings` in `context.tsx`). On a 22-plugin install that is 22
+    `configurePlugin` mutations plus ~12 `configuration` queries per save
+    cycle, sequential. `commitAt()` therefore remembers the last string it
+    handed to Stash and stays silent when the value repeats — without it a
+    single adjustment wrote twice, because `pointerup` and the `focusout` that
+    follows are two settles.
+  - `commit()` in the store skips `apply()` and `notify()` when the normalized
+    config equals the one in force, so clicking the selected tile (or a settle
+    that repeats itself) costs nothing at all. The localStorage mirror is still
+    written: it is the next page load's first paint.
+  - Consequence to preserve: the row must keep reading `store.get()` per render
+    and the slider must not lose the mid-frame value — a controlled `value`
+    written from a *stale* render would snap the thumb backwards.
 - **The slider's track and thumb are drawn by hand, and they have to be.**
   Stash ships `input[type="range"]::-webkit-slider-runnable-track { background:
   #007bff }` plus a `:focus` variant and `appearance: none` on the element, so

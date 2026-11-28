@@ -50,6 +50,7 @@
   var h = React.createElement;
   var useState = React.useState;
   var useEffect = React.useEffect;
+  var useRef = React.useRef;
 
   var PREFIX = "plugin-" + String(store.PLUGIN_ID).toLowerCase() + "-";
 
@@ -148,21 +149,24 @@
   /**
    * Presets, a slider and an exact-value field over the same number.
    *
-   * Three different write paths, on purpose:
-   *   - `previewAt` repaints and nothing else. It runs on every step of a
-   *     drag, so it skips both the localStorage mirror and Stash's onChange
-   *     (`savePluginSettings` re-renders the whole plugin settings panel and
-   *     schedules a `configurePlugin` write — fine once per gesture, not once
-   *     per pixel).
+   * Three write paths, on purpose:
+   *   - `queue` repaints, coalesced to one commit per animation frame. A
+   *     pointer reports faster than the display refreshes, and every commit
+   *     restyles the whole document (a custom property on <html> is inherited
+   *     by all of it), so the newest value is held until the frame that will
+   *     paint it instead of once per event.
    *   - `commitAt` repaints, mirrors to localStorage and hands the value to
-   *     Stash. The slider calls it on pointer release, key release and blur
-   *     (all three fire for one gesture; repeating it is harmless), the
-   *     presets on click, and the text field as soon as what was typed is a
-   *     legal percentage — a typed value has no "release" event, and Stash's
-   *     own text fields save per keystroke, debounced by half a second.
+   *     Stash — but only when the value is not the one Stash was last given.
+   *     That dedupe is the expensive half: Stash answers `onChange` by
+   *     re-rendering this whole settings panel and, half a second later,
+   *     writing **every configured plugin's** config (measured: 22 mutations +
+   *     12 queries on a 22-plugin install). A settle that repeats the last
+   *     commit — pointerup, then focusout — must not schedule a second cycle.
    *   - The text field keeps what was typed in `draft` until the value is
    *     legal again, so "5" on the way to "50" does not snap the field to 20
-   *     mid-word; blur puts the painted value back.
+   *     mid-word; blur puts the painted value back. It commits as soon as what
+   *     was typed is legal: typing has no "release" event, and Stash's own text
+   *     settings save per keystroke.
    *
    * The value is read from the store on every render, never from props and
    * never from local state: this row's job is to show what the page is
@@ -178,6 +182,13 @@
     var draft = typedPair[0];
     var setDraft = typedPair[1];
 
+    /* Bookkeeping, not output: the last value Stash was told (so a repeat is
+       skipped) and the value waiting for the next frame. `null` means "nothing
+       held"; the snapped value is never null, so it is a safe sentinel. */
+    var sent = useRef(null);
+    var held = useRef(null);
+    var frame = useRef(0);
+
     var hintId = String((props.source && props.source.id) || "ca-brightness") + "-hint";
 
     /* Where the thumb sits on the track, as a percentage of the *range* rather
@@ -187,8 +198,8 @@
 
     function paint(next, cache) {
       var snapped = store.snapBrightness(next);
-      // The store notifies, `Tiles` re-renders, this row redraws: one source
-      // of truth, and the sample is never a step behind the page.
+      // A commit that lands on the value already in force does no restyling
+      // and wakes nobody — see `commit` in CarbonArcStore.js.
       store.preview({ previewBrightness: snapped }, { cache: cache });
       return snapped;
     }
@@ -199,27 +210,58 @@
 
     function commitAt(next) {
       var snapped = paint(next, true);
-      if (props.source && typeof props.source.onChange === "function") {
-        props.source.onChange(String(snapped));
+      if (sent.current !== String(snapped)) {
+        sent.current = String(snapped);
+        if (props.source && typeof props.source.onChange === "function") {
+          props.source.onChange(String(snapped));
+        }
       }
       return snapped;
     }
 
+    /** Forget a value the last frame is holding. */
+    function drop() {
+      if (frame.current) {
+        window.cancelAnimationFrame(frame.current);
+        frame.current = 0;
+      }
+      held.current = null;
+    }
+
+    /** Apply whatever the last frame is holding, now. */
+    function flush() {
+      var next = held.current;
+      drop();
+      if (next !== null) previewAt(next);
+    }
+
+    function queue(next) {
+      held.current = store.snapBrightness(next);
+      if (frame.current) return;
+      frame.current = window.requestAnimationFrame(function () {
+        frame.current = 0;
+        flush();
+      });
+    }
+
     /* The settle handlers read the store rather than this render's `value`:
        a pointerup lands after the last input event, in a render that may not
-       have been committed yet. */
+       have been committed yet. `flush` first, so a release inside the same
+       frame as the last move still ends on the value under the thumb. */
     function settle() {
       setDraft(null);
+      flush();
       commitAt(store.get().previewBrightness);
     }
 
     function choosePreset(preset) {
       setDraft(null);
+      drop();
       commitAt(preset);
     }
 
     function onSlide(event) {
-      previewAt(event.target.value);
+      queue(event.target.value);
     }
 
     function onType(event) {
@@ -228,6 +270,7 @@
       if (raw.trim() === "") return;
       var number = Number(raw);
       if (!isFinite(number) || number < limits.min || number > limits.max) return;
+      drop();
       commitAt(number);
     }
 

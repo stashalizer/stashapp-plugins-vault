@@ -115,6 +115,20 @@ function loadBoth() {
     },
   };
 
+  /**
+   * `requestAnimationFrame` is captured rather than run: the brightness row
+   * holds a slider move until the next frame, and a test has to be able to say
+   * "the frame has not happened yet" and then make it happen.
+   */
+  let frameSeq = 0;
+  const frames = new Map();
+  const drainFrames = () => {
+    const queued = [...frames.values()];
+    frames.clear();
+    for (const callback of queued) callback();
+    return queued.length;
+  };
+
   const window = {
     PluginApi: {
       React: makeReact(),
@@ -127,6 +141,14 @@ function loadBoth() {
       patch,
     },
     localStorage,
+    requestAnimationFrame: (callback) => {
+      frameSeq += 1;
+      frames.set(frameSeq, callback);
+      return frameSeq;
+    },
+    cancelAnimationFrame: (handle) => {
+      frames.delete(handle);
+    },
   };
 
   const sandbox = {
@@ -154,7 +176,7 @@ function loadBoth() {
     vm.runInContext(read(...file), sandbox, { filename: file.join("/") });
   }
 
-  return { window, applyBefore, applyInstead, before, instead, sandbox };
+  return { window, applyBefore, applyInstead, before, instead, sandbox, frames, drainFrames };
 }
 
 /**
@@ -275,27 +297,44 @@ test("the theme draws tiles for its own three settings", () => {
   }
 });
 
-test("the brightness row ships a slider, an exact field and one sample per preset", () => {
-  const { applyInstead } = loadBoth();
-
-  const props = { id: "plugin-CarbonArc-previewbrightness", heading: "Preview brightness", value: "", onChange() {} };
+/**
+ * Render the brightness row through the real patch and hand back its live
+ * controls: the props of the range input, of the exact-value field, and of the
+ * four preset buttons (in reading order). Everything here is the component's
+ * own closure, so calling a handler behaves like the browser would.
+ */
+function renderBrightness(applyInstead, props) {
   const node = applyInstead("StringSetting", props, () => {
     throw new Error("the brightness row must not fall through to Stash's modal");
   });
 
-  // Whatever the patch returns is a component element; draw it once.
   let tree = node;
   while (tree && typeof tree.type === "function") tree = tree.type(tree.props);
 
-  const found = { range: null, number: null, samples: 0 };
+  const found = { range: null, number: null, samples: 0, buttons: [] };
   walk(tree, (child) => {
-    const type = child.type;
     const kind = child.props && child.props.type;
-    if (type === "input" && kind === "range") found.range = child.props;
-    if (type === "input" && kind === "number") found.number = child.props;
+    if (child.type === "input" && kind === "range") found.range = child.props;
+    if (child.type === "input" && kind === "number") found.number = child.props;
+    if (child.type === "button" && child.props && child.props["aria-pressed"] !== undefined) {
+      found.buttons.push(child.props);
+    }
     if (child.props && typeof child.props.className === "string" && child.props.className.includes("ca-bright__sample")) {
       found.samples += 1;
     }
+  });
+
+  return found;
+}
+
+test("the brightness row ships a slider, an exact field and one sample per preset", () => {
+  const { applyInstead } = loadBoth();
+
+  const found = renderBrightness(applyInstead, {
+    id: "plugin-CarbonArc-previewbrightness",
+    heading: "Preview brightness",
+    value: "",
+    onChange() {},
   });
 
   assert.ok(found.range, "the row has a range input");
@@ -309,7 +348,63 @@ test("the brightness row ships a slider, an exact field and one sample per prese
   assert.equal(found.number.max, 100);
   assert.equal(found.number.step, 5);
 
+  assert.equal(found.buttons.length, 4, "one button per preset");
   assert.equal(found.samples, 5, "one sample per preset tile, plus the live stage");
+});
+
+test("a slider burst becomes one commit per frame, and the release commits it once", () => {
+  const { window, applyInstead, frames, drainFrames } = loadBoth();
+  const sent = [];
+
+  const { range } = renderBrightness(applyInstead, {
+    id: "plugin-CarbonArc-previewbrightness",
+    heading: "Preview brightness",
+    value: "",
+    onChange: (value) => sent.push(value),
+  });
+
+  range.onChange({ target: { value: 40 } });
+  range.onChange({ target: { value: 60 } });
+  range.onChange({ target: { value: 80 } });
+
+  assert.equal(frames.size, 1, "three moves inside one frame schedule one frame, not three");
+  assert.deepEqual(sent, [], "moving is not a commit: nothing is written while the thumb is down");
+
+  drainFrames();
+  assert.equal(window.CarbonArcStore.get().previewBrightness, 80, "the frame paints the newest value, not each one");
+
+  range.onPointerUp();
+  assert.deepEqual(sent, ["80"], "the release hands Stash the value under the thumb, exactly once");
+
+  range.onBlur();
+  assert.deepEqual(sent, ["80"], "a settle that repeats the last commit writes nothing");
+});
+
+test("a preset click commits once, and clicking it again costs nothing", () => {
+  const { window, applyInstead } = loadBoth();
+  const store = window.CarbonArcStore;
+  const sent = [];
+
+  const { buttons } = renderBrightness(applyInstead, {
+    id: "plugin-CarbonArc-previewbrightness",
+    heading: "Preview brightness",
+    value: "",
+    onChange: (value) => sent.push(value),
+  });
+
+  let woken = 0;
+  store.subscribe(() => {
+    woken += 1;
+  });
+
+  buttons[3].onClick(); // -50 %
+  assert.deepEqual(sent, ["50"], "a new value is handed to Stash");
+  assert.ok(woken >= 1, "and the page repaints");
+  const afterFirst = woken;
+
+  buttons[3].onClick(); // the same preset again
+  assert.deepEqual(sent, ["50"], "the same value is not written twice");
+  assert.equal(woken, afterFirst, "and nothing is restyled: the store is already there");
 });
 
 test("configuration and storage keys are disjoint", () => {

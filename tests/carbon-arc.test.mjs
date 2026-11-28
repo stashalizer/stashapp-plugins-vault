@@ -88,19 +88,23 @@ function boot(options = {}) {
   };
 
   const style = {};
+  const writes = { attrs: 0, styles: 0 };
   const classes = new Set();
   const documentElement = {
     attrs: {},
     style: {
       setProperty: (name, value) => {
         style[name] = value;
+        writes.styles += 1;
       },
       removeProperty: (name) => {
         delete style[name];
+        writes.styles += 1;
       },
     },
     setAttribute(name, value) {
       this.attrs[name] = String(value);
+      writes.attrs += 1;
     },
     getAttribute(name) {
       return this.attrs[name] ?? null;
@@ -140,7 +144,7 @@ function boot(options = {}) {
   vm.createContext(sandbox);
   vm.runInContext(read(PLUGIN, "CarbonArcStore.js"), sandbox, { filename: "CarbonArcStore.js" });
 
-  return { window, sandbox, documentElement, style, classes, local };
+  return { window, sandbox, documentElement, style, writes, classes, local };
 }
 
 /** Let the GraphQL promise chain finish. */
@@ -175,6 +179,38 @@ test("full brightness paints no inline filter at all", () => {
 
   assert.equal(documentElement.attrs["data-ca-bright"], "100");
   assert.deepEqual(style, {}, "100 % removes the property instead of writing 1");
+});
+
+test("a commit that lands on the value in force does not restyle the page", () => {
+  const { window, documentElement, writes, local } = boot({ cache: { previewBrightness: 75 } });
+  const store = window.CarbonArcStore;
+
+  let woken = 0;
+  const stop = store.subscribe(() => {
+    woken += 1;
+  });
+
+  const attrsBefore = writes.attrs;
+  const stylesBefore = writes.styles;
+
+  store.preview({ previewBrightness: 75 });
+  assert.equal(writes.attrs, attrsBefore, "no attribute is rewritten");
+  assert.equal(writes.styles, stylesBefore, "no custom property is touched");
+  assert.equal(woken, 0, "no subscriber is woken: there is nothing new to draw");
+  assert.ok(
+    local.get("carbonArc.config.v3"),
+    "the localStorage mirror is still refreshed — it is the next load's first paint"
+  );
+
+  store.preview({ previewBrightness: 50 });
+  assert.ok(writes.attrs > attrsBefore, "a real change still restyles");
+  assert.equal(woken, 1);
+
+  // A value that only differs by a step still counts as a change.
+  store.preview({ previewBrightness: 55 });
+  assert.equal(woken, 2);
+
+  stop();
 });
 
 test("the server's value replaces the cached one, and an empty server keeps it", async () => {
