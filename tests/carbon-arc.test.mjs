@@ -63,10 +63,17 @@ function makeLink(href) {
  * the first paint: the synchronous half has finished, the query has not.
  */
 function boot(options = {}) {
-  const { search = "", cache = null, plugins: stored = null, pending = false, links = [] } = options;
+  const {
+    search = "",
+    cache = null,
+    cacheKey = "carbonArc.config.v3",
+    plugins: stored = null,
+    pending = false,
+    links = [],
+  } = options;
 
   const local = new Map();
-  if (cache) local.set("carbonArc.config.v2", JSON.stringify(cache));
+  if (cache) local.set(cacheKey, JSON.stringify(cache));
   const session = new Map();
 
   const localStorage = {
@@ -141,14 +148,33 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 test("the first paint uses the browser's copy, before the query resolves", () => {
   const { window, documentElement, style } = boot({
-    cache: { accent: "patina", density: "compact", dimPreviews: true },
+    cache: { accent: "patina", density: "compact", previewBrightness: 75 },
   });
 
   assert.equal(documentElement.attrs["data-ca-accent"], "patina", "the saved signal is painted at once");
   assert.equal(documentElement.attrs["data-ca-density"], "compact");
-  assert.equal(documentElement.attrs["data-ca-dim"], "on");
+  assert.equal(documentElement.attrs["data-ca-bright"], "75");
   assert.equal(documentElement.attrs["data-ca-version"], window.CarbonArcStore.VERSION);
-  assert.deepEqual(style, {}, "a shipped signal needs no inline properties");
+  assert.equal(style["--ca-dim"], "0.75", "the brightness is an inline property, so it needs no rule per step");
+});
+
+test("a pre-0.5 boolean cache still paints, as 90 %", () => {
+  const { window, documentElement, style } = boot({
+    cache: { accent: "patina", density: "compact", dimPreviews: true },
+    cacheKey: "carbonArc.config.v2",
+  });
+
+  assert.equal(documentElement.attrs["data-ca-accent"], "patina", "the old cache is read, not discarded");
+  assert.equal(documentElement.attrs["data-ca-bright"], "90", "dimmed was 10 % off");
+  assert.equal(style["--ca-dim"], "0.9");
+  assert.equal(window.CarbonArcStore.get().previewBrightness, 90);
+});
+
+test("full brightness paints no inline filter at all", () => {
+  const { window, documentElement, style } = boot({ cache: { previewBrightness: 100 } });
+
+  assert.equal(documentElement.attrs["data-ca-bright"], "100");
+  assert.deepEqual(style, {}, "100 % removes the property instead of writing 1");
 });
 
 test("the server's value replaces the cached one, and an empty server keeps it", async () => {
@@ -180,14 +206,61 @@ test("normalize refuses values the theme cannot paint", () => {
   assert.equal(store.normalize({ accent: "custom", customSignal: "#7fb0d0" }).accent, "custom");
   assert.equal(store.normalize({ accent: "custom", customSignal: "7fb0d0" }).customSignal, "#7fb0d0", "a bare hex is accepted");
 
-  assert.equal(store.normalize({ dimPreviews: "true" }).dimPreviews, true, "the 0.2 boolean is still understood");
-  assert.equal(store.normalize({ dimPreviews: "dimmed" }).dimPreviews, true);
-  assert.equal(store.normalize({ dimPreviews: "full" }).dimPreviews, false);
   assert.equal(store.normalize({}).density, "comfortable");
   assert.equal(store.normalize({ density: "wide" }).density, "comfortable");
 
   assert.ok(store.contrast("#0a0b0c", "#101213") < store.MIN_CONTRAST);
   assert.ok(store.contrast("#7fb0d0", "#101213") >= store.MIN_CONTRAST);
+});
+
+test("brightness is a clamped, stepped percentage with an explicit default", () => {
+  const { window } = boot();
+  const store = window.CarbonArcStore;
+  const { min, max, step } = store.BRIGHTNESS;
+
+  assert.deepEqual({ min, max, step }, { min: 20, max: 100, step: 5 });
+  assert.equal(store.DEFAULTS.previewBrightness, max, "full brightness is the default");
+
+  // The old flag, in both shapes it was ever stored in.
+  assert.equal(store.normalize({ dimPreviews: true }).previewBrightness, 90, "0.4's boolean");
+  assert.equal(store.normalize({ dimPreviews: "dimmed" }).previewBrightness, 90, "0.4's string");
+  assert.equal(store.normalize({ dimPreviews: false }).previewBrightness, 100);
+  assert.equal(store.normalize({ dimPreviews: "full" }).previewBrightness, 100);
+  assert.equal(store.normalize({ dimPreviews: true, previewBrightness: 50 }).previewBrightness, 50, "the new name wins");
+  assert.equal(
+    store.normalize({ dimPreviews: "dimmed", previewBrightness: "" }).previewBrightness,
+    90,
+    "an empty new value is absent, not zero: the legacy key still speaks"
+  );
+
+  // What Stash actually saves: a string in the settings map.
+  for (const [raw, want] of [
+    ["75", 75],
+    ["75%", 75],
+    [75, 75],
+    [" 60 ", 60],
+    ["", 100],
+    [null, 100],
+    ["nonsense", 100],
+  ]) {
+    assert.equal(store.normalize({ previewBrightness: raw }).previewBrightness, want, "reads " + JSON.stringify(raw));
+  }
+
+  // Range and step: out-of-range clamps, off-step snaps to the nearest stop.
+  assert.equal(store.normalize({ previewBrightness: 0 }).previewBrightness, min, "below the floor");
+  assert.equal(store.normalize({ previewBrightness: -40 }).previewBrightness, min);
+  assert.equal(store.normalize({ previewBrightness: 250 }).previewBrightness, max, "above the ceiling");
+  assert.equal(store.normalize({ previewBrightness: 77 }).previewBrightness, 75);
+  assert.equal(store.normalize({ previewBrightness: 78 }).previewBrightness, 80);
+
+  // Every preset must be a legal stop, or a tile would paint a value the
+  // slider cannot sit on.
+  for (const preset of store.BRIGHTNESS_PRESETS) {
+    assert.ok(preset >= min && preset <= max, preset + " is inside the range");
+    assert.equal((preset - min) % step, 0, preset + " sits on a step boundary");
+    assert.equal(store.snapBrightness(preset), preset, preset + " is its own snap");
+  }
+  assert.ok(store.BRIGHTNESS_PRESETS.includes(90), "the old Dimmed value is still one click away");
 });
 
 test("a custom signal is painted as inline properties, and cleared again", () => {
@@ -268,6 +341,46 @@ test("the two halves of the palette agree", () => {
     assert.ok(block[1].includes("--ca-arc-ink: " + ink), accent + " ink matches ACCENT_COLORS");
     assert.ok(block[1].includes("--ca-arc-rgb: " + rgb), accent + " rgb triple follows its hex");
     assert.ok(block[1].includes("rgba(" + rgb + ", 0.12)"), accent + " tint follows its hex");
+  }
+});
+
+test("the brightness option's two halves agree", () => {
+  const { window } = boot();
+  const store = window.CarbonArcStore;
+  const theme = strip(read(PLUGIN, "CarbonArc.css"));
+  const tokens = strip(read(PLUGIN, "CarbonArcTokens.css"));
+  const settings = read(PLUGIN, "CarbonArcSettings.js");
+
+  // The sheet filters by a token, and the store writes that token inline.
+  assert.ok(/filter:\s*brightness\(var\(--ca-dim\)\)/.test(theme), "thumbnails read --ca-dim");
+  assert.ok(/--ca-dim:\s*1;/.test(tokens), "the token has a no-JavaScript default of full brightness");
+  assert.ok(!/data-ca-dim/.test(theme + read(PLUGIN, "CarbonArcSettings.js")), "the old on/off attribute is gone");
+
+  // The settings row must know every preset and the setting's new name, or a
+  // preset would render as a bare number and the row would never be patched.
+  assert.ok(settings.includes("previewbrightness"), "the patch matches Stash's id for the new setting name");
+  assert.ok(!settings.includes("dimPreviews"), "nothing still writes the 0.4 name");
+  for (const preset of store.BRIGHTNESS_PRESETS) {
+    assert.ok(
+      new RegExp("^\\s+" + preset + ":\\s*\\{", "m").test(settings),
+      "the settings row has a label and a note for " + preset + "%"
+    );
+  }
+
+  // The manifest's description is the only place the contract is stated to a
+  // user who never opens this file; the numbers themselves belong to the hint
+  // under the control, which is built from the store so it cannot drift.
+  const yml = read(PLUGIN, "CarbonArc.yml");
+  const description = yml.slice(yml.indexOf("\n  previewBrightness:")).split("\n").slice(0, 4).join(" ");
+  for (const fact of ["100", "90", "clamp"]) {
+    assert.ok(description.includes(fact), "the setting description states " + fact);
+  }
+  assert.ok(
+    /Default " \+ store\.DEFAULTS\.previewBrightness/.test(settings),
+    "the hint reads the default from the store instead of hard-coding it"
+  );
+  for (const limit of ["limits.min", "limits.max", "limits.step"]) {
+    assert.ok(settings.includes(limit), "the hint reads " + limit);
   }
 });
 

@@ -529,6 +529,12 @@ button.minimal {
   filter: brightness(var(--ca-dim));
 }
 
+/* --ca-dim is the preview-brightness option: CarbonArcStore writes it as an
+   inline property on <html> (20–100 %, removed at 100), so there is no rule
+   for that option anywhere else in this file. Not transitioned: the value
+   changes while a slider thumb is down, and a transition would make the grid
+   trail the pointer. */
+
 /* thumbnail chips */
 .overlay-duration,
 .scene-specs-overlay,
@@ -1465,6 +1471,6 @@ html[data-ca-density="compact"] .grid-card small {
   font-size: 0.6875rem;
 }
 
-html[data-ca-dim="on"] {
-  --ca-dim: 0.9;
-}
+/* Preview brightness has no rule here: its value is a percentage, not a
+   keyword, so CarbonArcStore writes `--ca-dim` inline on <html>. The filter
+   that reads it is in §05. */

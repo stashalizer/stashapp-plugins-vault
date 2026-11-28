@@ -19,6 +19,13 @@
  * is written as inline custom properties on <html> — the only case that
  * cannot be a stylesheet block, because the value is not known at build time.
  *
+ * Preview brightness is inline for the same reason. It is a percentage
+ * (20–100, step 5) rather than the on/off it was up to 0.4.x, so its value is
+ * written as `--ca-dim` on <html>, which is the number every thumbnail's
+ * `filter: brightness()` reads. Writing a property beats swapping a class:
+ * one style recalculation, no class per step, and the slider can move through
+ * 17 values without 17 rules in the sheet.
+ *
  * `?carbonarc=off` stands the theme down for the tab: the stylesheet is
  * parked on a media type that never matches and nothing is applied, so Stash
  * looks exactly as it ships. `?carbonarc=on` brings it back.
@@ -29,21 +36,38 @@
   "use strict";
 
   var CONFIG_KEY = "CarbonArc";
-  var STORAGE_KEY = "carbonArc.config.v2";
-  var LEGACY_STORAGE_KEY = "carbonArc.config.v1";
+  var STORAGE_KEY = "carbonArc.config.v3";
+  var LEGACY_STORAGE_KEYS = ["carbonArc.config.v2", "carbonArc.config.v1"];
   var OFF_KEY = "carbonArc.off";
   var URL_PARAM = "carbonarc";
-  var VERSION = "0.4.3";
+  var VERSION = "0.5.0";
 
   var DEFAULTS = {
     accent: "arc",
     customSignal: "",
     density: "comfortable",
-    dimPreviews: false,
+    previewBrightness: 100,
   };
 
   var ACCENTS = ["arc", "patina", "dusk", "custom"];
   var DENSITIES = ["comfortable", "compact"];
+
+  /**
+   * Preview brightness, as a share of the thumbnail's own brightness.
+   *
+   * 20 is the floor because a thumbnail under a fifth of its light is a black
+   * rectangle with a border; 100 is "no filter at all", which is why it is the
+   * default and why `apply()` removes the inline property there instead of
+   * writing 1. The 5 % step is the slider's resolution and the snap for a
+   * typed value: the four preset tiles below all sit on it.
+   */
+  var BRIGHTNESS = { min: 20, max: 100, step: 5 };
+
+  /** What the settings row offers as one-click tiles, in reading order. */
+  var BRIGHTNESS_PRESETS = [100, 90, 75, 50];
+
+  /** 0.4.x's "dimmed": 10 % off, kept as the value the old flag migrates to. */
+  var LEGACY_DIM = 90;
 
   /**
    * The three shipped signals. The stylesheet half of each lives in
@@ -208,12 +232,35 @@
 
   /* --- config ----------------------------------------------------------- */
 
-  function normalizeDim(raw) {
-    if (typeof raw === "boolean") return raw;
-    var value = String(raw == null ? "" : raw).trim().toLowerCase();
-    if (value === "true" || value === "on" || value === "1" || value === "dimmed" || value === "dim") return true;
-    if (value === "false" || value === "off" || value === "0" || value === "full") return false;
-    return DEFAULTS.dimPreviews;
+  /** Nearest legal step, clamped: the one place a number becomes a setting. */
+  function snapBrightness(raw) {
+    var value = Number(raw);
+    if (!isFinite(value)) return DEFAULTS.previewBrightness;
+    var snapped = Math.round(value / BRIGHTNESS.step) * BRIGHTNESS.step;
+    return Math.min(BRIGHTNESS.max, Math.max(BRIGHTNESS.min, snapped));
+  }
+
+  /**
+   * Reads a percentage, a percentage string ("75", "75%") or the pre-0.5
+   * shapes: `true`/`false` and "dimmed"/"full". Everything it cannot read —
+   * including an empty string, which is what an untouched field in Stash's
+   * form saves — means full brightness rather than a guess.
+   */
+  function normalizeBrightness(raw) {
+    if (raw == null || raw === "") return DEFAULTS.previewBrightness;
+    if (raw === true) return LEGACY_DIM;
+    if (raw === false) return DEFAULTS.previewBrightness;
+
+    if (typeof raw === "string") {
+      var word = raw.trim().toLowerCase();
+      if (!word) return DEFAULTS.previewBrightness;
+      if (word === "dimmed" || word === "dim" || word === "on" || word === "true") return LEGACY_DIM;
+      if (word === "full" || word === "none" || word === "off" || word === "false") return BRIGHTNESS.max;
+      if (word.charAt(word.length - 1) === "%") word = word.slice(0, -1);
+      raw = word;
+    }
+
+    return snapBrightness(raw);
   }
 
   /**
@@ -225,7 +272,7 @@
       accent: DEFAULTS.accent,
       customSignal: "",
       density: DEFAULTS.density,
-      dimPreviews: DEFAULTS.dimPreviews,
+      previewBrightness: DEFAULTS.previewBrightness,
     };
     if (!raw || typeof raw !== "object") return out;
 
@@ -239,7 +286,15 @@
     var density = String(raw.density == null ? "" : raw.density).trim().toLowerCase();
     if (DENSITIES.indexOf(density) !== -1) out.density = density;
 
-    out.dimPreviews = normalizeDim(raw.dimPreviews);
+    // `dimPreviews` is the 0.4.x name: same option, boolean shape. Reading it
+    // here is what carries an existing install's "dimmed" over as 90 %. An
+    // empty `previewBrightness` — a hand-edited config, or a form that saved
+    // an untouched field — counts as absent, so the older key still speaks.
+    var brightness =
+      raw.previewBrightness != null && String(raw.previewBrightness).trim() !== ""
+        ? raw.previewBrightness
+        : raw.dimPreviews;
+    out.previewBrightness = normalizeBrightness(brightness);
     return out;
   }
 
@@ -292,6 +347,22 @@
     style.setProperty("--ca-arc-40", "rgba(" + rgb + ", 0.4)");
   }
 
+  /**
+   * The thumbnail filter strength. Full brightness removes the property
+   * instead of writing 1, so the stylesheet's own `--ca-dim: 1` stays in
+   * charge and an untouched page has no inline style at all.
+   */
+  function paintBrightness(root, percent) {
+    var style = root.style;
+    if (!style || typeof style.setProperty !== "function") return;
+
+    if (percent >= BRIGHTNESS.max) {
+      style.removeProperty("--ca-dim");
+      return;
+    }
+    style.setProperty("--ca-dim", String(Number((percent / 100).toFixed(3))));
+  }
+
   function apply(config) {
     var settings = config || current;
     if (off) return settings;
@@ -301,13 +372,14 @@
 
     root.setAttribute("data-ca-accent", settings.accent);
     root.setAttribute("data-ca-density", settings.density);
-    root.setAttribute("data-ca-dim", settings.dimPreviews ? "on" : "off");
+    root.setAttribute("data-ca-bright", String(settings.previewBrightness));
     root.setAttribute("data-ca-version", VERSION);
     if (root.classList && typeof root.classList.add === "function") {
       root.classList.add("ca-theme");
     }
 
     paintSignal(root, settings);
+    paintBrightness(root, settings.previewBrightness);
     return settings;
   }
 
@@ -344,7 +416,12 @@
   }
 
   function readCache() {
-    return readKey(STORAGE_KEY) || readKey(LEGACY_STORAGE_KEY);
+    var keys = [STORAGE_KEY].concat(LEGACY_STORAGE_KEYS);
+    for (var i = 0; i < keys.length; i += 1) {
+      var found = readKey(keys[i]);
+      if (found) return found;
+    }
+    return null;
   }
 
   function writeCache(config) {
@@ -376,7 +453,11 @@
 
   function hasSetting(raw) {
     if (!raw) return false;
-    return Object.keys(DEFAULTS).some(function (key) {
+    // `dimPreviews` counts: a server that has not been re-saved since 0.4.x
+    // holds only that key, and it is still a real value to migrate, not "the
+    // user has configured nothing".
+    var keys = Object.keys(DEFAULTS).concat(["dimPreviews"]);
+    return keys.some(function (key) {
       return Object.prototype.hasOwnProperty.call(raw, key);
     });
   }
@@ -416,10 +497,15 @@
    * Apply a change immediately, before Stash has saved it. The settings tiles
    * call this and then hand the value to Stash's own onChange, so the page
    * repaints on click and the saved value arrives separately.
+   *
+   * `options.cache === false` skips the localStorage mirror. The brightness
+   * slider passes it while a drag is in flight: that is one repaint per step,
+   * and a synchronous storage write per step would be paid by the drag itself
+   * for a value the user has not settled on yet.
    */
-  function preview(patch) {
+  function preview(patch, options) {
     if (off) return current;
-    return commit(Object.assign({}, current, patch));
+    return commit(Object.assign({}, current, patch), options);
   }
 
   function subscribe(fn) {
@@ -552,7 +638,11 @@
   } else {
     // Apply the last known options before the async read resolves, so the
     // first paint is already on the saved signal rather than the default one.
-    apply(normalize(readCache() || DEFAULTS));
+    // `current` has to move with it: the settings row seeds its controls from
+    // `get()`, and a tile clicked in that window merges onto `current` — a
+    // stale default there would silently revert the option being edited.
+    current = normalize(readCache() || DEFAULTS);
+    apply(current);
     refresh().catch(function (err) {
       console.warn("CarbonArc: failed to read the plugin settings", err);
     });
@@ -562,12 +652,14 @@
     PLUGIN_ID: PLUGIN_ID,
     CONFIG_KEY: CONFIG_KEY,
     STORAGE_KEY: STORAGE_KEY,
-    LEGACY_STORAGE_KEY: LEGACY_STORAGE_KEY,
+    LEGACY_STORAGE_KEYS: LEGACY_STORAGE_KEYS,
     VERSION: VERSION,
     DEFAULTS: DEFAULTS,
     ACCENTS: ACCENTS,
     DENSITIES: DENSITIES,
     ACCENT_COLORS: ACCENT_COLORS,
+    BRIGHTNESS: BRIGHTNESS,
+    BRIGHTNESS_PRESETS: BRIGHTNESS_PRESETS,
     GROUND: GROUND,
     MIN_CONTRAST: MIN_CONTRAST,
     off: off,
@@ -575,6 +667,8 @@
     loginCss: loginCss,
     signalFor: signalFor,
     normalizeSignal: normalizeSignal,
+    normalizeBrightness: normalizeBrightness,
+    snapBrightness: snapBrightness,
     normalize: normalize,
     contrast: function (a, b) {
       var first = hexToRgb(a);

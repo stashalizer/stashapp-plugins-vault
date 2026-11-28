@@ -70,7 +70,10 @@
   --ca-font: "IBM Plex Sans", "Carbon Arc Sans CJK", "Segoe UI", system-ui, -apple-system, sans-serif;
   --ca-mono: "IBM Plex Mono", "Carbon Arc Sans CJK", ui-monospace, "Cascadia Mono", "Consolas", monospace;
 
-  /* preview dimming strength, overridden by the option below */
+  /* Preview brightness: 1 is "no filter", and it is what an inline
+     `--ca-dim` from CarbonArcStore overrides (20–100 % of full). The default
+     lives here rather than in a `html[data-ca-bright="100"]` block so a page
+     with no JavaScript at all still draws full-brightness thumbnails. */
   --ca-dim: 1;
 }
 

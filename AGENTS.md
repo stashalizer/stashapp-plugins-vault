@@ -681,18 +681,19 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   the three signal blocks, the `--bs-*` remap), `CarbonArc.css` (everything
   painted), `CarbonArcFonts.css` (three `@font-face` rules for the Latin faces),
   `CarbonArcCJK.css` (three for the CJK faces),
-  `CarbonArcSettings.css` (the tiles and the login block inside Stash's own
-  settings page), `CarbonArcStore.js` (read + apply) and `CarbonArcSettings.js`
-  (the `StringSetting` patch), plus `fonts/` (three Latin woff2 subsets, three
-  CJK subsets and `OFL.txt`).
+  `CarbonArcSettings.css` (the tiles, the brightness row and the login block
+  inside Stash's own settings page), `CarbonArcStore.js` (read + apply) and
+  `CarbonArcSettings.js` (the `StringSetting` patch), plus `fonts/` (three
+  Latin woff2 subsets, three CJK subsets and `OFL.txt`).
   No changelog file: see *Version bumping in this project*.
 - **The options are manifest settings, not a plugin config key.** `settings:`
-  in the yml declares `accent`, `customSignal`, `density` and `dimPreviews`, so
-  Stash renders them under Settings > Plugins > Carbon Arc and saves them with
-  `configurePlugin` itself. Nothing in the plugin writes configuration, which
-  is why there is no CommunityScriptsUILibrary dependency, no `localStorage`
-  fallback for the values and no `ui.requires`. Read-only flow:
-  `configuration { plugins }` → `CarbonArcStore` → attributes on `<html>`.
+  in the yml declares `accent`, `customSignal`, `density` and
+  `previewBrightness`, so Stash renders them under Settings > Plugins > Carbon
+  Arc and saves them with `configurePlugin` itself. Nothing in the plugin
+  writes configuration, which is why there is no CommunityScriptsUILibrary
+  dependency, no `localStorage` fallback for the values and no `ui.requires`.
+  Read-only flow: `configuration { plugins }` → `CarbonArcStore` → attributes
+  on `<html>`.
 - **Settings ids are `plugin-<pluginID>-<settingName>`**
   (`SettingsPluginsPanel.tsx`), and `CarbonArcSettings.js` matches them
   case-insensitively after deriving the plugin id from its own script URL
@@ -705,6 +706,40 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   Stash save it). Every id it does not own goes back through the original
   renderer with its arguments untouched — that patch sees every string setting
   in Stash, and `tests/plugin-coexistence.test.mjs` asserts the pass-through.
+- **Preview brightness is the row that is not a list of choices**, and it is
+  three controls over one number: four preset tiles (100 / 90 / 75 / 50), a
+  `range` input, and a `number` field. Range 20–100 in steps of 5, default
+  100; `snapBrightness()` in the store is the only place a number becomes a
+  setting, so the sheet, the slider stops and `normalize()` cannot disagree.
+  20 is the floor because a thumbnail under a fifth of its light is a black
+  rectangle; 90 is what the old `dimmed` flag was, kept as a preset so an
+  existing install's nudge is still one click away. The row draws a specimen
+  thumbnail per preset plus a large live one, because **the grid is on another
+  route** while this page is open: without the samples the option has no
+  visible effect at the moment it is set.
+- **A drag must not call `props.onChange` per step.** Stash's
+  `savePluginSettings` re-renders the whole plugin settings panel and sets a
+  500 ms debounce (`useSettings` in `context.tsx` — the write is coalesced, the
+  re-render is not), so `preview({...}, {cache:false})` runs on every `input`
+  and `preview()` + `onChange` run on `pointerup`/`keyup`/`blur` only. The
+  exact-value field commits as soon as what was typed is a legal percentage:
+  typing has no "release" event, and Stash's own text settings save per
+  keystroke. Same rule as MosaicFilter's *never persist per animation frame*.
+- **The slider's track and thumb are drawn by hand, and they have to be.**
+  Stash ships `input[type="range"]::-webkit-slider-runnable-track { background:
+  #007bff }` plus a `:focus` variant and `appearance: none` on the element, so
+  `accent-color` paints nothing and a bare class loses to that rule — the first
+  cut of this row was a blue bar on a brass theme. `CarbonArcSettings.css` puts
+  the type *and* the class in the selector, keeps the `:focus` variant in the
+  same rule, and fills the travelled part with a `linear-gradient` over
+  `--ca-fill` (the percentage is a per-render inline property; WebKit has no
+  "progress" pseudo-element, Firefox does). Details in
+  `docs/references.md`, *CSS gotchas*.
+  **Known gap:** only this slider is restyled. Every other native range in
+  Stash — the image-filter sliders, the duration sliders — still shows the
+  `#007bff` track. Extending it means reusing these rules, and leaving the
+  gradient tracks of `.contrast-slider` / `.brightness-slider` /
+  `.hue-rotate-slider` alone: they carry a class as well and must keep winning.
 - **A custom signal is inline properties, not a stylesheet block.** The value
   is not known at build time, so `CarbonArcStore` writes `--ca-arc`,
   `--ca-arc-rgb`, `--ca-arc-ink` and the three tints on `<html>` (inline beats
@@ -774,20 +809,38 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   touch it in any form.
 - **Config shape** `{ accent: "arc" | "patina" | "dusk" | "custom",
   customSignal: "#rrggbb" | "", density: "comfortable" | "compact",
-  dimPreviews: boolean }`, stored as plain strings by the settings map
-  (`dimPreviews` arrives as `"full"` / `"dimmed"`, and the 0.2 shape —
-  `true` / `false` — is still accepted). `normalize()` runs on every read and
+  previewBrightness: 20–100 step 5 }`, stored as plain strings by the settings
+  map. `dimPreviews` is the pre-0.5 name for the same option in a boolean shape
+  (`"full"` / `"dimmed"`, and `true` / `false` before that): `normalize()` still
+  reads it, maps `dimmed` to 90, and prefers `previewBrightness` when the
+  server holds both — Stash's save spreads the old key along forever, so it
+  never disappears on its own. An empty `previewBrightness` counts as absent,
+  not as 0. `normalize()` runs on every read and
   every write, so a hand-edited or older value cannot reach the DOM; it also
   demotes `accent: "custom"` to arc when `customSignal` is missing or fails
   the contrast check, because that combination cannot be painted.
 - **Options are data attributes on `<html>`**: `data-ca-accent`,
-  `data-ca-density`, `data-ca-dim`, plus `data-ca-version` and a `ca-theme`
-  class. The stylesheets key off those, so switching is a restyle, not a
+  `data-ca-density`, `data-ca-bright`, plus `data-ca-version` and a `ca-theme`
+  class, and `--ca-dim` / the `--ca-arc*` set as inline properties when the
+  value is not known at build time. The stylesheets key off those, so switching
+  is a restyle, not a
   reload. `apply()` runs synchronously at parse time, from the browser cache,
   so the first paint already carries the saved option — the async GraphQL read
   only confirms or corrects it (the server wins; an empty server value keeps
   the cache instead of resetting). Without that cached first paint, a saved
-  Patina or Dusk flashed Arc on every load.
+  Patina or Dusk flashed Arc on every load. That first paint also assigns
+  `current` (not just the DOM): the settings row seeds itself from `store.get()`
+  and merges edits onto it, so a stale `current` there would revert the option
+  being edited.
+- **The settings row is a subscriber, not a snapshot.** `Tiles` subscribes to
+  the store and re-renders on every commit, and it reads the value from
+  `store.get()` on each render instead of copying it into `useState`. The row
+  mounts before the GraphQL read lands and Stash's own `value` prop for the
+  setting starts empty, so a local copy is out of step with the thumbnails the
+  moment the server answers differently from the cache. Verified on the live
+  instance (2026-11-28): with the server at 35 % and an empty localStorage, the
+  row paints 35 %; a preset click changes `data-ca-bright` synchronously and
+  the row's own readout and sample a microtask later, before the next frame.
 - **`?carbonarc=off` is the kill switch** (`?carbonarc=on` brings it back,
   remembered per tab in `sessionStorage`). It parks the stylesheet instead of
   removing it: `link.media = "not all"` plus `link.disabled = true`, retried for

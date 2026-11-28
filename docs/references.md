@@ -218,6 +218,24 @@ the obvious approaches are fragile. Notes from real bugs:
   for plugin overlays; prefer the `clip-path: path()` two-subpath
   approach above.
 
+- **A native `<input type="range">` is already painted blue by Stash.** Stash's
+  compiled sheet carries `input[type="range"] { appearance: none; background:
+  transparent; height: 22px }` plus
+  `input[type="range"]::-webkit-slider-runnable-track { background: #007bff;
+  height: 6px; border-radius: 25px }`, its `:focus` variant
+  (`#137cbd`), and a slate-grey 15 px thumb. `accent-color` therefore paints
+  nothing at all — it only affects the browser's own rendering, which
+  `appearance: none` has removed. Style the track and thumb yourself
+  (`::-webkit-slider-runnable-track` / `-thumb`, and `::-moz-range-track` /
+  `-progress` / `-thumb` for Firefox, which gets no track from Stash's
+  webkit-only rules) and put both the type and a class in the selector so the
+  rule outranks Stash's instead of depending on load order. There is no
+  "travelled part" to colour in WebKit: the track is one element, so a
+  `linear-gradient` over a per-render custom property is the way to keep the
+  fill in step with the value. Seen in Carbon Arc's preview-brightness row
+  (0.5.0); QuestingAdventurer, MosaicFilter and AudioSupport each hit the same
+  wall and override the same pseudo-elements.
+
 - **No visual regression net in this repo.** There's no local toolchain
   (no bundler, linter, typecheck, tests, or dev server — see
   `AGENTS.md`). Visual CSS changes ship unreviewed until a user installs

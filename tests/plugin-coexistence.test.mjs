@@ -235,7 +235,7 @@ test("the theme draws tiles for its own three settings", () => {
   const cases = [
     ["plugin-CarbonArc-accent", 4, "ca-login"],
     ["plugin-CarbonArc-density", 2, null],
-    ["plugin-CarbonArc-dimpreviews", 2, null],
+    ["plugin-CarbonArc-previewbrightness", 4, null],
   ];
 
   for (const [id, tiles, extra] of cases) {
@@ -273,6 +273,43 @@ test("the theme draws tiles for its own three settings", () => {
       );
     }
   }
+});
+
+test("the brightness row ships a slider, an exact field and one sample per preset", () => {
+  const { applyInstead } = loadBoth();
+
+  const props = { id: "plugin-CarbonArc-previewbrightness", heading: "Preview brightness", value: "", onChange() {} };
+  const node = applyInstead("StringSetting", props, () => {
+    throw new Error("the brightness row must not fall through to Stash's modal");
+  });
+
+  // Whatever the patch returns is a component element; draw it once.
+  let tree = node;
+  while (tree && typeof tree.type === "function") tree = tree.type(tree.props);
+
+  const found = { range: null, number: null, samples: 0 };
+  walk(tree, (child) => {
+    const type = child.type;
+    const kind = child.props && child.props.type;
+    if (type === "input" && kind === "range") found.range = child.props;
+    if (type === "input" && kind === "number") found.number = child.props;
+    if (child.props && typeof child.props.className === "string" && child.props.className.includes("ca-bright__sample")) {
+      found.samples += 1;
+    }
+  });
+
+  assert.ok(found.range, "the row has a range input");
+  assert.equal(found.range.min, 20, "range floor");
+  assert.equal(found.range.max, 100, "range ceiling");
+  assert.equal(found.range.step, 5, "step");
+  assert.ok("aria-valuetext" in found.range, "the slider announces a percentage, not a bare 0–1");
+
+  assert.ok(found.number, "the row has an exact-value field");
+  assert.equal(found.number.min, 20);
+  assert.equal(found.number.max, 100);
+  assert.equal(found.number.step, 5);
+
+  assert.equal(found.samples, 5, "one sample per preset tile, plus the live stage");
 });
 
 test("configuration and storage keys are disjoint", () => {

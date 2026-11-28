@@ -2,10 +2,10 @@
  * Carbon Arc — the option tiles and the login-page block.
  *
  * Both are drawn inside Stash's own plugin settings page (Settings > Plugins
- * > Carbon Arc): CarbonArcSettings.js replaces the three string rows with
- * tiles and hands every other row back to Stash. Everything here reads the
- * theme tokens from CarbonArcTokens.css, so a signal change repaints the
- * tiles at the same time as the page.
+ * > Carbon Arc): CarbonArcSettings.js replaces the string rows with tiles and
+ * a brightness slider, and hands every other row back to Stash. Everything
+ * here reads the theme tokens from CarbonArcTokens.css, so a signal change
+ * repaints the tiles at the same time as the page.
  *
  * Every class is prefixed `ca-` and no rule here is a token definition: this
  * sheet loads in the app for anyone with the theme enabled.
@@ -13,9 +13,13 @@
  * License: AGPL-3.0
  */
 
-/* Stash lays a setting out as two columns and right-aligns the second one.
-   The tiles need the row to themselves. */
-.setting-section .setting > .ca-field {
+/* Stash lays a setting out as two columns and right-aligns the last one
+   (`.setting-section .setting > div:last-child` — three classes and a type).
+   The tiles and the brightness row are left-aligned blocks, so this has to win
+   outright rather than by being loaded later: `:last-child` here is one class
+   more than Stash's rule. Without it the h3, the description and the hint all
+   sit flush right above a left-aligned control. */
+.setting-section .setting > .ca-field:last-child {
   width: 100%;
   text-align: left;
 }
@@ -90,6 +94,169 @@
   font-family: var(--ca-mono, monospace);
   font-size: 11px;
   line-height: 1.5;
+  color: var(--ca-tx-3, #8c8f90);
+}
+
+/* --- preview brightness ------------------------------------------------ */
+
+/* The brightness row is not a list, so its presets get a shorter tile and the
+   row below carries the range. */
+.ca-tiles--bright {
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+}
+
+/* A specimen "thumbnail": a low sun over a graded sky, drawn with gradients
+   so it needs no asset and dims the way a still does. CarbonArcSettings.js
+   sets `filter: brightness()` per sample — the tile's own preset value, or the
+   live value on the large one. Nothing here reads --ca-dim: the point of the
+   row is to compare values the page is not currently painted at. */
+.ca-bright__sample {
+  display: block;
+  width: 100%;
+  height: 40px;
+  border-radius: 3px;
+  background:
+    radial-gradient(circle at 72% 28%, #e9e4d6 0 5px, rgba(233, 228, 214, 0) 6px),
+    linear-gradient(168deg, #8b9397 0%, #5c6468 38%, #2f3538 72%, #1d2123 100%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.ca-bright__sample--lg {
+  flex: none;
+  width: 132px;
+  height: 84px;
+}
+
+.ca-bright__row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0 0;
+  max-width: 720px;
+}
+
+.ca-bright__controls {
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+/* The slider has to be drawn here, not left native. Stash ships
+   `input[type="range"]::-webkit-slider-runnable-track { background: #007bff }`
+   (plus a focus variant) and `appearance: none` on the element, so every native
+   range in the app is a blue bar and `accent-color` paints nothing. The
+   element and the type are both in these selectors to outrank that rule
+   outright rather than relying on which sheet loads last, and the travelled
+   part is a gradient over `--ca-fill`, the one value the row passes in on each
+   render. Firefox gets the same shape from `::-moz-range-progress`, which is
+   why only WebKit needs the variable. */
+input[type="range"].ca-bright__range {
+  --ca-bright-track: linear-gradient(
+    to right,
+    var(--ca-arc, #c2a176) 0 var(--ca-fill, 0%),
+    var(--ca-line-2, #3a3f43) var(--ca-fill, 0%) 100%
+  );
+
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"].ca-bright__range::-webkit-slider-runnable-track,
+input[type="range"].ca-bright__range:focus::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ca-bright-track);
+  box-shadow: none;
+}
+
+input[type="range"].ca-bright__range::-webkit-slider-thumb {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  /* Centres the thumb on the 3 px track: (3 - 13) / 2. */
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ca-arc, #c2a176);
+}
+
+input[type="range"].ca-bright__range::-moz-range-track {
+  height: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ca-line-2, #3a3f43);
+}
+
+input[type="range"].ca-bright__range::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--ca-arc, #c2a176);
+}
+
+input[type="range"].ca-bright__range::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ca-arc, #c2a176);
+}
+
+.ca-bright__range:focus-visible {
+  outline: 2px solid var(--ca-arc, #c2a176);
+  outline-offset: 4px;
+}
+
+.ca-bright__scale {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--ca-mono, monospace);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ca-tx-3, #8c8f90);
+}
+
+.ca-bright__exact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.ca-bright__number {
+  width: 4.25rem;
+  padding: 4px 6px;
+  background: var(--ca-sunken, #0c0e0f);
+  border: 1px solid var(--ca-line, #2a2e31);
+  border-radius: var(--ca-r-ctl, 4px);
+  color: var(--ca-tx-1, #e6e4de);
+  font-family: var(--ca-mono, monospace);
+  font-size: 12px;
+  text-align: right;
+}
+
+.ca-bright__number:focus {
+  border-color: var(--ca-arc-40, rgba(194, 161, 118, 0.4));
+  box-shadow: 0 0 0 3px var(--ca-arc-12, rgba(194, 161, 118, 0.12));
+  outline: none;
+}
+
+.ca-bright__unit {
+  font-family: var(--ca-mono, monospace);
+  font-size: 12px;
+  color: var(--ca-tx-3, #8c8f90);
+}
+
+.ca-bright__hint {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  font-size: 11px;
+  line-height: 1.6;
   color: var(--ca-tx-3, #8c8f90);
 }
 
