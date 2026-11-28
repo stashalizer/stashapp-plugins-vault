@@ -288,37 +288,10 @@
   color: var(--bs-secondary-color, #6c757d);
 }
 
-/* Launcher card in Settings > Tools */
-.elg-set-launcher {
-  display: block;
-  padding: 14px 16px;
-  border: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.25));
-  border-radius: 6px;
-  color: var(--bs-body-color, #212529);
-  text-decoration: none;
-  transition: border-color 120ms ease-out, background-color 120ms ease-out;
-}
-
-.elg-set-launcher:hover,
-.elg-set-launcher:focus {
-  background: var(--bs-tertiary-bg, rgba(128, 128, 128, 0.08));
-  border-color: var(--bs-secondary-color, rgba(128, 128, 128, 0.5));
-  color: var(--bs-body-color, #212529);
-  text-decoration: none;
-}
-
-.elg-set-launcher h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.elg-set-launcher p {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--bs-secondary-color, #6c757d);
-}
+/* The launcher in Settings > Tools is a `.setting` row drawn by Stash itself
+   (see ExternalLinkGroupsSettings.js), so it needs no rules here: the plugin
+   inherits Stash's padding, separator and heading size, and a theme that
+   restyles those rows restyles this one with them. */
 
 @media (max-width: 760px) {
   .elg-set__row {

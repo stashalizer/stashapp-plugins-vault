@@ -1,6 +1,6 @@
 name: Carbon Arc
 description: "A desktop-first dark theme for 24-inch screens: graphite surfaces, bone text, one low-chroma signal and monospaced numbers in bundled IBM Plex. Restyles the shell, filters, cards, detail pages, player, dialogs, forms, settings and scrollbars, and changes no layout maths, so every Stash feature keeps working. Set the signal colour, card density and preview brightness under Settings > Plugins > Carbon Arc."
-version: 0.6.1
+version: 0.6.2
 url: https://github.com/stashalizer/stashapp-plugins-vault
 ui:
   javascript:

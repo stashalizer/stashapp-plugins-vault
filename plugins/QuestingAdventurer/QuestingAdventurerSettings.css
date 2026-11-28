@@ -225,33 +225,10 @@
   box-sizing: border-box;
 }
 
-.questing-adventurer-settings__launcher {
-  text-decoration: none;
-  color: inherit;
-}
-
-.questing-adventurer-settings__launcher-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 1rem;
-  transition: background 0.15s ease;
-}
-
-.questing-adventurer-settings__launcher-card:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.questing-adventurer-settings__launcher-card h3 {
-  margin: 0 0 0.25rem 0;
-  font-size: 1.1rem;
-}
-
-.questing-adventurer-settings__launcher-card p {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 0.9rem;
-}
+/* The launcher in Settings > Tools is a `.setting` row drawn by Stash itself
+   (see QuestingAdventurerSettings.js), so it needs no rules here: the plugin
+   inherits Stash's padding, separator and heading size, and a theme that
+   restyles those rows restyles this one with them. */
 
 /* Partner deal ----------------------------------------------------------- */
 .questing-adventurer-settings__deal {

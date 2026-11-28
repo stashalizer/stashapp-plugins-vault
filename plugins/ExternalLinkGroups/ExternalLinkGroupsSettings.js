@@ -944,27 +944,83 @@
     console.error("ExternalLinkGroups settings: could not register route", err);
   }
 
-  // This patch fires twice per render (two SettingsToolsSection instances), so
-  // the odd call passes through untouched and only the even one adds the card.
+  // This patch fires twice per render, once per SettingsToolsSection instance:
+  // 1st = the "Tools" section (config.tools.heading), 2nd = "Scene Tools". The
+  // tools go under "Tools" — a plugin page is a tool, not a scene operation —
+  // so the even call passes through untouched and only the odd one adds the
+  // group.
   var toolsSectionCalls = 0;
+
+  // A plugin's page is not one of Stash's own rows. Stash's "Tools" section
+  // holds the GraphQL playground, and a launcher that looked like one more of
+  // its settings made that card read as five Stash tools. It goes into a group
+  // of its own at the bottom of the card instead: one label row, `.setting`
+  // rows underneath, the same element Stash uses for its own rows so no
+  // stylesheet has to re-invent one.
+  //
+  // The group is shared. Stash exposes no patch container above the section
+  // (`SettingSection` is not patchable), so it cannot be a third section: the
+  // first plugin to render creates the group, and the rest find it in
+  // `props.children` and append their row. That keeps one group however many of
+  // the four are installed, and it stays inside React's tree — no DOM surgery
+  // under a component that owns those nodes.
+  var GROUP_MARK = "data-plugin-tools";
+
+  function withLauncherGroup(props, row) {
+    var children = Array.isArray(props.children) ? props.children.slice() : [props.children];
+    var at = -1;
+    for (var i = 0; i < children.length; i += 1) {
+      if (children[i] && children[i].props && children[i].props[GROUP_MARK] !== undefined) {
+        at = i;
+        break;
+      }
+    }
+
+    if (at < 0) {
+      var label = h(
+        "div",
+        { className: "setting", "data-plugin-tools-label": "1" },
+        h("div", null, h("div", { className: "sub-heading" }, "Plugin tools")),
+        h("div")
+      );
+      children.push(h("div", { "data-plugin-tools": "1" }, label, row));
+    } else {
+      var group = children[at];
+      var rows = Array.isArray(group.props.children)
+        ? group.props.children.concat([row])
+        : [group.props.children, row];
+      children[at] = h(group.type, Object.assign({}, group.props, { children: rows }));
+    }
+
+    return [Object.assign({}, props, { children: children })];
+  }
 
   try {
     PluginApi.patch.before("SettingsToolsSection", function (props) {
       toolsSectionCalls += 1;
-      if (toolsSectionCalls % 2 !== 0) return [props];
+      if (toolsSectionCalls % 2 === 0) return [props];
 
-      var card = h(
-        Router.Link,
-        { to: PLUGIN_ROUTE, className: "elg-set-launcher" },
-        h("h3", null, "External Link Groups"),
-        h("p", null, "Per-site buttons and icons for performer, studio and group links")
+      // A `.setting` row: heading on the left, an empty action column on the
+      // right (the label itself is the link), hairline between rows. Stash owns
+      // the padding, the separator and the heading size; any theme that
+      // restyles those rows restyles this one with them.
+      var row = h(
+        "div",
+        { className: "setting" },
+        h(
+          "div",
+          null,
+          h("h3", null, h(Router.Link, { to: PLUGIN_ROUTE }, "External Link Groups")),
+          h(
+            "div",
+            { className: "sub-heading" },
+            "Per-site buttons and icons for performer, studio and group links"
+          )
+        ),
+        h("div")
       );
 
-      var children = Array.isArray(props.children)
-        ? props.children.concat([card])
-        : [props.children, card];
-
-      return [Object.assign({}, props, { children: children })];
+      return withLauncherGroup(props, row);
     });
   } catch (err) {
     console.error("ExternalLinkGroups settings: could not register tools launcher", err);

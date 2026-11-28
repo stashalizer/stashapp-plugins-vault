@@ -452,24 +452,69 @@
     return [Object.assign({}, props, { children: newChildren })];
   });
 
+  // The launcher is not one of Stash's own rows: those are Stash's tools, and a
+  // plugin's page is a different kind of thing. It goes into a group of its own
+  // at the bottom of the same card — a label row, then `.setting` rows.
+  //
+  // The group is shared by the four plugins that put a tool there. Stash
+  // exposes no patch container above the section (`SettingSection` is not
+  // patchable), so this cannot be a third section: the first plugin to render
+  // creates the group and the rest find it in `props.children` and append their
+  // row. Staying inside React's tree is deliberate — no DOM surgery under a
+  // component that owns those nodes.
+  const GROUP_MARK = "data-plugin-tools";
+
+  function withLauncherGroup(props, row) {
+    const children = Array.isArray(props.children) ? [...props.children] : [props.children];
+    const at = children.findIndex(
+      (child) => child && child.props && child.props[GROUP_MARK] !== undefined
+    );
+
+    if (at < 0) {
+      const label = h(
+        "div",
+        { className: "setting", "data-plugin-tools-label": "1" },
+        h("div", null, h("div", { className: "sub-heading" }, "Plugin tools")),
+        h("div")
+      );
+      children.push(h("div", { "data-plugin-tools": "1" }, label, row));
+    } else {
+      const group = children[at];
+      const rows = Array.isArray(group.props.children)
+        ? [...group.props.children, row]
+        : [group.props.children, row];
+      children[at] = h(group.type, Object.assign({}, group.props, { children: rows }));
+    }
+
+    return [Object.assign({}, props, { children })];
+  }
+
   PluginApi.patch.before("SettingsToolsSection", function (props) {
     settingsToolsCallCount += 1;
-    if (settingsToolsCallCount % 2 !== 0) {
+    // Stash renders the section twice: 1st = "Tools" (config.tools.heading),
+    // 2nd = "Scene Tools". A plugin page is a tool, not a scene operation, so
+    // the group goes under "Tools" and the even call passes through.
+    if (settingsToolsCallCount % 2 === 0) {
       return [props];
     }
-    const card = h(
-      Link,
-      { to: PLUGIN_ROUTE, className: "mosaic-filter-settings__launcher" },
+    // A `.setting` row — heading, `.sub-heading`, empty action column — in a
+    // group of the plugin launchers at the bottom of the card, never among
+    // Stash's own tools above it.
+    const row = h(
+      "div",
+      { className: "setting" },
       h(
         "div",
-        { className: "mosaic-filter-settings__launcher-card" },
-        h("h3", null, "Mosaic Filter"),
-        h("p", null, "Global defaults, scene/studio presets and multiple filter regions")
-      )
+        null,
+        h("h3", null, h(Link, { to: PLUGIN_ROUTE }, "Mosaic Filter")),
+        h(
+          "div",
+          { className: "sub-heading" },
+          "Global defaults, scene/studio presets and multiple filter regions"
+        )
+      ),
+      h("div")
     );
-    const newChildren = Array.isArray(props.children)
-      ? [...props.children, card]
-      : [props.children, card];
-    return [Object.assign({}, props, { children: newChildren })];
+    return withLauncherGroup(props, row);
   });
 })();

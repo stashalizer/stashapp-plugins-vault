@@ -25,6 +25,35 @@ Cross-plugin invariants worth stating once:
   route, settings page, nav entry, or scene-page tab is React on `window.PluginApi`.
 - `csLib.getConfiguration` / `setConfiguration` are **async** — always `await`.
 - No cross-plugin imports; plugins are independent directories.
+- **A Settings > Tools launcher is a Stash `.setting` row, inside one shared
+  group, under the "Tools" heading (`config.tools.heading`) — not under "Scene
+  Tools".** A plugin page is a tool, not a scene operation: the "Scene Tools"
+  card is Stash's scraping and duplicate-checking, and four plugin rows in it
+  read as four more Stash features. Both cards render their native entries the
+  same way (`div.setting > div > h3 > a > button.btn.btn-primary`), which is the
+  element the plugin rows copy. QuestingAdventurer, MosaicFilter, AudioSupport
+  and ExternalLinkGroups therefore append a group at the bottom of the "Tools"
+  card: a caption row (`data-plugin-tools-label`, a `.setting` whose only
+  content is a `.sub-heading`) plus `.setting` rows, inside one
+  `div[data-plugin-tools]`. The section patch fires twice per render (1st =
+  "Tools", 2nd = "Scene Tools"), so the gate is the **odd** call; flipping it
+  moves the group back into "Scene Tools". Each plugin runs the same
+  find-or-create (`withLauncherGroup`): the first to render builds the group,
+  the rest find it in `props.children` and append their row, so it appears once
+  however many are installed and the caption stays first. **It cannot be a third
+  section**: `SettingSection` is not a patch component and nothing above
+  `SettingsToolsSection` is patchable, so a sibling section would mean DOM
+  surgery under a component that owns those nodes.
+  The row itself is Stash's own element — heading + optional `.sub-heading`, an
+  empty second column — so it inherits Stash's padding, separator and heading
+  size in every theme, including none; a card of its own needed a stylesheet per
+  plugin and the four drifted (12–15 px titles, three paddings). Carbon Arc then
+  has one job: turn the native `.btn` chip into a row whose label is the title,
+  by shape (`:has(> div:first-child > h3 > a):has(> div:last-child:empty)`), so
+  the plugin rows are restyled with it for free. Keep the second column empty; a
+  row that owns a control there must not match, because the theme stretches the
+  label link over the whole row.
+
 - **Optional Suite Data storage.** QuestingAdventurer, MosaicFilter and
   AudioSupport keep a `*Storage.js` helper loaded before their UI scripts.
   When the `SuiteData` plugin answers `runPluginOperation`, data is written to
@@ -361,7 +390,7 @@ AGENTS.md                   # architecture + conventions (this file)
 - Overlay re-injects on the `stash:location` SPA event via `csLib.PathElementListener`; a brief flash between React unmount and re-injection is expected (see the header comment in `QuestingAdventurer.js`).
 - The settings page is registered through `PluginApi.patch.before`:
   - `PluginRoutes` → `<Route path="/plugins/questingadventurer" />` (lowercase plugin id, hardcoded — update if you rename the plugin)
-  - `SettingsToolsSection` → launcher card on the **2nd** call only (Scene Tools section). See `QuestingAdventurerSettings.js` for the call-counter; do not remove it.
+  - `SettingsToolsSection` → launcher row in the shared `data-plugin-tools` group (a `.setting` row — heading, `.sub-heading`, empty action column) on the **1st** call only, i.e. the "Tools" section (`config.tools.heading`). See `QuestingAdventurerSettings.js` for the call-counter; do not remove it.
 - **Two migrations run on first load**:
   1. `migrateFromLegacy()` — v0 (`SceneRules`) → v2 (`QuestingAdventurer`). Both surfaces run it. If a `SceneRules` key exists but no `QuestingAdventurer` key does, the data is migrated (`category` → `trigger`, `rule` → `move`, all moves go into the global library, triggers get `attachedMoveIds`) and the old key is cleared. Writes v2 format directly. Safe to run repeatedly; no-ops once migration is done.
   2. `migrateV1ToV2()` — v1' (post-rename, pre-v2) → v2. Runs in `loadState` and the settings `useEffect`. Collects moves from `trigger.items` and top-level moves into the global library, creates `attachedMoveIds`, persists the v2 form. Safe to run repeatedly.
@@ -445,7 +474,7 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   pauses/mutes the video, swaps the tab title/favicon, and restores the title on
   toggle. It does not auto-resume playback. All plugin UI nodes carry
   `[data-mosaic-filter-ui]` for SFW Switch CSS.
-- **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a Scene-Tools-only launcher card (even-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
+- **Overlay** (`MosaicFilter.js`, vanilla JS) mounts on `#VideoJsPlayer` via `csLib.PathElementListener("/scenes/", ...)` plus a `stash:location` safety-net re-injection. **Settings** (`MosaicFilterSettings.js`, React) registers `/plugins/mosaicfilter` (lowercase, hardcoded) via `PluginApi.patch.before` and a launcher row in the shared plugin-tools group of the "Tools" section (odd-call counter on `SettingsToolsSection` — same pattern as QuestingAdventurer; do not remove the counter).
 - **The panel opens with the filter list, and that list is the only way to reach a second region.** `filterListMarkup()` renders one row per filter — a select button (carries the name and the on/off dot), an On/Off button and a delete button (omitted for the last filter, because `removeFilter` refuses to empty a layer) — followed by a dashed "Add filter" slot that is disabled at `MAX_FILTERS`. Everything below the list edits `layer.selectedId`. Keep the list above the effect controls: it is what makes the panel legible with more than one region, and the selected row is the only accent in the panel.
 - **Per-region DOM is keyed by filter id, never by index.** `rects`/`masks` are `Map`s from `filter.id` to the nodes; `syncFilterNodes()` creates the missing ones and removes the orphans on every render. Deleting a neighbour, reordering or changing the selection therefore never re-binds a DOM node (and its pointer listeners) to a different region, and `onPointerMove` re-looks-up its target by id on every move because the layer can be replaced mid-drag. Pointer listeners are attached once per region node with the id captured in the closure.
 - **No light-DOM `<canvas>` inside `#VideoJsPlayer` — the pixelation canvas lives in a shadow root.** Stash's `SceneVideoFilterPanel` (the scene page **Filters** tab) resolves the element it styles with `container.getElementsByTagName("canvas")` and only falls back to `<video>` when that returns nothing (`SceneVideoFilterPanel.tsx`, `getVideoElement`). Any light-DOM canvas under the player therefore becomes the target of *every* panel transform: rotate, scale, brightness, contrast are all written to the hidden 0x0 canvas while the video is never touched, and the panel looks broken to the user (0.5.2 fixed exactly this). `getElementsByTagName` does not cross shadow boundaries, so `buildRect()` puts the canvas in `attachShadow({mode:"open"})` and the host (`.__pixel-surface`) carries the layout + pixelate visibility; the canvas is styled inline because the stylesheet cannot reach inside. Consequences to remember: **every** region gets its own shadow-root canvas (the panel takes the *first* canvas it finds, so one leaking into the light DOM is enough to break it for all regions), the canvas reference lives in the region's entry in `rects` (never a `querySelector`), and `teardown()` must not assume the canvas is a light-DOM child. The same rule applies to any future overlay element that is not a `div`/`span` — check the panel's lookup order before adding it.
@@ -989,6 +1018,25 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   files from a logged-out page, so it falls back to the system font — say so
   rather than promising the font there. `tests/carbon-arc.test.mjs` asserts the
   scoping and the dead classes.
+- **Settings > Tools is one row shape, and the shape belongs to Stash.** The
+  native entries in both cards (the GraphQL playground under "Tools", "Scene
+  filename parser" and "Scene duplicate checker" under "Scene Tools") are
+  `.setting` rows whose `<h3>` holds a `.btn-primary` inside a link: the chip
+  *is* the title, the action column is empty. The four plugins here inject that
+  same row, grouped under a caption in the "Tools" card (see the cross-plugin
+  invariant above), so the theme has one job in these cards — turn the chip into
+  a title and put a chevron in the gutter — and it does it by shape:
+  `:has(> div:first-child > h3 > a):has(> div:last-child:empty)`. The
+  `last-child:empty` guard is load-bearing: Stash's Library and Backup rows are
+  the same `h3 > a > .btn` shape, and the stretched `a::before { inset: 0 }`
+  would cover their buttons. The one thing the theme adds for the group is the
+  caption's type (`[data-plugin-tools-label] .sub-heading`: micro, mono,
+  tracked out, uppercased) — the row spacing and the hairline are still Stash's,
+  so the group needs no plugin stylesheet and survives with the theme off. The
+  `a[href^="/plugins/"]:has(h3)` block is the fallback for a third-party
+  launcher that still ships a card; nothing in this repository matches it any
+  more, and the test asserts every rule in that family keeps the `:has(h3)`
+  guard.
 - **Design items with no Stash selector stay unimplemented, deliberately.** The
   mock's `.count` / `.seg` view toggle, the toast state bar, the empty state and
   the brand dot have no corresponding markup in the shipped bundle; inventing
@@ -1176,7 +1224,7 @@ Items 1–3 and 6–8 were each a **separate fix commit** (`a55a166`, `a8426aa`,
   `tests/plugin-coexistence.test.mjs` loads both plugins' real files into one
   sandbox in plugin-id order and asserts: both `PluginRoutes` and
   `SettingsToolsSection` `before` chains survive intact (one route and one
-  launcher card each, original children neither dropped nor duplicated), the
+  launcher row each, original children neither dropped nor duplicated), the
   config/storage keys are disjoint, and the stylesheet stays inside `.elg-*`
   with no `:root` block and no `--ca-*` reads. Two constraints follow from that
   and must not be relaxed:

@@ -28,6 +28,8 @@
  *      fonts go through the assets map instead of being inlined.
  *   7. The kill switch — `?carbonarc=off` paints nothing and parks the sheet.
  *   8. Hover-only rules stay behind a hover-capable pointer.
+ *   9. The Settings > Tools launcher row — one shape per entry, and the two
+ *      guards that keep a stretched link off a row's own controls.
  */
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -596,4 +598,53 @@ test("hover-only rules stay behind a hover-capable pointer", () => {
     const opened = css.lastIndexOf(gate, at);
     assert.ok(opened !== -1 && at - opened < 200, selector + " is inside the hover gate");
   }
+});
+
+test("the Tools launcher rows cannot catch a stranger, or cover a control", () => {
+  const theme = strip(read(PLUGIN, "CarbonArc.css"));
+
+  // Settings > Tools receives two shapes and the theme folds both into one
+  // row: an `<a href="/plugins/…">` dropped into the card, and a `.setting`
+  // whose whole label is a link. Two guards keep that from overreaching.
+  //
+  // `:has(h3)` — a launcher carries a title (and maybe a one-liner). A link
+  // that merely happens to sit in a settings card keeps its own padding
+  // instead of being flattened into a full-width row.
+  const bare = theme.match(/\.card > a\[href\^="\/plugins\/"\](?!:has\(h3\))/g) || [];
+  assert.deepEqual(bare, [], "a rule would restyle a plain card link too");
+
+  // `:has(> div:last-child:empty)` — the stretched link covers the whole row,
+  // so it may only land where the row owns nothing else. Stash's Library and
+  // Backup rows are `.setting > h3 > a > .btn` as well, and their own buttons
+  // have to stay clickable.
+  const stretched = theme.match(/\.setting:has\(> div:first-child > h3 > a\)(?!:has\(> div:last-child:empty\))/g) || [];
+  assert.deepEqual(stretched, [], "a stretched link would sit over the row's own controls");
+
+  // The row comes from the shape, not from a plugin's class name: otherwise
+  // the next plugin to patch this section reintroduces the split.
+  for (const cls of [
+    "elg-set-launcher",
+    "questing-adventurer-settings__launcher",
+    "mosaic-filter-settings__launcher",
+    "audio-support-settings__launcher",
+  ]) {
+    assert.ok(!theme.includes(cls), "the row must not name " + cls);
+  }
+
+  // Both shapes end on the same title and description steps.
+  assert.match(theme, /a\[href\^="\/plugins\/"\]:has\(h3\) h3 \{[\s\S]{0,120}?font-size: var\(--ca-fs-title\)/);
+  assert.match(theme, /a\[href\^="\/plugins\/"\]:has\(h3\) p \{[\s\S]{0,120}?font-size: var\(--ca-fs-meta\)/);
+
+  // The group the plugins put their launchers in is Stash's `.setting` row
+  // again; only its caption gets the theme's type (micro, mono, tracked out).
+  assert.match(
+    theme,
+    /\[data-plugin-tools-label\] \.sub-heading \{[\s\S]{0,240}?font-size: var\(--ca-fs-micro\)/,
+    "the group caption takes the micro step"
+  );
+  assert.match(
+    theme,
+    /\[data-plugin-tools-label\] \.sub-heading \{[\s\S]{0,240}?text-transform: uppercase/,
+    "and reads as a caption, not a heading"
+  );
 });

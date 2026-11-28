@@ -208,37 +208,10 @@
   background: rgba(70, 130, 220, 1);
 }
 
-/* Launcher card on the Settings > Scene Tools page. Mirrors the
-   QuestingAdventurer launcher card styling so the two look like siblings. */
-.mosaic-filter-settings__launcher {
-  text-decoration: none;
-  color: inherit;
-  display: block;
-}
-
-.mosaic-filter-settings__launcher-card {
-  border: 1px solid rgba(128, 128, 128, 0.3);
-  border-radius: 6px;
-  padding: 12px 16px;
-  margin: 8px 0;
-  background: rgba(128, 128, 128, 0.06);
-  transition: background 120ms ease;
-}
-
-.mosaic-filter-settings__launcher-card:hover {
-  background: rgba(128, 128, 128, 0.15);
-}
-
-.mosaic-filter-settings__launcher-card h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-}
-
-.mosaic-filter-settings__launcher-card p {
-  margin: 0;
-  font-size: 13px;
-  opacity: 0.75;
-}
+/* The launcher on Settings > Tools is a `.setting` row drawn by Stash itself
+   (see MosaicFilterSettings.js), so it needs no rules here. That is what makes
+   the four launchers in that card agree with each other and with Stash's own
+   entries: one shape, owned by Stash, restyled by a theme if one is installed. */
 
 .mosaic-filter-settings__preset-list {
   display: flex;

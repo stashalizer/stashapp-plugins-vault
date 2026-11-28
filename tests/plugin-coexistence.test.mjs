@@ -226,12 +226,52 @@ test("the theme never touches the routes or the tools section", () => {
   assert.deepEqual(paths, ["/plugins/externalurlgroups"], "the plugin's own route, and nothing else");
   assert.equal(originalCount, 1, "the app's own routes are wrapped once, not duplicated");
 
+  // The section renders twice — "Tools" first, "Scene Tools" second — and the
+  // launcher belongs to "Tools" (config.tools.heading), so the odd call acts
+  // and the even one passes through untouched.
   const first = applyBefore("SettingsToolsSection", { children: [] });
-  assert.deepEqual(first[0].children, [], "the odd call is still passed through untouched");
+  const added = first[0].children || [];
+  assert.equal(added.length, 1, "one group, no duplicate");
 
-  const second = applyBefore("SettingsToolsSection", { children: [] });
-  const cards = (second[0].children || []).map((card) => card.props && card.props.to);
-  assert.deepEqual(cards, ["/plugins/externalurlgroups"], "one card, no duplicate");
+  const second = applyBefore("SettingsToolsSection", {
+    children: [{ type: "div", props: { "data-stash": "1" } }],
+  });
+  assert.equal(second[0].children.length, 1, "the Scene Tools instance is left alone");
+  assert.equal(second[0].children[0].props["data-stash"], "1", "and its own rows are untouched");
+
+  // Stash's own tools stay where they are. The plugin's launcher goes into a
+  // group of its own at the bottom of the card — Stash's list must not look
+  // like it grew a plugin entry — and that group opens with a caption row.
+  const group = added[0];
+  assert.equal(group.props["data-plugin-tools"], "1", "the launcher is wrapped in the plugin-tools group");
+  const [label, row] = group.props.children;
+  assert.equal(label.props["data-plugin-tools-label"], "1", "the group opens with its own caption row");
+  assert.equal(label.props.className, "setting", "the caption is a .setting row, so Stash spaces it");
+  assert.equal(row.props.className, "setting", "and the launcher is a .setting row, not a card");
+  assert.equal(row.props.children.length, 2, "a label column and the action column");
+  assert.equal(
+    row.props.children[1].props.children,
+    undefined,
+    "the action column is empty: the label itself is the link"
+  );
+
+  const links = [];
+  walk(row, (node) => {
+    if (node.props && node.props.to) links.push(node.props.to);
+  });
+  assert.deepEqual(links, ["/plugins/externalurlgroups"], "and the label still links to the plugin's route");
+
+  // The group is a convention between the four plugins, not a component they
+  // share: whichever renders next has to find it and append, not open a second
+  // one. Calls alternate, so the third one is the next that acts.
+  const third = applyBefore("SettingsToolsSection", { children: added });
+  const extended = third[0].children || [];
+  assert.equal(extended.length, 1, "a second plugin extends the group instead of adding one");
+  assert.equal(extended[0].props.children.length, 3, "caption plus two launcher rows");
+  assert.ok(
+    extended[0].props.children[0].props["data-plugin-tools-label"],
+    "the caption stays first, so it heads the whole group"
+  );
 });
 
 test("a setting the theme does not own comes back through the original renderer", () => {

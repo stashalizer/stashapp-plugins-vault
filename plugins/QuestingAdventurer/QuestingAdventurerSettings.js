@@ -4,10 +4,11 @@
  * Architecture:
  * - Registers a route via PluginApi.patch.before("PluginRoutes", ...) at
  *   /plugins/questingadventurer.
- * - Adds a launcher card in Settings > Tools via
- *   PluginApi.patch.before("SettingsToolsSection", ...). The launcher appears
- *   only under the "Scene Tools" subsection (the second SettingsToolsSection
- *   instance in SettingsToolsPanel) by gating on a module-level call counter.
+ * - Adds a launcher row to the plugin-tools group in Settings > Tools via
+ *   PluginApi.patch.before("SettingsToolsSection", ...). The group appears only
+ *   under the "Tools" subsection (the first SettingsToolsSection instance in
+ *   SettingsToolsPanel, config.tools.heading) by gating on a module-level call
+ *   counter.
  * - Reads/writes the same config key ("QuestingAdventurer") as the overlay.
  *   Semantic split: the settings page owns the quests array; the overlay owns
  *   the collapsed flag and the opacity value. Every save from this page
@@ -1756,30 +1757,72 @@
     return [Object.assign({}, props, { children: newChildren })];
   });
 
+  // The launcher is not one of Stash's own rows: the two above it are Stash's
+  // tools and a plugin's page is a different kind of thing. It goes into a
+  // group of its own at the bottom of the same card — a label row, then
+  // `.setting` rows — so Stash's list stays Stash's.
+  //
+  // The group is shared by the four plugins that put a tool there. Stash
+  // exposes no patch container above the section (`SettingSection` is not
+  // patchable), so this cannot be a third section: the first plugin to render
+  // creates the group and the rest find it in `props.children` and append their
+  // row. Staying inside React's tree is deliberate — no DOM surgery under a
+  // component that owns those nodes.
+  const GROUP_MARK = "data-plugin-tools";
+
+  function withLauncherGroup(props, row) {
+    const children = Array.isArray(props.children) ? [...props.children] : [props.children];
+    const at = children.findIndex(
+      (child) => child && child.props && child.props[GROUP_MARK] !== undefined
+    );
+
+    if (at < 0) {
+      const label = h(
+        "div",
+        { className: "setting", "data-plugin-tools-label": "1" },
+        h("div", null, h("div", { className: "sub-heading" }, "Plugin tools")),
+        h("div")
+      );
+      children.push(h("div", { "data-plugin-tools": "1" }, label, row));
+    } else {
+      const group = children[at];
+      const rows = Array.isArray(group.props.children)
+        ? [...group.props.children, row]
+        : [group.props.children, row];
+      children[at] = h(group.type, Object.assign({}, group.props, { children: rows }));
+    }
+
+    return [Object.assign({}, props, { children })];
+  }
+
   PluginApi.patch.before("SettingsToolsSection", function (props) {
     settingsToolsCallCount += 1;
     // SettingsToolsPanel.tsx renders the same PatchContainerComponent twice
-    // in fixed order: 1st = general "Tools", 2nd = "Scene Tools". React
-    // re-renders fire the pair in the same order, so parity (odd = Tools,
-    // even = Scene Tools) is the correct gate. Assumption documented because
-    // if Stash ever renders only one instance or swaps the order, the card
-    // lands in the wrong section.
-    if (settingsToolsCallCount % 2 !== 0) {
+    // in fixed order: 1st = general "Tools" (config.tools.heading), 2nd =
+    // "Scene Tools". React re-renders fire the pair in the same order, so
+    // parity (odd = Tools, even = Scene Tools) is the correct gate. The
+    // launcher belongs to "Tools" — a plugin page is a tool, not a scene
+    // operation — so the even call passes through.
+    // Assumption documented because if Stash ever renders only one instance or
+    // swaps the order, the group lands in the wrong section.
+    if (settingsToolsCallCount % 2 === 0) {
       return [props];
     }
-    const card = h(
-      Link,
-      { to: PLUGIN_ROUTE, className: "questing-adventurer-settings__launcher" },
+    // A `.setting` row: heading on the left, an empty action column on the
+    // right (the label itself is the link). Stash owns the padding, the
+    // separator and the heading size, so the row stays in Stash's visual
+    // language in every theme, including none.
+    const row = h(
+      "div",
+      { className: "setting" },
       h(
         "div",
-        { className: "questing-adventurer-settings__launcher-card" },
-        h("h3", null, "Questing Adventurer"),
-        h("p", null, "Manage quests and moves")
-      )
+        null,
+        h("h3", null, h(Link, { to: PLUGIN_ROUTE }, "Questing Adventurer")),
+        h("div", { className: "sub-heading" }, "Manage quests and moves")
+      ),
+      h("div")
     );
-    const newChildren = Array.isArray(props.children)
-      ? [...props.children, card]
-      : [props.children, card];
-    return [Object.assign({}, props, { children: newChildren })];
+    return withLauncherGroup(props, row);
   });
 })();

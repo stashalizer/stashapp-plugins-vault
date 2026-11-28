@@ -1443,6 +1443,195 @@ input[type="range"] {
   color: var(--ca-tx-3) !important;
 }
 
+/* ---- Settings > Tools: one row for every launcher -----------------------
+   Stash renders its tool entries — the GraphQL playground in "Tools", "Scene
+   filename parser" and "Scene duplicate checker" in "Scene Tools" — as
+   `.setting` rows whose `<h3>` holds a `.btn-primary` inside a link: a 34 px
+   signal chip alone in an otherwise empty row. There is no title next to it
+   because the chip *is* the title, so under this theme each card read as a
+   chip plus whatever else was in it.
+
+   The plugins in this repository put their own launchers in the "Tools" card
+   (config.tools.heading) — a plugin page is a tool, not a scene operation —
+   in a group of their own at the bottom (`data-plugin-tools`: a caption row,
+   then `.setting` rows). The
+   rows are the same element Stash uses, so the rules below — which know
+   nothing but the shape — turn every row in the card into the same thing:
+   full-width hit area, title over an optional one-line description, a chevron
+   in the right gutter, Stash's own 1 px hairline between rows. Only the
+   caption needs the theme's type. A plugin that ships a card instead of a
+   `.setting` row is still normalised by the anchor rules that follow, which is
+   why they exist even though nothing here uses them today.
+
+   Two guards are load-bearing. `div:last-child:empty` keeps the stretched
+   link honest: a `.setting` that owns a control on the right must never get
+   a link laid over that control (Stash's Library and Backup rows are the
+   same `h3 > a > .btn` shape). `a[href^="/plugins/"]:has(h3)` on the
+   fallback below keeps a stray card link from being flattened into a row. */
+
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) {
+  position: relative;
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:first-child > h3 > a {
+  color: var(--ca-tx-1);
+  font-size: var(--ca-fs-title);
+  font-weight: 500;
+  line-height: 1.3;
+  text-decoration: none;
+}
+
+/* One line under the title, where the description goes. Stash styles it as a
+   sub-heading (0.8rem, 500); the row wants the meta step in the muted colour,
+   at the weight of body text, so it reads under the title rather than beside
+   it. */
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:first-child > .sub-heading {
+  margin: 4px 0 0;
+  color: var(--ca-tx-3);
+  font-size: var(--ca-fs-meta);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:first-child > h3 > a::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:first-child > h3 > a > .btn {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: var(--ca-fs-title);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: left;
+}
+
+/* the right column reserved 100 px for a control that is not there; it must
+   not push the chevron out of its gutter */
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:last-child {
+  min-width: 0;
+}
+
+/* Fallback: a launcher that ships a card of its own instead of a `.setting`
+   row. Nothing in this repository does that any more, but a third-party
+   plugin can, and a theme is the last place that can make it agree with the
+   rows around it — same geometry, same type. It has to carry the padding and
+   the hairline itself because Stash never styled this element as a row. */
+.setting-section .card > a[href^="/plugins/"]:has(h3),
+.settings-section .card > a[href^="/plugins/"]:has(h3) {
+  position: relative;
+  display: block;
+  padding: 15px 40px 15px 15px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--ca-tx-1);
+  text-decoration: none;
+  transition: background-color 120ms ease-out;
+}
+
+/* the card the launcher wraps its content in */
+.setting-section .card > a[href^="/plugins/"]:has(h3) > *,
+.settings-section .card > a[href^="/plugins/"]:has(h3) > * {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.setting-section .card > a[href^="/plugins/"]:has(h3) h3,
+.settings-section .card > a[href^="/plugins/"]:has(h3) h3 {
+  margin: 0;
+  color: var(--ca-tx-1);
+  font-size: var(--ca-fs-title);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.setting-section .card > a[href^="/plugins/"]:has(h3) p,
+.settings-section .card > a[href^="/plugins/"]:has(h3) p {
+  margin: 4px 0 0;
+  color: var(--ca-tx-3);
+  font-size: var(--ca-fs-meta);
+  line-height: 1.45;
+}
+
+/* Stash paints its row separators #000 and the theme leaves them alone, so
+   the fallback takes the same hairline — otherwise the card shows two. */
+.setting-section .card > a[href^="/plugins/"]:has(h3):not(:last-child) {
+  border-bottom: 1px solid #000;
+}
+
+/* The group label above the plugin rows is a caption, not a setting: the micro
+   step in the mono face, tracked out and uppercased, so it separates the group
+   from Stash's own tools instead of reading as one more row. Stash draws it as
+   `.setting > .sub-heading`, so the inset and the hairline are already Stash's;
+   only the type is the theme's. */
+.setting-section [data-plugin-tools-label] .sub-heading {
+  margin: 0;
+  color: var(--ca-tx-3);
+  font-family: var(--ca-mono);
+  font-size: var(--ca-fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* chevron, drawn rather than typed so it stays crisp at one device pixel */
+.setting-section .card > a[href^="/plugins/"]:has(h3)::after,
+.settings-section .card > a[href^="/plugins/"]:has(h3)::after,
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 19px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--ca-tx-3);
+  border-right: 1.5px solid var(--ca-tx-3);
+  transform: translateY(-50%) rotate(45deg);
+  transition: border-color 120ms ease-out, transform 120ms ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .setting-section .card > a[href^="/plugins/"]:has(h3):hover,
+  .settings-section .card > a[href^="/plugins/"]:has(h3):hover,
+  .setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty):hover {
+    background-color: var(--ca-raised);
+  }
+
+  .setting-section .card > a[href^="/plugins/"]:has(h3):hover::after,
+  .settings-section .card > a[href^="/plugins/"]:has(h3):hover::after,
+  .setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty):hover::after {
+    border-color: var(--ca-arc);
+    transform: translate(2px, -50%) rotate(45deg);
+  }
+}
+
+/* a stretched link's focus ring belongs on the row it covers, not on the
+   16 px of text it happens to wrap */
+.setting-section .card > a[href^="/plugins/"]:has(h3):focus-visible,
+.settings-section .card > a[href^="/plugins/"]:has(h3):focus-visible,
+.setting-section .setting:has(> div:first-child > h3 > a:focus-visible):has(> div:last-child:empty) {
+  outline: 2px solid var(--ca-arc);
+  outline-offset: -2px;
+}
+
+.setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty) > div:first-child > h3 > a:focus-visible {
+  outline: none;
+}
+
 /* task / log output */
 .log-viewer,
 .task-log,
@@ -1521,7 +1710,11 @@ textarea:focus-visible,
   .card-popovers .btn,
   a.minimal,
   button.minimal,
-  .ca-tile {
+  .ca-tile,
+  .setting-section .card > a[href^="/plugins/"]:has(h3),
+  .setting-section .card > a[href^="/plugins/"]:has(h3)::after,
+  .setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty),
+  .setting-section .setting:has(> div:first-child > h3 > a):has(> div:last-child:empty)::after {
     transition: none !important;
   }
 }
